@@ -5,4 +5,5 @@ class SalesConfig(AppConfig):
     name = 'sales'
 
     def ready(self):
-        import sales.signals
+        import sales.signals  # Import signals to ensure they are registered    
+        # import sale.signals  # Import signals to ensure they are registered

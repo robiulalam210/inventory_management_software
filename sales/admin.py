@@ -1,41 +1,20 @@
+# sales/admin.py
 from django.contrib import admin
-from .models import Customer, Sale, SaleItem
+from .models import Sale, SaleItem, Customer
 
-# --- Inline for Sale Items ---
-class SaleItemInline(admin.TabularInline):
-    model = SaleItem
-    extra = 1  # One empty row by default
-    readonly_fields = ('subtotal',)
-
-    def subtotal(self, obj):
-        return obj.qty * obj.price if obj.pk else 0
-    subtotal.short_description = 'Subtotal'
-
-
-# --- Sale Admin ---
-@admin.register(Sale)
 class SaleAdmin(admin.ModelAdmin):
-    list_display = ('id', 'customer', 'total', 'date')
-    list_filter = ('date', 'customer')
-    search_fields = ('customer__name',)
-    date_hierarchy = 'date'
-    inlines = [SaleItemInline]
+    list_display = ['id', 'customer', 'gross_total', 'net_total', 'sale_date', 'sale_by', 'payment_method']
+    list_filter = ['sale_date', 'sale_type', 'payment_method']
+    date_hierarchy = 'sale_date'
 
-
-# --- Customer Admin ---
-@admin.register(Customer)
-class CustomerAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'phone', 'address')
-    search_fields = ('name', 'phone')
-
-
-# --- SaleItem Admin (optional standalone view) ---
-@admin.register(SaleItem)
 class SaleItemAdmin(admin.ModelAdmin):
-    list_display = ('id', 'sale', 'product', 'qty', 'price', 'subtotal_display')
-    list_filter = ('sale__date',)
-    search_fields = ('product__name', 'sale__customer__name')
+    list_display = ['id', 'sale', 'product', 'quantity', 'unit_price', 'discount', 'discount_type']
+    list_filter = ['sale__sale_date', 'product']
+class CustomerAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name', 'phone', 'address']
+    search_fields = ['name', 'phone']
 
-    def subtotal_display(self, obj):
-        return obj.qty * obj.price
-    subtotal_display.short_description = 'Subtotal'
+admin.site.register(Sale, SaleAdmin)
+admin.site.register(SaleItem, SaleItemAdmin)
+admin.site.register(Customer, CustomerAdmin)
+
