@@ -39,8 +39,14 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
      'rest_framework',  # DRF
-    'core',            # Our app
-        'django_filters',
+   # Project apps
+   'purchases',
+    'products', 
+    'sales',
+    "branch_warehouse",
+
+    "core",
+    'django_filters',
     'rest_framework_simplejwt',  # JWT Auth
 ]
 
