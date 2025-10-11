@@ -12,7 +12,7 @@ from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandVi
 
 # Returns (make sure these exist in core/views.py or create returns/views.py)
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
-
+from .views import AccountViewSet
 router = DefaultRouter()
 
 # Product routes
@@ -37,6 +37,8 @@ router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item'
 router.register(r'sales-returns', SalesReturnViewSet, basename='sales-return')
 router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-return')
 router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
+
+router.register(r'accounts', AccountViewSet, basename='account')
 
 urlpatterns = [
     path('', include(router.urls)),
