@@ -43,6 +43,7 @@ INSTALLED_APPS = [
    'purchases',
     'products', 
     'sales',
+    'returns',
     "branch_warehouse",
 
     "core",

@@ -1,4 +1,3 @@
-# core/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
@@ -10,6 +9,9 @@ from sales.views import SaleViewSet, SaleItemViewSet, CustomerViewSet, DuePaymen
 
 # Products
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
+
+# Returns (make sure these exist in core/views.py or create returns/views.py)
+from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 
 router = DefaultRouter()
 
@@ -30,6 +32,11 @@ router.register(r'customers', CustomerViewSet, basename='customer')
 router.register(r'suppliers', SupplierViewSet, basename='supplier')
 router.register(r'purchases', PurchaseViewSet, basename='purchase')
 router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item')
+
+# Returns routes
+router.register(r'sales-returns', SalesReturnViewSet, basename='sales-return')
+router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-return')
+router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
 
 urlpatterns = [
     path('', include(router.urls)),
