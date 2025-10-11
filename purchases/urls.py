@@ -1,9 +1,10 @@
-from rest_framework.routers import DefaultRouter
-from .views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
 
-router = DefaultRouter()
-router.register(r'suppliers', SupplierViewSet)
-router.register(r'purchases', PurchaseViewSet)
-router.register(r'purchase-items', PurchaseItemViewSet)
+from django.contrib import admin
+from django.urls import path, include
 
-urlpatterns = router.urls
+urlpatterns = [
+    path('admin/', admin.site.urls),
+
+    # Core API
+    path('api/', include('core.urls')),  # core handles all apps
+]

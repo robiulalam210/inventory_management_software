@@ -1,3 +1,4 @@
+# purchases/models.py
 from django.db import models
 from products.models import Product
 
@@ -6,13 +7,65 @@ class Supplier(models.Model):
     phone = models.CharField(max_length=20)
     address = models.TextField()
 
+    def __str__(self):
+        return self.name
+
+
 class Purchase(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
-    total = models.DecimalField(max_digits=10, decimal_places=2)
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     date = models.DateField()
+    overall_discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    overall_discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
+    overall_delivery_charge = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    overall_delivery_charge_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
+    overall_service_charge = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    overall_service_charge_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
+    vat = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    vat_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
+
+    invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
+    payment_status = models.CharField(max_length=20, default='pending')
+    return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        # Auto-generate invoice no
+        if is_new and not self.invoice_no:
+            self.invoice_no = f"PO-{1000 + self.id}"
+            super().save(update_fields=['invoice_no'])
+
+    def __str__(self):
+        return f"{self.invoice_no} - {self.supplier.name}"
+
 
 class PurchaseItem(models.Model):
-    purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE)
-    product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
-    qty = models.IntegerField()
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='items')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    qty = models.PositiveIntegerField()
+    price = models.DecimalField(max_digits=12, decimal_places=2)
+    discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
+
+    def subtotal(self):
+        total = self.qty * self.price
+        if self.discount_type == 'percentage':
+            total -= total * (self.discount / 100)
+        elif self.discount_type == 'fixed':
+            total -= self.discount
+        return round(total, 2)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        # Increment stock automatically when new purchase item is added
+        if is_new:
+            product = self.product
+            product.stock_qty += self.qty
+            product.save(update_fields=['stock_qty'])
+
+    def __str__(self):
+        return f"{self.product.name} x {self.qty}"

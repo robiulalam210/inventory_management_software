@@ -94,6 +94,8 @@ class Sale(models.Model):
         return f"{self.invoice_no} - {self.customer.name}"
 
 # বিক্রয় আইটেম
+
+    
 class SaleItem(models.Model):
     sale = models.ForeignKey(Sale, related_name='items', on_delete=models.CASCADE)
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
@@ -109,6 +111,17 @@ class SaleItem(models.Model):
         elif self.discount_type == 'fixed' and self.discount:
             total -= self.discount
         return round(total, 2)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        # Decrement product stock only for new items
+        if is_new:
+            if self.quantity > self.product.stock_qty:
+                raise ValueError(f"Not enough stock for {self.product.name}. Available: {self.product.stock_qty}")
+            self.product.stock_qty -= self.quantity
+            self.product.save(update_fields=['stock_qty'])
 
     def __str__(self):
         return f"{self.product.name} x {self.quantity}"

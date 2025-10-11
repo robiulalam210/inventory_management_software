@@ -53,10 +53,10 @@ class Product(models.Model):
 
     purchase_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    opening_stock = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    stock_qty = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    alert_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-
+   
+    opening_stock = models.PositiveIntegerField(default=0)  # integer
+    stock_qty = models.PositiveIntegerField(default=0)      # integer
+    alert_quantity = models.PositiveIntegerField(default=5)      # integer
     description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='inventory-products/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
