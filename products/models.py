@@ -41,7 +41,10 @@ class Source(models.Model):
 
 class Product(models.Model):
     name = models.CharField(max_length=255)
-    sku = models.CharField(max_length=120, blank=True, null=True)
+    sku = models.CharField(max_length=120, blank=True, null=True, unique=True)  # product_no
+    bar_code = models.CharField(max_length=255, blank=True, null=True)
+    company_id = models.PositiveIntegerField(blank=True, null=True)
+
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, related_name="products")
     unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True)
     brand = models.ForeignKey('Brand', on_delete=models.SET_NULL, null=True, blank=True)
@@ -55,15 +58,28 @@ class Product(models.Model):
     alert_quantity = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     description = models.TextField(blank=True, null=True)
+    image = models.ImageField(upload_to='inventory-products/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
+
+    unit_name = models.CharField(max_length=100, blank=True, null=True)
+    unit_sub_name = models.CharField(max_length=100, blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.sku})" if self.sku else self.name
 
     def save(self, *args, **kwargs):
-        if not self.pk:  # When creating a new product
+        is_new = self.pk is None  # চেক করা হচ্ছে নতুন প্রোডাক্ট কিনা
+
+        # নতুন প্রোডাক্ট হলে opening_stock কে stock_qty তে সেট করা হবে
+        if is_new:
             self.stock_qty = self.opening_stock
+
         super().save(*args, **kwargs)
+
+        # নতুন প্রোডাক্ট হলে auto SKU generate
+        if is_new and not self.sku:
+            self.sku = f"PDT-{1000 + self.id}"
+            super().save(update_fields=["sku"])

@@ -34,11 +34,12 @@ class SourceSerializer(serializers.ModelSerializer):
 
 # Product
 class ProductSerializer(serializers.ModelSerializer):
-    category = CategorySerializer()
-    unit = UnitSerializer()
-    brand = BrandSerializer()
-    group = GroupSerializer()
-    source = SourceSerializer()
+    category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all())
+    unit = serializers.PrimaryKeyRelatedField(queryset=Unit.objects.all(), required=True, allow_null=True)
+    brand = serializers.PrimaryKeyRelatedField(queryset=Brand.objects.all(), required=False, allow_null=True)
+    group = serializers.PrimaryKeyRelatedField(queryset=Group.objects.all(), required=False, allow_null=True)
+    source = serializers.PrimaryKeyRelatedField(queryset=Source.objects.all(), required=False, allow_null=True)
+
 
     class Meta:
         model = Product
