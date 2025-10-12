@@ -1,5 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .views import CustomLoginView
+from rest_framework_simplejwt.views import TokenRefreshView
 
 # Purchases
 from purchases.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
@@ -9,12 +11,17 @@ from sales.views import SaleViewSet, SaleItemViewSet, CustomerViewSet, DuePaymen
 
 # Products
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
+from .views import CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet
 
 # Returns (make sure these exist in core/views.py or create returns/views.py)
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
-from .views import AccountViewSet
-router = DefaultRouter()
+from accounts.views import AccountViewSet  # ঠিক path
 
+router = DefaultRouter()
+router.register(r'companies', CompanyViewSet)
+router.register(r'users', UserViewSet)
+router.register(r'staff-roles', StaffRoleViewSet)
+router.register(r'staffs', StaffViewSet)
 # Product routes
 router.register(r'products', ProductViewSet, basename='product')
 router.register(r'categories', CategoryViewSet, basename='category')
@@ -42,5 +49,8 @@ router.register(r'accounts', AccountViewSet, basename='account')
 
 urlpatterns = [
     path('', include(router.urls)),
+    # path('login/', CustomLoginView.as_view(), name='custom-login'),
+    path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
+    path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('pay-due/', DuePaymentAPIView.as_view(), name='pay_due'),
 ]

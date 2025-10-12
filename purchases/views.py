@@ -10,12 +10,19 @@ class SupplierViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
 class PurchaseViewSet(viewsets.ModelViewSet):
-    queryset = Purchase.objects.all().select_related('supplier').prefetch_related('items')
+    queryset = Purchase.objects.all()
     serializer_class = PurchaseSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['supplier', 'date']
-    search_fields = ['supplier__name']
+
+    def get_queryset(self):
+        # Only return purchases of the logged-in user's company
+        user = self.request.user
+        return Purchase.objects.filter(company=user.company)
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update({"request": self.request})
+        return context
+
 
 class PurchaseItemViewSet(viewsets.ModelViewSet):
     queryset = PurchaseItem.objects.all().select_related('purchase', 'product')

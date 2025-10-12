@@ -38,18 +38,22 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-     'rest_framework',  # DRF
-   # Project apps
-   'purchases',
+    'rest_framework',
+    'django_filters',
+    'rest_framework_simplejwt',
+
+    # Project apps
+    'purchases',
     'products', 
     'sales',
+    'company',  # ✅ Add the company app
+
     'returns',
     "branch_warehouse",
-
-    "core",
-    'django_filters',
-    'rest_framework_simplejwt',  # JWT Auth
+     'accounts',  # ✅ add this
+    "core.apps.CoreConfig",  # ⚡️ শুধু app config
 ]
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -59,6 +63,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.CompanyMiddleware',  # ⚡️ middleware এখানে
+
 ]
 
 ROOT_URLCONF = 'inventory_api.urls'

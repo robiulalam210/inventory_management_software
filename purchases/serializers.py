@@ -41,26 +41,38 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
 class PurchaseSerializer(serializers.ModelSerializer):
     supplier_name = serializers.ReadOnlyField(source='supplier.name')
     purchase_items = PurchaseItemSerializer(many=True, write_only=True)
-    items = PurchaseItemSerializer(many=True, read_only=True)  # <- source removed
+    items = PurchaseItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = Purchase
         fields = [
-            'id', 'supplier', 'supplier_name', 'total', 'date',
+            'id', 'company', 'supplier', 'supplier_name', 'total', 'date',
             'overall_discount', 'overall_discount_type',
             'overall_delivery_charge', 'overall_delivery_charge_type',
             'overall_service_charge', 'overall_service_charge_type',
             'vat', 'vat_type', 'invoice_no', 'payment_status',
             'purchase_items', 'items'
         ]
+        read_only_fields = ['company']  # users don’t set this manually
 
     def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'company'):
+            validated_data['company'] = request.user.company
+
         items_data = validated_data.pop('purchase_items', [])
         purchase = Purchase.objects.create(**validated_data)
 
         total_amount = 0
         for item_data in items_data:
             product = item_data['product']
+
+            # Check product company
+            if product.company != request.user.company:
+                raise serializers.ValidationError(
+                    f"Cannot add product {product.name} from another company ({product.company.name})"
+                )
+
             qty = item_data['qty']
             price = item_data['price']
 
@@ -72,7 +84,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
             total_amount += purchase_item.subtotal()
 
-        # Apply overall purchase-level discounts/charges
+        # Apply overall charges/discounts
         overall_discount = purchase.overall_discount
         if purchase.overall_discount_type == 'percentage':
             total_amount -= total_amount * (overall_discount / 100)

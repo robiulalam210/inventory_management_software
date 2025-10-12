@@ -1,5 +1,7 @@
 # products/models.py
 from django.db import models
+from core.models import Company
+
 # products/models.py
 class Category(models.Model):
     name = models.CharField(max_length=120, unique=True)
@@ -40,10 +42,11 @@ class Source(models.Model):
 
 
 class Product(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="products")
+
     name = models.CharField(max_length=255)
     sku = models.CharField(max_length=120, blank=True, null=True, unique=True)  # product_no
     bar_code = models.CharField(max_length=255, blank=True, null=True)
-    company_id = models.PositiveIntegerField(blank=True, null=True)
 
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, related_name="products")
     unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True)

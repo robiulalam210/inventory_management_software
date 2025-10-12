@@ -33,7 +33,10 @@ class SourceSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 # Product
+
 class ProductSerializer(serializers.ModelSerializer):
+    company = serializers.PrimaryKeyRelatedField(read_only=True)  # 🔹 important
+
     category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all())
     unit = serializers.PrimaryKeyRelatedField(queryset=Unit.objects.all(), required=True, allow_null=True)
     brand = serializers.PrimaryKeyRelatedField(queryset=Brand.objects.all(), required=False, allow_null=True)
@@ -41,6 +44,7 @@ class ProductSerializer(serializers.ModelSerializer):
     source = serializers.PrimaryKeyRelatedField(queryset=Source.objects.all(), required=False, allow_null=True)
 
 
+    
     class Meta:
         model = Product
         fields = '__all__'

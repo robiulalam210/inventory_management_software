@@ -1,23 +1,21 @@
-from rest_framework import viewsets, status
+from rest_framework import status
 from rest_framework.response import Response
+from core.base_viewsets import BaseCompanyViewSet  # ✅ BaseCompanyViewSet ইমপোর্ট
 from .models import Account
 from .serializers import AccountSerializer
+# core/urls.py
 
-
-class AccountViewSet(viewsets.ModelViewSet):
-    """CRUD API for accounts. List endpoint returns the JSON shape you provided."""
+class AccountViewSet(BaseCompanyViewSet):  # ✅ ModelViewSet এর জায়গায় BaseCompanyViewSet
+    """CRUD API for accounts with company-based filtering."""
     queryset = Account.objects.all()
     serializer_class = AccountSerializer
 
     def list(self, request, *args, **kwargs):
-        queryset = self.get_queryset()
+        queryset = self.get_queryset()  # ✅ BaseCompanyViewSet এটি company অনুযায়ী ফিল্টার করবে
         serializer = self.get_serializer(queryset, many=True)
         data = serializer.data
 
-        # convert Decimal to string for exact match with example
         for item in data:
-            # serializer already returns Decimal as string thanks to DecimalField
-            # ensure ac_number null -> null in JSON
             if item.get('ac_number') in ('', ''):
                 item['ac_number'] = None
 
@@ -28,10 +26,8 @@ class AccountViewSet(viewsets.ModelViewSet):
         }
         return Response(result)
 
-    # Optionally override create/update to keep balance consistent
     def perform_create(self, serializer):
         instance = serializer.save()
-        # if balance empty set to opening_balance
         if not instance.balance:
             instance.balance = instance.opening_balance
             instance.save()

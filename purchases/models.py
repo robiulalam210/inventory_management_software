@@ -1,6 +1,7 @@
 # purchases/models.py
 from django.db import models
 from products.models import Product
+from core.models import Company  # or wherever your Company model is
 
 class Supplier(models.Model):
     name = models.CharField(max_length=100)
@@ -12,6 +13,7 @@ class Supplier(models.Model):
 
 
 class Purchase(models.Model):
+    company = models.ForeignKey(Company,on_delete=models.CASCADE, related_name="purchases", default=0  )# <-- default company ID for existing rows )
     supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     date = models.DateField()
