@@ -1,47 +1,28 @@
 from rest_framework import serializers
 from .models import Supplier, Purchase, PurchaseItem
 from products.models import Product
+from django.db import transaction
 
-
-# Supplier Serializer
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = '__all__'
 
-
-# Purchase Item Serializer
 class PurchaseItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
-        source='product', queryset=Product.objects.all()
+        queryset=Product.objects.all(), source='product', write_only=True
     )
-    product_name = serializers.ReadOnlyField(source='product.name')
+    product_name = serializers.CharField(source='product.name', read_only=True)
 
     class Meta:
         model = PurchaseItem
         fields = ['id', 'product_id', 'product_name', 'qty', 'price', 'discount', 'discount_type']
+        read_only_fields = ['id', 'product_name']
 
-    def subtotal(self):
-        qty = self.validated_data.get('qty', 0)
-        price = self.validated_data.get('price', 0)
-        discount = self.validated_data.get('discount', 0)
-        discount_type = self.validated_data.get('discount_type', 'fixed')
-
-        total = qty * price
-
-        if discount_type == 'percentage':
-            total -= total * (discount / 100)
-        elif discount_type == 'fixed':
-            total -= discount
-
-        return round(total, 2)
-
-
-# Purchase Serializer
 class PurchaseSerializer(serializers.ModelSerializer):
-    supplier_name = serializers.ReadOnlyField(source='supplier.name')
-    purchase_items = PurchaseItemSerializer(many=True, write_only=True)
-    items = PurchaseItemSerializer(many=True, read_only=True)
+    supplier_name = serializers.SerializerMethodField()
+    purchase_items = PurchaseItemSerializer(many=True, write_only=True, required=False)
+    items = PurchaseItemSerializer(many=True, read_only=True, source='items')
 
     class Meta:
         model = Purchase
@@ -53,60 +34,90 @@ class PurchaseSerializer(serializers.ModelSerializer):
             'vat', 'vat_type', 'invoice_no', 'payment_status',
             'purchase_items', 'items'
         ]
-        read_only_fields = ['company']  # users don’t set this manually
+        read_only_fields = ['company', 'total', 'invoice_no']
+
+    def get_supplier_name(self, obj):
+        try:
+            return obj.supplier.name if obj.supplier else None
+        except AttributeError:
+            return None
+
+    def validate(self, attrs):
+        # Only validate purchase_items on POST
+        request = self.context.get('request')
+        if request and request.method == 'POST':
+            purchase_items = attrs.get('purchase_items') or []
+            if not purchase_items:
+                raise serializers.ValidationError("At least one purchase item is required.")
+        return attrs
 
     def create(self, validated_data):
         request = self.context.get('request')
-        if request and hasattr(request.user, 'company'):
-            validated_data['company'] = request.user.company
+        if not request or not hasattr(request.user, 'company') or not request.user.company:
+            raise serializers.ValidationError("User does not belong to a company.")
 
+        validated_data['company'] = request.user.company
         items_data = validated_data.pop('purchase_items', [])
-        purchase = Purchase.objects.create(**validated_data)
 
-        total_amount = 0
-        for item_data in items_data:
-            product = item_data['product']
+        with transaction.atomic():
+            purchase = Purchase.objects.create(**validated_data)
+            total_amount = 0
 
-            # Check product company
-            if product.company != request.user.company:
-                raise serializers.ValidationError(
-                    f"Cannot add product {product.name} from another company ({product.company.name})"
-                )
+            try:
+                for item_data in items_data:
+                    product = item_data['product']
+                    if getattr(product, 'company', None) != request.user.company:
+                        raise serializers.ValidationError(
+                            f"Cannot add product {product.name} from another company ({getattr(product.company, 'name', None)})"
+                        )
+                    qty = item_data['qty']
+                    purchase_item = PurchaseItem.objects.create(purchase=purchase, **item_data)
+                    product.stock_qty += qty
+                    product.save(update_fields=['stock_qty'])
+                    subtotal = purchase_item.subtotal() if hasattr(purchase_item, 'subtotal') else (purchase_item.qty * purchase_item.price)
+                    total_amount += float(subtotal)
 
-            qty = item_data['qty']
-            price = item_data['price']
+                def safe_num(val): return float(val or 0)
 
-            purchase_item = PurchaseItem.objects.create(purchase=purchase, **item_data)
+                # Defensive value assignments to avoid NoneType errors
+                overall_discount = safe_num(getattr(purchase, 'overall_discount', 0))
+                overall_discount_type = getattr(purchase, 'overall_discount_type', 'flat') or 'flat'
+                overall_delivery_charge = safe_num(getattr(purchase, 'overall_delivery_charge', 0))
+                overall_delivery_charge_type = getattr(purchase, 'overall_delivery_charge_type', 'flat') or 'flat'
+                overall_service_charge = safe_num(getattr(purchase, 'overall_service_charge', 0))
+                overall_service_charge_type = getattr(purchase, 'overall_service_charge_type', 'flat') or 'flat'
+                vat = safe_num(getattr(purchase, 'vat', 0))
+                vat_type = getattr(purchase, 'vat_type', 'flat') or 'flat'
 
-            # Update stock
-            product.stock_qty += qty
-            product.save(update_fields=['stock_qty'])
+                # Apply overall charges/discounts
+                if overall_discount:
+                    if overall_discount_type == 'percentage':
+                        total_amount -= total_amount * (overall_discount / 100)
+                    else:
+                        total_amount -= overall_discount
 
-            total_amount += purchase_item.subtotal()
+                if overall_delivery_charge:
+                    if overall_delivery_charge_type == 'percentage':
+                        total_amount += total_amount * (overall_delivery_charge / 100)
+                    else:
+                        total_amount += overall_delivery_charge
 
-        # Apply overall charges/discounts
-        overall_discount = purchase.overall_discount
-        if purchase.overall_discount_type == 'percentage':
-            total_amount -= total_amount * (overall_discount / 100)
-        else:
-            total_amount -= overall_discount
+                if overall_service_charge:
+                    if overall_service_charge_type == 'percentage':
+                        total_amount += total_amount * (overall_service_charge / 100)
+                    else:
+                        total_amount += overall_service_charge
 
-        if purchase.overall_delivery_charge_type == 'percentage':
-            total_amount += total_amount * (purchase.overall_delivery_charge / 100)
-        else:
-            total_amount += purchase.overall_delivery_charge
+                if vat:
+                    if vat_type == 'percentage':
+                        total_amount += total_amount * (vat / 100)
+                    else:
+                        total_amount += vat
 
-        if purchase.overall_service_charge_type == 'percentage':
-            total_amount += total_amount * (purchase.overall_service_charge / 100)
-        else:
-            total_amount += purchase.overall_service_charge
+                purchase.total = round(total_amount, 2)
+                purchase.save(update_fields=['total'])
 
-        if purchase.vat_type == 'percentage':
-            total_amount += total_amount * (purchase.vat / 100)
-        else:
-            total_amount += purchase.vat
-
-        purchase.total = round(total_amount, 2)
-        purchase.save(update_fields=['total'])
+            except Exception as e:
+                raise serializers.ValidationError(f"Error creating purchase: {e}")
 
         return purchase
