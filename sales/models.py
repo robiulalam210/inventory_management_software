@@ -1,4 +1,5 @@
 from django.db import models
+from accounts.models import Account
 from products.models import Product
 from core.models import Company
 
@@ -41,7 +42,8 @@ class Sale(models.Model):
     overall_service_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percent','Percent')), blank=True, null=True)
     overall_vat_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     overall_vat_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percent','Percent')), blank=True, null=True)
-
+    payment_method = models.CharField(max_length=100, blank=True, null=True)  # or use choices if needed
+    account = models.ForeignKey( Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='sales')
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         super().save(*args, **kwargs)

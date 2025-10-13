@@ -6,8 +6,8 @@ from .models import SalesReturn, PurchaseReturn, BadStock
 # =========================
 @admin.register(SalesReturn)
 class SalesReturnAdmin(admin.ModelAdmin):
-    list_display = ('id', 'get_sale_item', 'qty', 'date', 'reason')
-    list_filter = ('date', 'sale_item')
+    list_display = ('id', 'get_sale_item', 'qty', 'return_date', 'reason')
+    list_filter = ('return_date', 'sale_item')
     search_fields = ('sale_item__sale__invoice_no', 'sale_item__product__name', 'reason')
 
     # ForeignKey display

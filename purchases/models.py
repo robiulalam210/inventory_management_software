@@ -1,5 +1,6 @@
 from django.db import models
 from products.models import Product
+from accounts.models import Account
 from core.models import Company
 
 class Supplier(models.Model):
@@ -23,7 +24,8 @@ class Purchase(models.Model):
     overall_service_charge_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
     vat = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     vat_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
-
+    payment_method = models.CharField(max_length=100, blank=True, null=True)  # or use choices if needed
+    account = models.ForeignKey( Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='purchase')
     invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
     payment_status = models.CharField(max_length=20, default='pending')
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
