@@ -16,7 +16,9 @@ from .serializers import (
 from decimal import Decimal
 
 from returns.models import SalesReturn, SalesReturnItem
-
+from expenses.models import Expense
+from expenses.serializers import ExpenseSerializer
+from django.utils.dateparse import parse_date
 # --------------------
 # Sales Report
 # --------------------
@@ -267,4 +269,25 @@ class StockReportView(APIView):
         products = Product.objects.all()
         data = [{"product": p.name, "stock_qty": p.stock_qty} for p in products]
         serializer = StockReportSerializer(data, many=True)
+        return Response(serializer.data)
+
+class ExpenseReportView(APIView):
+    def get(self, request):
+        company_id = request.GET.get('company')
+        start = request.GET.get('start')
+        end = request.GET.get('end')
+
+        expenses = Expense.objects.all()
+        if company_id:
+            expenses = expenses.filter(company_id=company_id)
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                expenses = expenses.filter(expense_date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                expenses = expenses.filter(expense_date__lte=end_date)
+
+        serializer = ExpenseSerializer(expenses, many=True)
         return Response(serializer.data)

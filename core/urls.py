@@ -53,7 +53,8 @@ urlpatterns = [
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('pay-due/', DuePaymentAPIView.as_view(), name='pay_due'),
-path('reports/', include('reports.urls')),
+    path('reports/', include('reports.urls')),
+    path('', include('expenses.urls')),  # <-- include your expenses app
 
 ]
 

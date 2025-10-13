@@ -4,13 +4,15 @@ from sales.models import Sale, SaleItem
 from purchases.models import Purchase
 from products.models import Product
 from accounts.models import Account
+from datetime import date  # for default DateField if needed
+
 
 # -----------------------------
 # Sales Return
 # -----------------------------
 class SalesReturn(models.Model):
     reason = models.TextField()
-    return_date = models.DateField(auto_now_add=True)  # auto_now_add ensures date is set automatically
+    return_date = models.DateField(auto_now_add=True)  # automatically set
     payment_method = models.CharField(max_length=100, blank=True, null=True)
     account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='sale_returns')
     invoice_no = models.CharField(max_length=100, blank=True, null=True)
@@ -30,7 +32,7 @@ class SalesReturn(models.Model):
 
 class SalesReturnItem(models.Model):
     sales_return = models.ForeignKey(SalesReturn, on_delete=models.CASCADE, related_name='items')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)  # Use FK instead of separate product_id
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
     product_name = models.CharField(max_length=200)
     quantity = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
@@ -60,7 +62,7 @@ class PurchaseReturn(models.Model):
 
 class PurchaseReturnItem(models.Model):
     purchase_return = models.ForeignKey(PurchaseReturn, on_delete=models.CASCADE, related_name='items')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)  # Use FK instead of product_ref
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
     product_name = models.CharField(max_length=200)
     qty = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=12, decimal_places=2)

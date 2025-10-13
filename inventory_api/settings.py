@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "branch_warehouse",
     'accounts',
     'reports',
+    'expenses',
     "core.apps.CoreConfig",
 ]
 
