@@ -1,41 +1,57 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from datetime import datetime
+from decimal import Decimal
 from django.db.models import Sum, F, FloatField
-from returns.models import SalesReturn, PurchaseReturn
+from django.utils.dateparse import parse_date
+
 from sales.models import Sale, SaleItem
 from purchases.models import Purchase, PurchaseItem
+from returns.models import SalesReturn, PurchaseReturn, BadStock
 from products.models import Product
-from django.db.models import F, Sum, FloatField
-from returns.models import BadStock # Assuming you have this model
-from .serializers import (
-    SalesReportSerializer, PurchaseReportSerializer, ProfitLossReportSerializer,
-    PurchaseReturnReportSerializer, TopSoldProductsSerializer,
-    LowStockSerializer, BadStockReportSerializer, StockReportSerializer
-)
-from decimal import Decimal
-
-from returns.models import SalesReturn, SalesReturnItem
 from expenses.models import Expense
-from expenses.serializers import ExpenseSerializer
-from django.utils.dateparse import parse_date
+
+from .serializers import (
+    SalesReportSerializer,
+    PurchaseReportSerializer,
+    ProfitLossReportSerializer,
+    PurchaseReturnReportSerializer,
+    TopSoldProductsSerializer,
+    LowStockSerializer,
+    BadStockReportSerializer,
+    StockReportSerializer,
+    ExpenseSerializer
+)
+
+
 # --------------------
 # Sales Report
 # --------------------
+
 class SalesReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        start_date = request.GET.get('start')
-        end_date = request.GET.get('end')
-        if not start_date or not end_date:
-            return Response({"error": "Provide start and end dates"}, status=400)
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
 
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"error": "Invalid date format, use YYYY-MM-DD"}, status=400)
+        start = request.GET.get('start')
+        end = request.GET.get('end')
 
-        sales = Sale.objects.filter(sale_date__date__range=[start, end])
+        sales = Sale.objects.all()
+       
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                sales = sales.filter(sale_date__date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                sales = sales.filter(sale_date__date__lte=end_date)
+
         report = []
         for sale in sales:
             total_amount = sale.items.aggregate(
@@ -62,19 +78,27 @@ class SalesReportView(APIView):
 # Purchase Report
 # --------------------
 class PurchaseReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        start_date = request.GET.get('start')
-        end_date = request.GET.get('end')
-        if not start_date or not end_date:
-            return Response({"error": "Provide start and end dates"}, status=400)
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+        start = request.GET.get('start')
+        end = request.GET.get('end')
 
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"error": "Invalid date format, use YYYY-MM-DD"}, status=400)
+        purchases = Purchase.objects.all()
+        
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                purchases = purchases.filter(date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                purchases = purchases.filter(date__lte=end_date)
 
-        purchases = Purchase.objects.filter(date__range=[start, end])
         report = []
         for purchase in purchases:
             total_amount = purchase.items.aggregate(
@@ -99,20 +123,29 @@ class PurchaseReportView(APIView):
 # Profit & Loss Report
 # --------------------
 class ProfitLossReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        start_date = request.GET.get('start')
-        end_date = request.GET.get('end')
-        if not start_date or not end_date:
-            return Response({"error": "Provide start and end dates"}, status=400)
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+        start = request.GET.get('start')
+        end = request.GET.get('end')
 
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"error": "Invalid date format, use YYYY-MM-DD"}, status=400)
-
-        sales_items = SaleItem.objects.filter(sale__sale_date__date__range=[start, end])
-        purchase_items = PurchaseItem.objects.filter(purchase__date__range=[start, end])
+        sales_items = SaleItem.objects.all()
+        purchase_items = PurchaseItem.objects.all()
+       
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                sales_items = sales_items.filter(sale__sale_date__date__gte=start_date)
+                purchase_items = purchase_items.filter(purchase__date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                sales_items = sales_items.filter(sale__sale_date__date__lte=end_date)
+                purchase_items = purchase_items.filter(purchase__date__lte=end_date)
 
         total_sales = sum([item.quantity * item.unit_price for item in sales_items])
         total_purchase = sum([item.qty * item.price for item in purchase_items])
@@ -127,13 +160,60 @@ class ProfitLossReportView(APIView):
 
 
 # --------------------
+# Expense Report
+# --------------------
+class ExpenseReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
+        start = request.GET.get('start')
+        end = request.GET.get('end')
+
+        expenses = Expense.objects.all()
+       
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                expenses = expenses.filter(expense_date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                expenses = expenses.filter(expense_date__lte=end_date)
+
+        serializer = ExpenseSerializer(expenses, many=True)
+        return Response(serializer.data)
+
+
+# --------------------
 # Purchase Return Report
 # --------------------
 class PurchaseReturnReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        start = datetime.strptime(request.GET.get('start'), "%Y-%m-%d").date()
-        end = datetime.strptime(request.GET.get('end'), "%Y-%m-%d").date()
-        returns = PurchaseReturn.objects.filter(date__range=[start, end])
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+        start = request.GET.get('start')
+        end = request.GET.get('end')
+
+        returns = PurchaseReturn.objects.all()
+      
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                returns = returns.filter(date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                returns = returns.filter(date__lte=end_date)
+
         report = [{
             'invoice_no': r.purchase.invoice_no,
             'supplier': r.purchase.supplier.name,
@@ -148,31 +228,33 @@ class PurchaseReturnReportView(APIView):
 # --------------------
 # Sales Return Report
 # --------------------
-
-
 class SalesReturnReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        start_date = request.GET.get('start')
-        end_date = request.GET.get('end')
-        if not start_date or not end_date:
-            return Response({"error": "Provide start and end dates"}, status=400)
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+        start = request.GET.get('start')
+        end = request.GET.get('end')
 
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"error": "Invalid date format, use YYYY-MM-DD"}, status=400)
-
-        # Query SalesReturn using correct field
-        sales_returns = SalesReturn.objects.filter(return_date__range=[start, end])
+        sales_returns = SalesReturn.objects.all()
+        
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                sales_returns = sales_returns.filter(return_date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                sales_returns = sales_returns.filter(return_date__lte=end_date)
 
         report = []
         for sr in sales_returns:
             total_amount = sr.items.aggregate(
                 total=Sum(F('quantity') * F('unit_price'), output_field=FloatField())
             )['total'] or 0
-
-            # Convert to Decimal for safe arithmetic
             total_amount = Decimal(total_amount)
             discount = sr.discount or Decimal(0)
             vat = sr.vat or Decimal(0)
@@ -190,33 +272,32 @@ class SalesReturnReportView(APIView):
         serializer = PurchaseReturnReportSerializer(report, many=True)
         return Response(serializer.data)
 
+
 # --------------------
 # Top Sold Products Report
 # --------------------
-
-
-
-
 class TopSoldProductsReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        start_str = request.GET.get('start')
-        end_str = request.GET.get('end')
+        user = request.user
+        company = getattr(user, 'company', None)  # get the user's company from token
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+        start = request.GET.get('start')
+        end = request.GET.get('end')
 
-        if not start_str or not end_str:
-            return Response({"error": "Please provide 'start' and 'end' query parameters"}, status=400)
+        sale_items = SaleItem.objects.all()
+        
+        if start:
+            start_date = parse_date(start)
+            if start_date:
+                sale_items = sale_items.filter(sale__sale_date__date__gte=start_date)
+        if end:
+            end_date = parse_date(end)
+            if end_date:
+                sale_items = sale_items.filter(sale__sale_date__date__lte=end_date)
 
-        try:
-            start = datetime.strptime(start_str, "%Y-%m-%d").date()
-            end = datetime.strptime(end_str, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
-
-        # Aggregate quantities and calculate total sales using your subtotal
-        sale_items = SaleItem.objects.filter(
-            sale__sale_date__date__range=[start, end]
-        )
-
-        # Dictionary to accumulate totals per product
         product_totals = {}
         for item in sale_items:
             pid = item.product.id
@@ -229,7 +310,6 @@ class TopSoldProductsReportView(APIView):
             product_totals[pid]["quantity_sold"] += item.quantity
             product_totals[pid]["total_sales"] += float(item.subtotal())
 
-        # Convert to list and sort by quantity_sold descending
         products_list = sorted(
             product_totals.values(),
             key=lambda x: x["quantity_sold"],
@@ -238,10 +318,14 @@ class TopSoldProductsReportView(APIView):
 
         serializer = TopSoldProductsSerializer(products_list, many=True)
         return Response(serializer.data)
+
+
 # --------------------
-# Low Stock Products Report
+# Low Stock Report
 # --------------------
 class LowStockReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
         threshold = int(request.GET.get('threshold', 10))
         products = Product.objects.filter(stock_qty__lte=threshold)
@@ -254,6 +338,8 @@ class LowStockReportView(APIView):
 # Bad Stock Report
 # --------------------
 class BadStockReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
         bad_items = BadStock.objects.all()
         data = [{"product": b.product.name, "quantity": b.quantity, "reason": b.reason} for b in bad_items]
@@ -265,29 +351,10 @@ class BadStockReportView(APIView):
 # Stock Report
 # --------------------
 class StockReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
         products = Product.objects.all()
         data = [{"product": p.name, "stock_qty": p.stock_qty} for p in products]
         serializer = StockReportSerializer(data, many=True)
-        return Response(serializer.data)
-
-class ExpenseReportView(APIView):
-    def get(self, request):
-        company_id = request.GET.get('company')
-        start = request.GET.get('start')
-        end = request.GET.get('end')
-
-        expenses = Expense.objects.all()
-        if company_id:
-            expenses = expenses.filter(company_id=company_id)
-        if start:
-            start_date = parse_date(start)
-            if start_date:
-                expenses = expenses.filter(expense_date__gte=start_date)
-        if end:
-            end_date = parse_date(end)
-            if end_date:
-                expenses = expenses.filter(expense_date__lte=end_date)
-
-        serializer = ExpenseSerializer(expenses, many=True)
         return Response(serializer.data)

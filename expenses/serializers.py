@@ -4,13 +4,16 @@ from .models import Expense, ExpenseHead, ExpenseSubHead
 class ExpenseHeadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseHead
-        fields = ['id', 'name']
+        fields = ['id', 'name', 'company']  # ✅ include it!
+        extra_kwargs = {
+            'company': {'required': True}  # so we can set it manually in the view
+        }
 
 class ExpenseSubHeadSerializer(serializers.ModelSerializer):
     head = serializers.PrimaryKeyRelatedField(queryset=ExpenseHead.objects.all())
     class Meta:
         model = ExpenseSubHead
-        fields = ['id', 'name', 'head']
+        fields = ['id', 'name', 'head', 'company']  # ✅ include it!
 
 class ExpenseSerializer(serializers.ModelSerializer):
 

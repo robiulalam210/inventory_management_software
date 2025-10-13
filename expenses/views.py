@@ -1,55 +1,93 @@
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from .models import Expense, ExpenseHead, ExpenseSubHead
 from .serializers import ExpenseSerializer, ExpenseHeadSerializer, ExpenseSubHeadSerializer
 
-# List and create Expense Heads
+
+# ------------------------------
+# Expense Head
+# ------------------------------
 class ExpenseHeadListView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        company_id = request.GET.get('company')
-        heads = ExpenseHead.objects.all()
-        if company_id:
-            heads = heads.filter(company_id=company_id)
+        user = request.user
+        company = getattr(user, 'company', None)
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
+        heads = ExpenseHead.objects.filter(company=company)
         serializer = ExpenseHeadSerializer(heads, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        serializer = ExpenseHeadSerializer(data=request.data)
+        user = request.user
+        company = getattr(user, 'company', None)
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
+        data = request.data.copy()
+        data['company'] = company.id
+
+        serializer = ExpenseHeadSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# List and create Expense SubHeads
+
+# ------------------------------
+# Expense SubHead
+# ------------------------------
 class ExpenseSubHeadListView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        company_id = request.GET.get('company')
-        subheads = ExpenseSubHead.objects.all()
-        if company_id:
-            subheads = subheads.filter(company_id=company_id)
+        user = request.user
+        company = getattr(user, 'company', None)
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
+        subheads = ExpenseSubHead.objects.filter(company=company)
         serializer = ExpenseSubHeadSerializer(subheads, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        serializer = ExpenseSubHeadSerializer(data=request.data)
+        user = request.user
+        company = getattr(user, 'company', None)
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
+        data = request.data.copy()
+        data['company'] = company.id
+
+        serializer = ExpenseSubHeadSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# List and create Expenses
+# ------------------------------
+# Expense
+# ------------------------------
 class ExpenseListView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
-        company_id = request.GET.get('company')
+        user = request.user
+        company = getattr(user, 'company', None)
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
         start = request.GET.get('start')
         end = request.GET.get('end')
 
-        expenses = Expense.objects.all()
-        if company_id:
-            expenses = expenses.filter(company_id=company_id)
+        expenses = Expense.objects.filter(company=company)
+
         if start and end:
             expenses = expenses.filter(expense_date__range=[start, end])
 
@@ -57,7 +95,15 @@ class ExpenseListView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
-        serializer = ExpenseSerializer(data=request.data)
+        user = request.user
+        company = getattr(user, 'company', None)
+        if not company:
+            return Response({"detail": "User has no associated company"}, status=400)
+
+        data = request.data.copy()
+        data['company'] = company.id  # attach company automatically
+
+        serializer = ExpenseSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
