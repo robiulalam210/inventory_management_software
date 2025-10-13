@@ -1,3 +1,5 @@
+import logging
+import traceback
 from rest_framework import serializers
 from .models import Supplier, Purchase, PurchaseItem
 from products.models import Product
@@ -22,7 +24,7 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
 class PurchaseSerializer(serializers.ModelSerializer):
     supplier_name = serializers.SerializerMethodField()
     purchase_items = PurchaseItemSerializer(many=True, write_only=True, required=False)
-    items = PurchaseItemSerializer(many=True, read_only=True, source='items')
+    items = PurchaseItemSerializer(many=True, read_only=True)  # <-- FIXED HERE
 
     class Meta:
         model = Purchase
@@ -43,41 +45,46 @@ class PurchaseSerializer(serializers.ModelSerializer):
             return None
 
     def validate(self, attrs):
-        # Only validate purchase_items on POST
         request = self.context.get('request')
-        if request and request.method == 'POST':
+        if request and getattr(request, "method", None) == 'POST':
             purchase_items = attrs.get('purchase_items') or []
             if not purchase_items:
                 raise serializers.ValidationError("At least one purchase item is required.")
         return attrs
 
     def create(self, validated_data):
-        request = self.context.get('request')
-        if not request or not hasattr(request.user, 'company') or not request.user.company:
-            raise serializers.ValidationError("User does not belong to a company.")
+        logger = logging.getLogger(__name__)
+        try:
+            request = self.context.get('request')
+            if not request or not hasattr(request.user, 'company') or not request.user.company:
+                raise serializers.ValidationError("User does not belong to a company.")
 
-        validated_data['company'] = request.user.company
-        items_data = validated_data.pop('purchase_items', [])
+            validated_data['company'] = request.user.company
+            items_data = validated_data.pop('purchase_items', [])
 
-        with transaction.atomic():
-            purchase = Purchase.objects.create(**validated_data)
-            total_amount = 0
+            with transaction.atomic():
+                purchase = Purchase.objects.create(**validated_data)
+                total_amount = 0
 
-            try:
                 for item_data in items_data:
                     product = item_data['product']
                     if getattr(product, 'company', None) != request.user.company:
                         raise serializers.ValidationError(
-                            f"Cannot add product {product.name} from another company ({getattr(product.company, 'name', None)})"
+                            f"Cannot add product {getattr(product, 'name', product)} from another company ({getattr(product.company, 'name', None)})"
                         )
                     qty = item_data['qty']
                     purchase_item = PurchaseItem.objects.create(purchase=purchase, **item_data)
-                    product.stock_qty += qty
+                    product.stock_qty = (getattr(product, 'stock_qty', 0) or 0) + qty
                     product.save(update_fields=['stock_qty'])
-                    subtotal = purchase_item.subtotal() if hasattr(purchase_item, 'subtotal') else (purchase_item.qty * purchase_item.price)
+                    subtotal_func = getattr(purchase_item, 'subtotal', None)
+                    subtotal = subtotal_func() if callable(subtotal_func) else (purchase_item.qty * purchase_item.price)
                     total_amount += float(subtotal)
 
-                def safe_num(val): return float(val or 0)
+                def safe_num(val): 
+                    try:
+                        return float(val or 0)
+                    except Exception:
+                        return 0
 
                 # Defensive value assignments to avoid NoneType errors
                 overall_discount = safe_num(getattr(purchase, 'overall_discount', 0))
@@ -117,7 +124,12 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 purchase.total = round(total_amount, 2)
                 purchase.save(update_fields=['total'])
 
-            except Exception as e:
-                raise serializers.ValidationError(f"Error creating purchase: {e}")
-
-        return purchase
+            return purchase
+        except Exception as e:
+            logger.exception("Exception in PurchaseSerializer.create")
+            # Add traceback in the error detail (for development only!)
+            tb = traceback.format_exc()
+            raise serializers.ValidationError({
+                "error": f"Internal error: {e}",
+                "traceback": tb
+            })
