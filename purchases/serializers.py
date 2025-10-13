@@ -3,7 +3,9 @@ import traceback
 from rest_framework import serializers
 from .models import Supplier, Purchase, PurchaseItem
 from products.models import Product
+from accounts.models import Account
 from django.db import transaction
+from decimal import Decimal
 
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
@@ -24,7 +26,12 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
 class PurchaseSerializer(serializers.ModelSerializer):
     supplier_name = serializers.SerializerMethodField()
     purchase_items = PurchaseItemSerializer(many=True, write_only=True, required=False)
-    items = PurchaseItemSerializer(many=True, read_only=True)  # <-- FIXED HERE
+    items = PurchaseItemSerializer(many=True, read_only=True)
+    account_id = serializers.PrimaryKeyRelatedField(
+        queryset=Account.objects.all(), source='account', allow_null=True, required=False
+    )
+    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
+    payment_method = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = Purchase
@@ -33,7 +40,8 @@ class PurchaseSerializer(serializers.ModelSerializer):
             'overall_discount', 'overall_discount_type',
             'overall_delivery_charge', 'overall_delivery_charge_type',
             'overall_service_charge', 'overall_service_charge_type',
-            'vat', 'vat_type', 'invoice_no', 'payment_status',
+            'vat', 'vat_type', 'invoice_no', 'payment_status', 'return_amount',
+            'account_id', 'account_name', 'payment_method',
             'purchase_items', 'items'
         ]
         read_only_fields = ['company', 'total', 'invoice_no']
@@ -61,10 +69,11 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
             validated_data['company'] = request.user.company
             items_data = validated_data.pop('purchase_items', [])
+            account = validated_data.get('account', None)
+            total_amount = 0
 
             with transaction.atomic():
                 purchase = Purchase.objects.create(**validated_data)
-                total_amount = 0
 
                 for item_data in items_data:
                     product = item_data['product']
@@ -88,13 +97,13 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
                 # Defensive value assignments to avoid NoneType errors
                 overall_discount = safe_num(getattr(purchase, 'overall_discount', 0))
-                overall_discount_type = getattr(purchase, 'overall_discount_type', 'flat') or 'flat'
+                overall_discount_type = getattr(purchase, 'overall_discount_type', 'fixed') or 'fixed'
                 overall_delivery_charge = safe_num(getattr(purchase, 'overall_delivery_charge', 0))
-                overall_delivery_charge_type = getattr(purchase, 'overall_delivery_charge_type', 'flat') or 'flat'
+                overall_delivery_charge_type = getattr(purchase, 'overall_delivery_charge_type', 'fixed') or 'fixed'
                 overall_service_charge = safe_num(getattr(purchase, 'overall_service_charge', 0))
-                overall_service_charge_type = getattr(purchase, 'overall_service_charge_type', 'flat') or 'flat'
+                overall_service_charge_type = getattr(purchase, 'overall_service_charge_type', 'fixed') or 'fixed'
                 vat = safe_num(getattr(purchase, 'vat', 0))
-                vat_type = getattr(purchase, 'vat_type', 'flat') or 'flat'
+                vat_type = getattr(purchase, 'vat_type', 'fixed') or 'fixed'
 
                 # Apply overall charges/discounts
                 if overall_discount:
@@ -124,10 +133,15 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 purchase.total = round(total_amount, 2)
                 purchase.save(update_fields=['total'])
 
+                # Update account balance (optional, for cash outflow)
+                if account and purchase.total > 0:
+                    account.balance -= Decimal(str(purchase.total))
+
+                    account.save(update_fields=['balance'])
+
             return purchase
         except Exception as e:
             logger.exception("Exception in PurchaseSerializer.create")
-            # Add traceback in the error detail (for development only!)
             tb = traceback.format_exc()
             raise serializers.ValidationError({
                 "error": f"Internal error: {e}",

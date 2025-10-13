@@ -1,4 +1,5 @@
 from django.db import models
+from core.models import Company
 from sales.models import SaleItem
 from purchases.models import Purchase
 from products.models import Product
@@ -9,7 +10,7 @@ class SalesReturn(models.Model):
     qty = models.PositiveIntegerField()
     reason = models.TextField()
     return_date = models.DateField()
-
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     payment_method = models.CharField(max_length=100, blank=True, null=True)
     account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='sale_returns')
     invoice_no = models.CharField(max_length=100, blank=True, null=True)
@@ -33,6 +34,7 @@ class PurchaseReturn(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     return_charge = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     return_charge_type = models.CharField(max_length=50, blank=True, null=True)
 
     def __str__(self):
@@ -41,6 +43,7 @@ class PurchaseReturn(models.Model):
 class BadStock(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='bad_stocks')
     qty = models.PositiveIntegerField()
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     reason = models.TextField()
     date = models.DateField()
 
