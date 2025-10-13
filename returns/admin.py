@@ -1,38 +1,67 @@
 from django.contrib import admin
-from .models import SalesReturn, PurchaseReturn, BadStock
+from .models import SalesReturn, PurchaseReturn, BadStock, SalesReturnItem
+from .models import PurchaseReturn, PurchaseReturnItem, BadStock
 
 # =========================
-# Sales Return Admin
-# =========================
+
+class SalesReturnItemInline(admin.TabularInline):
+    model = SalesReturnItem
+    extra = 1
+    fields = ('product_name', 'quantity', 'unit_price', 'discount', 'discount_type')
+    readonly_fields = ('product_name',)
+    show_change_link = True
+
+
 @admin.register(SalesReturn)
 class SalesReturnAdmin(admin.ModelAdmin):
-    list_display = ('id', 'get_sale_item', 'qty', 'date', 'reason')
-    list_filter = ('date', 'sale_item')
-    search_fields = ('sale_item__sale__invoice_no', 'sale_item__product__name', 'reason')
+    list_display = (
+        'id', 
+        'invoice_no', 
+        'return_date', 
+        'payment_method', 
+        'reason', 
+        'discount', 
+        'vat', 
+        'delivery_charge'
+    )
+    list_filter = ('return_date', 'payment_method', 'company')
+    search_fields = ('invoice_no', 'reason', 'account__name')
+    inlines = [SalesReturnItemInline]
 
-    # ForeignKey display
-    def get_sale_item(self, obj):
-        return f"{obj.sale_item.product.name} ({obj.sale_item.sale.invoice_no})"
-    get_sale_item.short_description = 'Sale Item'
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if hasattr(request.user, 'company') and request.user.company:
+            return qs.filter(company=request.user.company)
+        return qs
 
+
+@admin.register(SalesReturnItem)
+class SalesReturnItemAdmin(admin.ModelAdmin):
+    list_display = ('id', 'sales_return', 'product_name', 'quantity', 'unit_price', 'discount')
+    search_fields = ('product_name',)
+    list_filter = ('sales_return__return_date',)
 
 # =========================
 # Purchase Return Admin
-# =========================
+
+class PurchaseReturnItemInline(admin.TabularInline):
+    model = PurchaseReturnItem
+    extra = 1
+    fields = ('product_name', 'qty', 'price', 'discount', 'discount_type')
+    readonly_fields = ('product_name',)
+    show_change_link = True
+
+
 @admin.register(PurchaseReturn)
 class PurchaseReturnAdmin(admin.ModelAdmin):
-    list_display = ('id', 'get_purchase', 'get_product', 'quantity', 'date')
-    list_filter = ('date', 'purchase_ref', 'product_ref')
-    search_fields = ('purchase_ref__invoice_no', 'product_ref__name')
+    list_display = ('id', 'get_purchase', 'date', 'payment_method', 'return_amount')
+    list_filter = ('date', 'payment_method')
+    search_fields = ('purchase_ref__invoice_no',)
+    inlines = [PurchaseReturnItemInline]
 
     def get_purchase(self, obj):
-        return obj.purchase_ref.invoice_no  # বা আপনার Purchase model অনুযায়ী
+        return obj.purchase_ref.invoice_no
     get_purchase.short_description = 'Purchase'
-
-    def get_product(self, obj):
-        return obj.product_ref.name
-    get_product.short_description = 'Product'
-
 
 # =========================
 # Bad Stock Admin

@@ -1,7 +1,7 @@
-# purchases/models.py
 from django.db import models
 from products.models import Product
-from core.models import Company  # or wherever your Company model is
+from accounts.models import Account
+from core.models import Company
 
 class Supplier(models.Model):
     name = models.CharField(max_length=100)
@@ -11,9 +11,8 @@ class Supplier(models.Model):
     def __str__(self):
         return self.name
 
-
 class Purchase(models.Model):
-    company = models.ForeignKey(Company,on_delete=models.CASCADE, related_name="purchases", default=0  )# <-- default company ID for existing rows )
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     date = models.DateField()
@@ -25,7 +24,8 @@ class Purchase(models.Model):
     overall_service_charge_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
     vat = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     vat_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
-
+    payment_method = models.CharField(max_length=100, blank=True, null=True)  # or use choices if needed
+    account = models.ForeignKey( Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='purchase')
     invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
     payment_status = models.CharField(max_length=20, default='pending')
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -33,15 +33,12 @@ class Purchase(models.Model):
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         super().save(*args, **kwargs)
-
-        # Auto-generate invoice no
         if is_new and not self.invoice_no:
             self.invoice_no = f"PO-{1000 + self.id}"
             super().save(update_fields=['invoice_no'])
 
     def __str__(self):
-        return f"{self.invoice_no} - {self.supplier.name}"
-
+        return f"{self.invoice_no or ''} - {self.supplier.name}"
 
 class PurchaseItem(models.Model):
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='items')
@@ -62,11 +59,9 @@ class PurchaseItem(models.Model):
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         super().save(*args, **kwargs)
-
-        # Increment stock automatically when new purchase item is added
         if is_new:
             product = self.product
-            product.stock_qty += self.qty
+            product.stock_qty += self.qty  # Increase stock
             product.save(update_fields=['stock_qty'])
 
     def __str__(self):

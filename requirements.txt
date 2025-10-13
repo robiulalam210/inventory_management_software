@@ -1,4 +1,4 @@
-asgiref==3.10.0
+sgiref==3.10.0
 dj-database-url==3.0.1
 Django==5.2.7
 django-filter==25.2

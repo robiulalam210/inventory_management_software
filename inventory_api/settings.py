@@ -12,7 +12,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # -----------------------------
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost").split(",")
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+DEBUG = True
+APPEND_SLASH = True
 
 # -----------------------------
 # INSTALLED APPS
@@ -24,6 +26,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_extensions',
 
     'rest_framework',
     'django_filters',
@@ -37,6 +40,7 @@ INSTALLED_APPS = [
     'returns',
     "branch_warehouse",
     'accounts',
+    'reports',
     "core.apps.CoreConfig",
 ]
 
@@ -53,7 +57,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.CompanyMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # ⚡️ Add here
-
 ]
 
 ROOT_URLCONF = 'inventory_api.urls'
@@ -74,17 +77,16 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'inventory_api.wsgi.application'
+APPEND_SLASH = True  # This is the Django default
 
 # -----------------------------
 # DATABASE
 # -----------------------------
 DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get(
-            'DATABASE_URL', f"postgres://postgres:postgres@localhost:5432/inventory_db"
-        ),
-        conn_max_age=600,
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
 }
 
 # -----------------------------
@@ -99,6 +101,8 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    # Add EXCEPTION_HANDLER here if you want custom error handling
+    # 'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
 }
 
 # -----------------------------
