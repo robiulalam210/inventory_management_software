@@ -2,21 +2,9 @@ from rest_framework import serializers
 from .models import Customer, Sale, SaleItem
 from products.models import Product
 from accounts.models import Account
-from rest_framework.response import Response
 from sales.models import Sale, SaleItem
-from django.db.models import Sum, F, FloatField
-from datetime import datetime
-from rest_framework.views import APIView
 
-# -----------------------------
-# Customer Serializer
-# -----------------------------
-class CustomerSerializer(serializers.ModelSerializer):
-    company = serializers.PrimaryKeyRelatedField(read_only=True)
 
-    class Meta:
-        model = Customer
-        fields = '__all__'
 
 # -----------------------------
 # SaleItem Serializer

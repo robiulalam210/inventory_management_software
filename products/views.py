@@ -1,30 +1,17 @@
-# products/views.py
-from rest_framework import viewsets, permissions, filters
+from rest_framework import viewsets, permissions, filters, status, serializers
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.exceptions import ValidationError
-from rest_framework import serializers
-from core.base_viewsets import BaseCompanyViewSet  # ✅ BaseCompanyViewSet ইমপোর্ট
+from core.base_viewsets import BaseCompanyViewSet  # ✅ Custom base viewset
 from .models import Product, Category, Unit, Brand, Group, Source
 from .serializers import (
     ProductSerializer, CategorySerializer, UnitSerializer,
     BrandSerializer, GroupSerializer, SourceSerializer
 )
-from rest_framework import viewsets
+from core.utils import custom_response
+from core.base_viewsets import BaseCompanyViewSet
 
-class BaseCompanyViewSet(viewsets.ModelViewSet):
-    """Automatically filter by logged-in user's company"""
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        company = getattr(self.request.user, "company", None)
-        if company:
-            return queryset.filter(company=company)
-        return queryset.none()
 
-    def perform_create(self, serializer):
-        serializer.save(company=self.request.user.company)
-
-# Category API
-class CategoryViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে ইনহেরিট
+# ----- Category API -----
+class CategoryViewSet(BaseCompanyViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -32,37 +19,143 @@ class CategoryViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেক�
     search_fields = ['name']
     ordering_fields = ['name']
 
-    def perform_create(self, serializer):   # ইউনিকনেস চেক করার জন্য ওভাররাইড      
-        company = self.request.user.company
-        name = serializer.validated_data.get('name')
-        
-        if Category.objects.filter(company=company, name=name).exists():
-            raise serializers.ValidationError({"name": "A category with this name already exists"})
-        
-        serializer.save(company=company)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        return custom_response(
+            success=True,
+            message="Category list fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
 
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return custom_response(
+            success=True,
+            message="Category details fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
 
-# Unit API
-class UnitViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে ইনহেরিট
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            company = getattr(self.request.user, "company", None)
+            name = serializer.validated_data.get('name')
+            if not company:
+                return custom_response(
+                    success=False,
+                    message="User does not have an associated company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if Category.objects.filter(company=company, name=name).exists():
+                return custom_response(
+                    success=False,
+                    message="A category with this name already exists for this company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.save(company=company)
+            return custom_response(
+                success=True,
+                message="Category created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# ----- Unit API -----
+class UnitViewSet(BaseCompanyViewSet):
     queryset = Unit.objects.all()
     serializer_class = UnitSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'code']
-
-    def perform_create(self, serializer):   # ইউনিকনেস চেক করার জন্য ওভাররাইড
-        company = self.request.user.company
-        name = serializer.validated_data.get('name')
-
-        if Unit.objects.filter(company=company, name=name).exists():
-            raise serializers.ValidationError({"name": "A unit with this name already exists"})
-
-        serializer.save(company=company)
-
     ordering_fields = ['name', 'code']
 
-# Brand API
-class BrandViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে ইনহেরিট
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        return custom_response(
+            success=True,
+            message="Unit list fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return custom_response(
+            success=True,
+            message="Unit details fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            company = getattr(self.request.user, "company", None)
+            name = serializer.validated_data.get('name')
+            if not company:
+                return custom_response(
+                    success=False,
+                    message="User does not have an associated company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if Unit.objects.filter(company=company, name=name).exists():
+                return custom_response(
+                    success=False,
+                    message="A unit with this name already exists.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.save(company=company)
+            return custom_response(
+                success=True,
+                message="Unit created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# ----- Brand API -----
+class BrandViewSet(BaseCompanyViewSet):
     queryset = Brand.objects.all()
     serializer_class = BrandSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -70,34 +163,143 @@ class BrandViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে �
     search_fields = ['name']
     ordering_fields = ['name']
 
-    def perform_create(self, serializer):   # ইউনিকনেস চেক করার জন্য ওভাররাইড    
-        company = self.request.user.company
-        name = serializer.validated_data.get('name')
-        
-        if Brand.objects.filter(company=company, name=name).exists():
-            raise serializers.ValidationError({"name": "A brand with this name already exists"})
-        
-        serializer.save(company=company)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        return custom_response(
+            success=True,
+            message="Brand list fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
 
-# Group API
-class GroupViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে ইনহেরিট
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return custom_response(
+            success=True,
+            message="Brand details fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            company = getattr(self.request.user, "company", None)
+            name = serializer.validated_data.get('name')
+            if not company:
+                return custom_response(
+                    success=False,
+                    message="User does not have an associated company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if Brand.objects.filter(company=company, name=name).exists():
+                return custom_response(
+                    success=False,
+                    message="A brand with this name already exists.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.save(company=company)
+            return custom_response(
+                success=True,
+                message="Brand created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# ----- Group API -----
+class GroupViewSet(BaseCompanyViewSet):
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name']
-    def perform_create(self, serializer):   # ইউনিকনেস চেক করার জন্য ওভাররাইড    
-        company = self.request.user.company
-        name = serializer.validated_data.get('name')
-        
-        if Group.objects.filter(company=company, name=name).exists():
-            raise serializers.ValidationError({"name": "A group with this name already exists"})
-        
-        serializer.save(company=company)
 
-# Source API
-class SourceViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে ইনহেরিট
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        return custom_response(
+            success=True,
+            message="Group list fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return custom_response(
+            success=True,
+            message="Group details fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            company = getattr(self.request.user, "company", None)
+            name = serializer.validated_data.get('name')
+            if not company:
+                return custom_response(
+                    success=False,
+                    message="User does not have an associated company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if Group.objects.filter(company=company, name=name).exists():
+                return custom_response(
+                    success=False,
+                    message="A group with this name already exists.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.save(company=company)
+            return custom_response(
+                success=True,
+                message="Group created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# ----- Source API -----
+class SourceViewSet(BaseCompanyViewSet):
     queryset = Source.objects.all()
     serializer_class = SourceSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -105,17 +307,71 @@ class SourceViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে 
     search_fields = ['name']
     ordering_fields = ['name']
 
-    def perform_create(self, serializer):   # ইউনিকনেস চেক করার জন্য ওভাররাইড    
-        company = self.request.user.company
-        name = serializer.validated_data.get('name')
-        
-        if Source.objects.filter(company=company, name=name).exists():
-            raise serializers.ValidationError({"name": "A source with this name already exists"})
-        
-        serializer.save(company=company)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        return custom_response(
+            success=True,
+            message="Source list fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
 
-# Product API
-class ProductViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে ইনহেরিট
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return custom_response(
+            success=True,
+            message="Source details fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            company = getattr(self.request.user, "company", None)
+            name = serializer.validated_data.get('name')
+            if not company:
+                return custom_response(
+                    success=False,
+                    message="User does not have an associated company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if Source.objects.filter(company=company, name=name).exists():
+                return custom_response(
+                    success=False,
+                    message="A source with this name already exists.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.save(company=company)
+            return custom_response(
+                success=True,
+                message="Source created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# ----- Product API -----
+class ProductViewSet(BaseCompanyViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -130,11 +386,67 @@ class ProductViewSet(BaseCompanyViewSet):  # ✅ BaseCompanyViewSet থেকে
             return Product.objects.filter(company=user.company).select_related(
                 'category','unit','brand','group','source'
             )
-        return Product.objects.none()  # company না থাকলে কিছু দেখাবে না
-    
-    
+        return Product.objects.none()
 
-    def perform_create(self, serializer):
-        serializer.save(company=self.request.user.company)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        return custom_response(
+            success=True,
+            message="Product list fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
 
-    
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return custom_response(
+            success=True,
+            message="Product details fetched successfully.",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            company = getattr(self.request.user, "company", None)
+            name = serializer.validated_data.get('name')
+            if not company:
+                return custom_response(
+                    success=False,
+                    message="User does not have an associated company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            if Product.objects.filter(company=company, name=name).exists():
+                return custom_response(
+                    success=False,
+                    message="A product with this name already exists for this company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.save(company=company)
+            return custom_response(
+                success=True,
+                message="Product created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

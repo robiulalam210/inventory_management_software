@@ -7,7 +7,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from purchases.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
 
 # Sales
-from sales.views import SaleViewSet, SaleItemViewSet, CustomerViewSet, DuePaymentAPIView
+from sales.views import SaleViewSet, SaleItemViewSet, DuePaymentAPIView
+from customers.views import CustomerViewSet  # ঠিক path
 
 # Products
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet

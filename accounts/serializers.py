@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import Account
 
 class AccountSerializer(serializers.ModelSerializer):
-    company = serializers.PrimaryKeyRelatedField(read_only=True)  # Include this field
+    company = serializers.PrimaryKeyRelatedField(read_only=True)
     ac_id = serializers.IntegerField(source='id', read_only=True)
     ac_name = serializers.CharField(source='name')
     ac_type = serializers.CharField()
@@ -16,5 +16,5 @@ class AccountSerializer(serializers.ModelSerializer):
         model = Account
         fields = [
             'ac_id', 'ac_name', 'ac_type', 'ac_number', 'balance',
-            'bank_name', 'branch', 'opening_balance', 'company',  # ✅ Add company here
+            'bank_name', 'branch', 'opening_balance', 'company',
         ]

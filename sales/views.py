@@ -2,11 +2,10 @@ from rest_framework import viewsets, status, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .models import Sale, SaleItem, Customer
+from .models import Sale, SaleItem
 from .serializers import (
     SaleSerializer, 
     SaleItemSerializer, 
-    CustomerSerializer, 
     DuePaymentSerializer
 )
 
@@ -49,33 +48,6 @@ class SaleItemViewSet(BaseCompanyViewSet):
     permission_classes = [IsAuthenticated]
     company_field = 'sale__company'  # filter through related Sale
 
-
-# -----------------------------
-# Customer ViewSet
-# -----------------------------
-class CustomerViewSet(BaseCompanyViewSet):
-    queryset = Customer.objects.all()
-    serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        # optionally order by name
-        return super().get_queryset().order_by('name')
-
-    def perform_create(self, serializer):
-        user = self.request.user
-        company = getattr(user, 'company', None)
-
-        # If staff, get company from staff profile
-        if not company and hasattr(user, 'staff') and user.staff:
-            company = getattr(user.staff, 'company', None)
-
-        # role-based handling
-        role = getattr(user, 'role', None)
-        if role == 'staff' and not company:
-            raise serializers.ValidationError("Staff user must belong to a company.")
-
-        serializer.save(company=company)
 
 
 # -----------------------------
