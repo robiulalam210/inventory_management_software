@@ -9,7 +9,6 @@ from datetime import date  # for default DateField if needed
 
 # -----------------------------
 # Sales Return
-# -----------------------------
 class SalesReturn(models.Model):
     reason = models.TextField()
     return_date = models.DateField(auto_now_add=True)  # automatically set
@@ -43,7 +42,6 @@ class SalesReturnItem(models.Model):
         return f"{self.product_name} (x{self.quantity})"
 
 
-# -----------------------------
 # Purchase Return
 # -----------------------------
 class PurchaseReturn(models.Model):
