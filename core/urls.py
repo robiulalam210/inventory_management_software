@@ -20,6 +20,7 @@ from .views import CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet
 # Returns (make sure these exist in core/views.py or create returns/views.py)
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 from accounts.views import AccountViewSet  # ঠিক path
+from core.views import home  # ✅ Correct!
 
 router = DefaultRouter()
 router.register(r'companies', CompanyViewSet)

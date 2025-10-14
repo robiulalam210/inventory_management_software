@@ -2,6 +2,7 @@ from rest_framework import viewsets
 from core.base_viewsets import BaseCompanyViewSet  # আপনার পূর্বের base viewset
 from .models import Company, User, StaffRole, Staff
 from .serializers import CompanySerializer, UserSerializer, StaffRoleSerializer, StaffSerializer
+from django.shortcuts import render
 
 # accounts/views.py
 from rest_framework.views import APIView
@@ -96,3 +97,7 @@ class StaffRoleViewSet(viewsets.ModelViewSet):
 class StaffViewSet(BaseCompanyViewSet):
     queryset = Staff.objects.all()
     serializer_class = StaffSerializer
+
+
+def home(request):
+    return render(request, "home.html")
