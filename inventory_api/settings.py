@@ -12,7 +12,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # -----------------------------
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
-ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+ALLOWED_HOSTS = [
+    "inventory-management-software-1.onrender.com",
+    "localhost",
+    "127.0.0.1",
+]
+
 DEBUG = True
 APPEND_SLASH = True
 
