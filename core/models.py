@@ -11,7 +11,7 @@ class Company(models.Model):
     name = models.CharField(max_length=150, unique=True)
     address = models.TextField(blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
-    logo = models.ImageField(upload_to='company/', blank=True, null=True)
+    logo = models.ImageField(upload_to='images/company/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -28,7 +28,7 @@ class User(AbstractUser):
         STAFF = 'staff', _('Staff')
         CUSTOMER = 'customer', _('Customer')
 
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.CUSTOMER)
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.STAFF)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name='users')
 
     def __str__(self):
@@ -59,7 +59,7 @@ class Staff(models.Model):
     role = models.ForeignKey(StaffRole, on_delete=models.SET_NULL, null=True, blank=True, related_name='members')
 
     phone = models.CharField(max_length=20, blank=True, null=True)
-    image = models.ImageField(upload_to='staff/', blank=True, null=True)
+    image = models.ImageField(upload_to='images/staff/', blank=True, null=True)
     designation = models.CharField(max_length=120, blank=True, null=True)
     salary = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     commission = models.DecimalField(max_digits=12, decimal_places=2, default=0)

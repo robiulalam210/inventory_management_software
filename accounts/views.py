@@ -1,4 +1,4 @@
-from rest_framework import status
+from rest_framework import status, serializers
 from rest_framework.response import Response
 from core.base_viewsets import BaseCompanyViewSet
 from .models import Account
@@ -27,8 +27,19 @@ class AccountViewSet(BaseCompanyViewSet):
         return Response(result)
 
     def perform_create(self, serializer):
-        instance = serializer.save()
-        # If balance is not set, initialize from opening_balance
+        company = self.request.user.company
+        ac_type = serializer.validated_data.get('ac_type')
+        number = serializer.validated_data.get('number')
+        
+        # Uniqueness check for the same company, type, and number
+        if Account.objects.filter(company=company, ac_type=ac_type, number=number).exists():
+            raise serializers.ValidationError(
+                {"detail": "An account with this type and number already exists ."}
+            )
+
+        instance = serializer.save(company=company)
+
+        # Initialize balance if not set
         if instance.balance is None or instance.balance == 0:
             instance.balance = instance.opening_balance
             instance.save()

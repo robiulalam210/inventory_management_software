@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import Account
 
 class AccountSerializer(serializers.ModelSerializer):
+    company = serializers.PrimaryKeyRelatedField(read_only=True)  # Include this field
     ac_id = serializers.IntegerField(source='id', read_only=True)
     ac_name = serializers.CharField(source='name')
     ac_type = serializers.CharField()
@@ -9,11 +10,11 @@ class AccountSerializer(serializers.ModelSerializer):
     balance = serializers.DecimalField(max_digits=14, decimal_places=2)
     bank_name = serializers.CharField(allow_null=True, allow_blank=True)
     branch = serializers.CharField(allow_null=True, allow_blank=True)
-    opening_balance = serializers.DecimalField(max_digits=14, decimal_places=2)  # <-- FIXED
+    opening_balance = serializers.DecimalField(max_digits=14, decimal_places=2)
 
     class Meta:
         model = Account
         fields = [
             'ac_id', 'ac_name', 'ac_type', 'ac_number', 'balance',
-            'bank_name', 'branch', 'opening_balance',
+            'bank_name', 'branch', 'opening_balance', 'company',  # ✅ Add company here
         ]
