@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     'reports',
     'expenses',
     'customers',
+    'suppliers',
+    'money_receipts',
     "core.apps.CoreConfig",
 ]
 

@@ -1,10 +1,13 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+
+from money_receipts.views import MoneyReceiptCreateAPIView  
 from .views import CustomLoginView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 # Purchases
-from purchases.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
+from purchases.views import  PurchaseViewSet, PurchaseItemViewSet
+from suppliers.views import SupplierViewSet  # ঠিক path
 
 # Sales
 from sales.views import SaleViewSet, SaleItemViewSet, DuePaymentAPIView
@@ -35,6 +38,7 @@ router.register(r'sources', SourceViewSet, basename='source')
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'sale-items', SaleItemViewSet, basename='sale-item')
 router.register(r'customers', CustomerViewSet, basename='customer')
+# router.register(r'money-receipts', MoneyReceiptCreateAPIView, basename='money-receipt')
 
 # Purchases routes
 router.register(r'suppliers', SupplierViewSet, basename='supplier')
@@ -56,6 +60,7 @@ urlpatterns = [
     path('pay-due/', DuePaymentAPIView.as_view(), name='pay_due'),
     path('reports/', include('reports.urls')),
     path('', include('expenses.urls')),  # <-- include your expenses app
+    path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),  # <-- add this line
 
 ]
 

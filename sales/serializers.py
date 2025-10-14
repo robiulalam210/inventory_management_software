@@ -3,9 +3,9 @@ from .models import Customer, Sale, SaleItem
 from products.models import Product
 from accounts.models import Account
 from sales.models import Sale, SaleItem
-
-
-
+from accounts.models import Account
+from money_receipts.models import MoneyReceipt
+from django.utils import timezone
 # -----------------------------
 # SaleItem Serializer
 # -----------------------------
@@ -113,6 +113,20 @@ class SaleSerializer(serializers.ModelSerializer):
             # Update account balance
             account.balance += paid_amount
             account.save(update_fields=['balance'])
+             # --- Auto create MoneyReceipt ---
+            
+
+            MoneyReceipt.objects.create(
+                company=company,
+                customer=customer,
+                sale=sale,
+                amount=paid_amount,
+                payment_method=validated_data.get('payment_method', ''),
+                payment_date=timezone.now(),
+                seller=request.user,
+                account=account
+                # you can add more fields as required, e.g. remark, cheque info
+            )
         return sale
 
 # -----------------------------
