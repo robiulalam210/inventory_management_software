@@ -2,6 +2,11 @@ from rest_framework import serializers
 from .models import Customer, Sale, SaleItem
 from products.models import Product
 from accounts.models import Account
+from rest_framework.response import Response
+from sales.models import Sale, SaleItem
+from django.db.models import Sum, F, FloatField
+from datetime import datetime
+from rest_framework.views import APIView
 
 # -----------------------------
 # Customer Serializer
@@ -153,3 +158,4 @@ class DuePaymentSerializer(serializers.Serializer):
         sale.due_amount = max(0, sale.payable_amount - sale.paid_amount)
         sale.save(update_fields=['paid_amount', 'due_amount'])
         return sale
+    

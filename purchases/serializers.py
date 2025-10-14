@@ -147,3 +147,5 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 "error": f"Internal error: {e}",
                 "traceback": tb
             })
+        
+

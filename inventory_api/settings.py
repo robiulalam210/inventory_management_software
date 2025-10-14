@@ -14,6 +14,8 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
 ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 DEBUG = True
+APPEND_SLASH = True
+
 # -----------------------------
 # INSTALLED APPS
 # -----------------------------
@@ -38,6 +40,8 @@ INSTALLED_APPS = [
     'returns',
     "branch_warehouse",
     'accounts',
+    'reports',
+    'expenses',
     "core.apps.CoreConfig",
 ]
 

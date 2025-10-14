@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions
 from .models import Supplier, Purchase, PurchaseItem
 from .serializers import SupplierSerializer, PurchaseSerializer, PurchaseItemSerializer
+from purchases.models import PurchaseItem
 
 class SupplierViewSet(viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
@@ -26,3 +27,6 @@ class PurchaseItemViewSet(viewsets.ModelViewSet):
     queryset = PurchaseItem.objects.all().select_related('purchase', 'product')
     serializer_class = PurchaseItemSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+
+

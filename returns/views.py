@@ -1,6 +1,13 @@
 from rest_framework import viewsets, permissions
 from .models import SalesReturn, PurchaseReturn, BadStock
 from .serializers import SalesReturnSerializer, PurchaseReturnSerializer, BadStockSerializer
+# reports/views.py
+from sales.models import Sale, SaleItem
+from purchases.models import Purchase, PurchaseItem
+from returns.models import SalesReturn, SalesReturnItem, PurchaseReturn, PurchaseReturnItem, BadStock
+
+
+
 
 class SalesReturnViewSet(viewsets.ModelViewSet):
     serializer_class = SalesReturnSerializer
@@ -13,10 +20,9 @@ class SalesReturnViewSet(viewsets.ModelViewSet):
         return SalesReturn.objects.none()
 
     def perform_create(self, serializer):
-        user = self.request.user
-        company = getattr(user, 'company', None)
+        company = getattr(self.request.user, 'company', None)
         serializer.save(company=company)
-
+    
 class PurchaseReturnViewSet(viewsets.ModelViewSet):
     serializer_class = PurchaseReturnSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -28,8 +34,7 @@ class PurchaseReturnViewSet(viewsets.ModelViewSet):
         return PurchaseReturn.objects.none()
 
     def perform_create(self, serializer):
-        user = self.request.user
-        company = getattr(user, 'company', None)
+        company = getattr(self.request.user, 'company', None)
         serializer.save(company=company)
 
 class BadStockViewSet(viewsets.ModelViewSet):
