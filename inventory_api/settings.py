@@ -17,8 +17,11 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
 ]
-
+    
 DEBUG = True
+CSRF_TRUSTED_ORIGINS = [
+    "https://inventory-management-software-1.onrender.com",
+]
 APPEND_SLASH = True
 
 # -----------------------------
