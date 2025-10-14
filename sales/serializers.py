@@ -2,22 +2,10 @@ from rest_framework import serializers
 from .models import Customer, Sale, SaleItem
 from products.models import Product
 from accounts.models import Account
-from rest_framework.response import Response
 from sales.models import Sale, SaleItem
-from django.db.models import Sum, F, FloatField
-from datetime import datetime
-from rest_framework.views import APIView
-
-# -----------------------------
-# Customer Serializer
-# -----------------------------
-class CustomerSerializer(serializers.ModelSerializer):
-    company = serializers.PrimaryKeyRelatedField(read_only=True)
-
-    class Meta:
-        model = Customer
-        fields = '__all__'
-
+from accounts.models import Account
+from money_receipts.models import MoneyReceipt
+from django.utils import timezone
 # -----------------------------
 # SaleItem Serializer
 # -----------------------------
@@ -125,6 +113,20 @@ class SaleSerializer(serializers.ModelSerializer):
             # Update account balance
             account.balance += paid_amount
             account.save(update_fields=['balance'])
+             # --- Auto create MoneyReceipt ---
+            
+
+            MoneyReceipt.objects.create(
+                company=company,
+                customer=customer,
+                sale=sale,
+                amount=paid_amount,
+                payment_method=validated_data.get('payment_method', ''),
+                payment_date=timezone.now(),
+                seller=request.user,
+                account=account
+                # you can add more fields as required, e.g. remark, cheque info
+            )
         return sale
 
 # -----------------------------

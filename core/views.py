@@ -2,6 +2,7 @@ from rest_framework import viewsets
 from core.base_viewsets import BaseCompanyViewSet  # আপনার পূর্বের base viewset
 from .models import Company, User, StaffRole, Staff
 from .serializers import CompanySerializer, UserSerializer, StaffRoleSerializer, StaffSerializer
+from django.shortcuts import render
 
 # accounts/views.py
 from rest_framework.views import APIView
@@ -22,10 +23,24 @@ from django.contrib.auth import authenticate
 # Import serializers here
 from .serializers import CustomUserSerializer
 
+
+class CustomRefreshToken(RefreshToken):
+    @classmethod
+    def for_user(cls, user):
+        token = super().for_user(user)
+        # Add custom claims to token
+        token["username"] = user.username
+        token["role"] = getattr(user, "role", None)
+        token["email"] = getattr(user, "email", None)
+        token["company_id"] = getattr(user.company, "id", None) if user.company else None
+        return token
+
+
 class CustomLoginView(APIView):
     """
     Login API that returns access & refresh tokens + full user info
     """
+
     def post(self, request):
         username = request.data.get("username")
         password = request.data.get("password")
@@ -35,27 +50,16 @@ class CustomLoginView(APIView):
         if not user:
             return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Generate JWT tokens
-        refresh = RefreshToken.for_user(user)
+        # Generate JWT tokens using the custom token class
+        refresh = CustomRefreshToken.for_user(user)
         access = refresh.access_token
 
-        # Serialize full user info
+        # Serialize full user info (includes nested company/staff if your serializer supports it)
         user_data = CustomUserSerializer(user).data
 
-        # Build response
+        # Build the response
         response_data = {
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role,
-                "company": {
-                    "id": user.company.id if user.company else None,
-                    "name": user.company.name if user.company else None,
-                    "phone": user.company.phone if user.company else None
-                },
-                "staff": user_data.get("staff")  # nested staff info if exists
-            },
+            "user": user_data,
             "tokens": {
                 "refresh": str(refresh),
                 "access": str(access)
@@ -93,3 +97,7 @@ class StaffRoleViewSet(viewsets.ModelViewSet):
 class StaffViewSet(BaseCompanyViewSet):
     queryset = Staff.objects.all()
     serializer_class = StaffSerializer
+
+
+def home(request):
+    return render(request, "home.html")

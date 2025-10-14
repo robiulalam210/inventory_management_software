@@ -2,14 +2,9 @@ from django.db import models
 from products.models import Product
 from accounts.models import Account
 from core.models import Company
+from suppliers.models import Supplier
 
-class Supplier(models.Model):
-    name = models.CharField(max_length=100)
-    phone = models.CharField(max_length=20)
-    address = models.TextField()
 
-    def __str__(self):
-        return self.name
 
 class Purchase(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)

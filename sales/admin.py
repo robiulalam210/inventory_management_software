@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Sale, SaleItem, Customer
+from .models import Sale, SaleItem
 
 @admin.register(Sale)
 class SaleAdmin(admin.ModelAdmin):
@@ -15,7 +15,3 @@ class SaleAdmin(admin.ModelAdmin):
 class SaleItemAdmin(admin.ModelAdmin):
     list_display = ['sale', 'product', 'quantity', 'unit_price', 'discount', 'discount_type']
 
-@admin.register(Customer)
-class CustomerAdmin(admin.ModelAdmin):
-    list_display = ['id', 'name', 'phone', 'address']
-    search_fields = ['name', 'phone']

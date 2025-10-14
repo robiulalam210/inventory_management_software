@@ -14,10 +14,11 @@ class Account(models.Model):
         (TYPE_CASH, 'Cash'),
         (TYPE_OTHER, 'Other'),
     ]
+    
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=150)
     ac_type = models.CharField(max_length=30, choices=AC_TYPE_CHOICES, default=TYPE_OTHER)
-    number = models.CharField(max_length=64, blank=True, null=True)
+    number = models.CharField(max_length=64, blank=True, null=True)  # <-- Used in DB and filter
     bank_name = models.CharField(max_length=150, blank=True, null=True)
     branch = models.CharField(max_length=150, blank=True, null=True)
     opening_balance = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
@@ -27,6 +28,9 @@ class Account(models.Model):
 
     class Meta:
         ordering = ['-id']
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'ac_type', 'number'], name='unique_company_ac_type_number')
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.ac_type})"

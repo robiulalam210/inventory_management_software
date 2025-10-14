@@ -1,16 +1,14 @@
+from itertools import product
 import logging
 import traceback
 from rest_framework import serializers
-from .models import Supplier, Purchase, PurchaseItem
+from .models import  Purchase, PurchaseItem
 from products.models import Product
 from accounts.models import Account
 from django.db import transaction
 from decimal import Decimal
 
-class SupplierSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Supplier
-        fields = '__all__'
+
 
 class PurchaseItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
@@ -78,9 +76,9 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 for item_data in items_data:
                     product = item_data['product']
                     if getattr(product, 'company', None) != request.user.company:
-                        raise serializers.ValidationError(
-                            f"Cannot add product {getattr(product, 'name', product)} from another company ({getattr(product.company, 'name', None)})"
-                        )
+                        raise serializers.ValidationError({
+                            "purchase_items": [f"Product '{getattr(product, 'name', product)}' does not belong to your company."]
+                        })
                     qty = item_data['qty']
                     purchase_item = PurchaseItem.objects.create(purchase=purchase, **item_data)
                     product.stock_qty = (getattr(product, 'stock_qty', 0) or 0) + qty

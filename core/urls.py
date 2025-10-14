@@ -1,13 +1,17 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+
+from money_receipts.views import MoneyReceiptCreateAPIView  
 from .views import CustomLoginView
 from rest_framework_simplejwt.views import TokenRefreshView
 
 # Purchases
-from purchases.views import SupplierViewSet, PurchaseViewSet, PurchaseItemViewSet
-
+from purchases.views import  PurchaseViewSet, PurchaseItemViewSet
+from suppliers.views import SupplierViewSet  # ঠিক path
+from django.http import HttpResponse
 # Sales
-from sales.views import SaleViewSet, SaleItemViewSet, CustomerViewSet, DuePaymentAPIView
+from sales.views import SaleViewSet, SaleItemViewSet, DuePaymentAPIView
+from customers.views import CustomerViewSet  # ঠিক path
 
 # Products
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
@@ -16,6 +20,7 @@ from .views import CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet
 # Returns (make sure these exist in core/views.py or create returns/views.py)
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 from accounts.views import AccountViewSet  # ঠিক path
+from core.views import home  # ✅ Correct!
 
 router = DefaultRouter()
 router.register(r'companies', CompanyViewSet)
@@ -34,6 +39,7 @@ router.register(r'sources', SourceViewSet, basename='source')
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'sale-items', SaleItemViewSet, basename='sale-item')
 router.register(r'customers', CustomerViewSet, basename='customer')
+# router.register(r'money-receipts', MoneyReceiptCreateAPIView, basename='money-receipt')
 
 # Purchases routes
 router.register(r'suppliers', SupplierViewSet, basename='supplier')
@@ -46,7 +52,8 @@ router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-r
 router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
 
 router.register(r'accounts', AccountViewSet, basename='account')
-
+def home(request):
+    return HttpResponse("Welcome to the Inventory Management System!")
 urlpatterns = [
     path('', include(router.urls)),
     # path('login/', CustomLoginView.as_view(), name='custom-login'),
@@ -55,6 +62,8 @@ urlpatterns = [
     path('pay-due/', DuePaymentAPIView.as_view(), name='pay_due'),
     path('reports/', include('reports.urls')),
     path('', include('expenses.urls')),  # <-- include your expenses app
+    path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),  # <-- add this line
+    path('', home),  # This will handle the root URL
 
 ]
 
