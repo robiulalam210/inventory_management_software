@@ -19,9 +19,9 @@ ALLOWED_HOSTS = [
 ]
     
 DEBUG = True
-CSRF_TRUSTED_ORIGINS = [
-    "https://inventory-management-software-1.onrender.com",
-]
+# CSRF_TRUSTED_ORIGINS = [
+#     "https://inventory-management-software-1.onrender.com",
+# ]
 APPEND_SLASH = True
 
 # -----------------------------

@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 # Purchases
 from purchases.views import  PurchaseViewSet, PurchaseItemViewSet
 from suppliers.views import SupplierViewSet  # ঠিক path
-
+from django.http import HttpResponse
 # Sales
 from sales.views import SaleViewSet, SaleItemViewSet, DuePaymentAPIView
 from customers.views import CustomerViewSet  # ঠিক path
@@ -51,7 +51,8 @@ router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-r
 router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
 
 router.register(r'accounts', AccountViewSet, basename='account')
-
+def home(request):
+    return HttpResponse("Welcome to the Inventory Management System!")
 urlpatterns = [
     path('', include(router.urls)),
     # path('login/', CustomLoginView.as_view(), name='custom-login'),
@@ -61,6 +62,7 @@ urlpatterns = [
     path('reports/', include('reports.urls')),
     path('', include('expenses.urls')),  # <-- include your expenses app
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),  # <-- add this line
+    path('', home),  # This will handle the root URL
 
 ]
 
