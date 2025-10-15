@@ -6,8 +6,11 @@ from .serializers import (
     ProductSerializer, CategorySerializer, UnitSerializer,
     BrandSerializer, GroupSerializer, SourceSerializer
 )
+from django.shortcuts import render, redirect
+
 from core.utils import custom_response
 from core.base_viewsets import BaseCompanyViewSet
+from .froms import CategoryForm, UnitForm, BrandForm, GroupForm, SourceForm, ProductForm
 
 
 # ----- Category API -----
@@ -450,3 +453,49 @@ class ProductViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+
+
+# Category
+def category_list(request):
+    categories = Category.objects.all()
+    return render(request, 'product/category_list.html', {'categories': categories})
+
+def category_create(request):
+    if request.method == 'POST':
+        form = CategoryForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('category_list')
+    else:
+        form = CategoryForm()
+    return render(request, 'product/category_create.html', {'form': form})
+
+# অনুরূপভাবে Unit, Brand, Group, Source, Product-এর জন্যও একইভাবে লিখুন:
+def brand_list(request):
+    brands = Brand.objects.all()
+    return render(request, 'product/brand_list.html', {'brands': brands})
+
+def brand_create(request):
+    if request.method == 'POST':
+        form = BrandForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('brand_list')
+    else:
+        form = BrandForm()
+    return render(request, 'product/brand_create.html', {'form': form})
+
+def product_list(request):
+    products = Product.objects.all()
+    return render(request, 'product/product_list.html', {'products': products})
+
+def product_create(request):
+    if request.method == 'POST':
+        form = ProductForm(request.POST, request.FILES)
+        if form.is_valid():
+            form.save()
+            return redirect('product_list')
+    else:
+        form = ProductForm()
+    return render(request, 'product/product_create.html', {'form': form})

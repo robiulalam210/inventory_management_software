@@ -36,9 +36,16 @@
             font-weight: bold;
             transition: background .2s;
             display: inline-block;
+            margin: 8px 0;
         }
         a.button:hover {
             background: #155ab6;
+        }
+        a.create-user {
+            background: #f39c12;
+        }
+        a.create-user:hover {
+            background: #d35400;
         }
     </style>
 </head>
@@ -51,6 +58,11 @@
         <a href="/admin/" class="button">Go to Admin Panel</a>
         <br><br>
         <a href="/api/" class="button" style="background:#22a06b;">View API Docs</a>
+        <br><br>
+        <!-- <a href="{% url 'company_admin_login' %}" class="button create-user">Create New User</a> -->
+
+        <a href="{% url 'company_admin_login' %}" class="button create-user">Login as Admin</a>
+        
     </div>
 </body>
 </html>
