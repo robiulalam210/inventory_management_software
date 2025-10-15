@@ -12,18 +12,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # -----------------------------
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
+
+# ✅ Render domain এবং localhost অনুমোদিত করো
 ALLOWED_HOSTS = [
     "inventory-management-software-1.onrender.com",
     "localhost",
     "127.0.0.1",
 ]
-    
-DEBUG = True
-# CSRF_TRUSTED_ORIGINS = [
-#     "https://inventory-management-software-1.onrender.com",
-# ]
-APPEND_SLASH = True
 
+# ✅ Render এর CSRF সাপোর্টের জন্য অবশ্যই দরকার
+CSRF_TRUSTED_ORIGINS = [
+    "https://inventory-management-software-1.onrender.com",
+]
+
+# (যদি ফ্রন্টএন্ড আলাদা হোস্টে থাকে, সেটা এখানে যোগ করো)
+CORS_ALLOWED_ORIGINS = [
+    "https://inventory-management-software-1.onrender.com",
+]
+
+APPEND_SLASH = True
+LOGIN_URL = '/admin/login/'
+LOGIN_REDIRECT_URL = '/admin/dashboard/'   # Optional, for post-login redirect
 # -----------------------------
 # INSTALLED APPS
 # -----------------------------
@@ -61,6 +70,7 @@ INSTALLED_APPS = [
 # -----------------------------
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # ✅ whitenoise উপরে রাখো
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -68,7 +78,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.CompanyMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # ⚡️ Add here
 ]
 
 ROOT_URLCONF = 'inventory_api.urls'
@@ -89,16 +98,15 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'inventory_api.wsgi.application'
-APPEND_SLASH = True  # This is the Django default
 
 # -----------------------------
 # DATABASE
 # -----------------------------
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+    )
 }
 
 # -----------------------------
@@ -113,8 +121,6 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    # Add EXCEPTION_HANDLER here if you want custom error handling
-    # 'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
 }
 
 # -----------------------------
@@ -131,7 +137,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # INTERNATIONALIZATION
 # -----------------------------
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Dhaka'  # ✅ তোমার জন্য লোকাল টাইম
 USE_I18N = True
 USE_TZ = True
 
