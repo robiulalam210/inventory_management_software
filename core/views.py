@@ -126,4 +126,4 @@ def user_management(request):
         "form": form
     })
 def home(request):
-    return render(request, "home.html")
+    return render(request, "horme.html")

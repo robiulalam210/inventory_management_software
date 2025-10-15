@@ -57,6 +57,5 @@ urlpatterns = [
     path('admin/users/', user_list, name='user_list'),
     path('admin/users/create/', create_user, name='create_user'),
 
-    # Welcome page (root)
-    path('', home, name='home'),
+
 ]

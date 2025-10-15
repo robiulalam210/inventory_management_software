@@ -5,8 +5,13 @@ import dj_database_url
 # -----------------------------
 # BASE DIR
 # -----------------------------
+# BASE DIR
+# -----------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
+TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
 
+print(f"BASE_DIR is set to: {BASE_DIR}")
+print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
 # -----------------------------
 # SECURITY
 # -----------------------------
@@ -85,7 +90,7 @@ ROOT_URLCONF = 'inventory_api.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [TEMPLATES_DIR],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
