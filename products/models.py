@@ -74,7 +74,6 @@ class Product(models.Model):
 
     name = models.CharField(max_length=255)
     sku = models.CharField(max_length=120, blank=True, null=True, unique=True)  # product_no
-    bar_code = models.CharField(max_length=255, blank=True, null=True)
 
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, related_name="products")
     unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True)
@@ -92,9 +91,6 @@ class Product(models.Model):
     image = models.ImageField(upload_to='inventory-products/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
-    unit_name = models.CharField(max_length=100, blank=True, null=True)
-    unit_sub_name = models.CharField(max_length=100, blank=True, null=True)
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -102,10 +98,15 @@ class Product(models.Model):
         return f"{self.name} ({self.sku})" if self.sku else self.name
 
     def save(self, *args, **kwargs):
-        is_new = self.pk is None  # নতুন প্রোডাক্ট কিনা চেক
-        if is_new:
-            self.stock_qty = self.opening_stock  # নতুন হলে ওপেনিং স্টক বসিয়ে দাও
+        # Set opening stock for new products
+        if not self.pk:
+            self.stock_qty = self.opening_stock
+        
+        # Save the product first
         super().save(*args, **kwargs)
-        if is_new and not self.sku:
-            self.sku = f"PDT-{1000 + self.id}"  # অটো SKU
-            super().save(update_fields=["sku"])
+        
+        # Generate SKU after save if it's not provided
+        if not self.sku:
+            self.sku = f"PDT-{1000 + self.id}"
+            # Save only SKU field to avoid recursion
+            super().save(update_fields=['sku'])

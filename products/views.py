@@ -413,11 +413,22 @@ class ProductViewSet(BaseCompanyViewSet):
         )
 
     def create(self, request, *args, **kwargs):
+        import traceback
+        import sys
+        
         serializer = self.get_serializer(data=request.data)
         try:
+            print("=== PRODUCT CREATE DEBUG ===")
+            print(f"Request data: {request.data}")
+            print(f"User: {request.user}")
+            print(f"User company: {getattr(request.user, 'company', None)}")
+            
             serializer.is_valid(raise_exception=True)
             company = getattr(self.request.user, "company", None)
             name = serializer.validated_data.get('name')
+            
+            print(f"Validated data: {serializer.validated_data}")
+            
             if not company:
                 return custom_response(
                     success=False,
@@ -425,6 +436,8 @@ class ProductViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            
+            # Check for duplicate product name
             if Product.objects.filter(company=company, name=name).exists():
                 return custom_response(
                     success=False,
@@ -432,14 +445,21 @@ class ProductViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            serializer.save(company=company)
+            
+            print("Saving product...")
+            # Save the product
+            product = serializer.save(company=company)
+            print(f"Product saved successfully. ID: {product.id}, SKU: {product.sku}")
+            
             return custom_response(
                 success=True,
                 message="Product created successfully.",
                 data=serializer.data,
                 status_code=status.HTTP_201_CREATED
             )
+            
         except serializers.ValidationError as e:
+            print(f"Validation Error: {e.detail}")
             return custom_response(
                 success=False,
                 message="Validation Error",
@@ -447,13 +467,19 @@ class ProductViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            print(f"=== EXCEPTION DETAILS ===")
+            print(f"Exception type: {type(e).__name__}")
+            print(f"Exception message: {str(e)}")
+            print("=== TRACEBACK ===")
+            traceback.print_exc(file=sys.stdout)
+            print("=================")
+            
             return custom_response(
                 success=False,
-                message=str(e),
+                message=f"Internal server error: {str(e)}",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
 
 
 # Category
