@@ -29,7 +29,7 @@ class CustomerViewSet(BaseCompanyViewSet):
 
     def get_queryset(self):
         # optionally order by name
-        return super().get_queryset().order_by('name')
+        return super().get_queryset().order_by('id')
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
