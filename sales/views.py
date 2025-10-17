@@ -1,28 +1,10 @@
 from rest_framework import viewsets, status, serializers
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from core.utils import custom_response  # your helper function
+from core.base_viewsets import BaseCompanyViewSet
 from .models import Sale, SaleItem
-from .serializers import (
-    SaleSerializer, 
-    SaleItemSerializer, 
-    DuePaymentSerializer
-)
-
-# -----------------------------
-# BaseCompanyViewSet
-# -----------------------------
-class BaseCompanyViewSet(viewsets.ModelViewSet):
-    """Filters queryset by logged-in user's company"""
-    company_field = 'company'  # override if needed
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        user = self.request.user
-        if hasattr(user, 'company') and user.company:
-            filter_kwargs = {self.company_field: user.company}
-            return queryset.filter(**filter_kwargs)
-        return queryset.none()
+from .serializers import SaleSerializer, SaleItemSerializer, DuePaymentSerializer
 
 
 # -----------------------------
@@ -38,6 +20,54 @@ class SaleViewSet(BaseCompanyViewSet):
         context.update({"request": self.request})
         return context
 
+    # List all sales
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            page = self.paginate_queryset(queryset)
+            serializer = self.get_serializer(page if page else queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Sales fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=f"Error fetching sales: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # Create a new sale
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            # Assign company to sale (multi-tenant)
+            sale = serializer.save(company=request.user.company)
+            return custom_response(
+                success=True,
+                message="Sale created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=f"Failed to create sale: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 # -----------------------------
 # SaleItem ViewSet
@@ -48,6 +78,52 @@ class SaleItemViewSet(BaseCompanyViewSet):
     permission_classes = [IsAuthenticated]
     company_field = 'sale__company'  # filter through related Sale
 
+    # List all sale items
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            page = self.paginate_queryset(queryset)
+            serializer = self.get_serializer(page if page else queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Sale items fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=f"Error fetching sale items: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # Create a new sale item
+    def create(self, request, *args, **kwargs):
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            sale_item = serializer.save()
+            return custom_response(
+                success=True,
+                message="Sale item created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=f"Failed to create sale item: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # -----------------------------
@@ -57,15 +133,32 @@ class DuePaymentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        serializer = DuePaymentSerializer(data=request.data)
-        serializer.context['request'] = request  # ensure request context is passed
-        if serializer.is_valid(raise_exception=True):
+        try:
+            serializer = DuePaymentSerializer(data=request.data, context={'request': request})
+            serializer.is_valid(raise_exception=True)
             sale = serializer.save()
-            return Response({
-                "success": True,
-                "message": "Payment successful.",
-                "sale_id": sale.id,
-                "paid_amount": str(sale.paid_amount),
-                "due_amount": str(sale.payable_amount - sale.paid_amount),
-            }, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            return custom_response(
+                success=True,
+                message="Payment successful.",
+                data={
+                    "sale_id": sale.id,
+                    "paid_amount": str(sale.paid_amount),
+                    "due_amount": str(sale.payable_amount - sale.paid_amount),
+                },
+                status_code=status.HTTP_200_OK
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=f"Payment failed: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

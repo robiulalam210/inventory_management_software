@@ -22,6 +22,12 @@ from .serializers import (
     StaffSerializer,
     CustomUserSerializer,
 )
+from rest_framework import viewsets, status, serializers
+from rest_framework.permissions import IsAuthenticated
+from core.utils import custom_response
+from .models import User
+from .serializers import UserSerializer
+from core.base_viewsets import BaseCompanyViewSet
 
 # Forms (fix: froms -> forms). Ensure you have these forms implemented.
 from .froms import CompanyAdminSignupForm, UserForm, UserCreationForm
@@ -156,16 +162,84 @@ class CompanyViewSet(viewsets.ModelViewSet):
 class UserViewSet(BaseCompanyViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
 
-    def perform_create(self, serializer):
-        user = self.request.user
+    # -----------------------------
+    # List Users
+    # -----------------------------
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            page = self.paginate_queryset(queryset)
+            serializer = self.get_serializer(page if page is not None else queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Users fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message="Error fetching users: " + str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-        # Only assign company if creating regular user
-        if user.company:
-            serializer.save(company=user.company)
-        else:
-            serializer.save()
+    # -----------------------------
+    # Retrieve a single User
+    # -----------------------------
+    def retrieve(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            serializer = self.get_serializer(instance)
+            return custom_response(
+                success=True,
+                message="User details fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message="Error fetching user details: " + str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+    # -----------------------------
+    # Create User
+    # -----------------------------
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            user = request.user
+            # Assign company only if creator has a company
+            if user.company:
+                serializer.save(company=user.company)
+            else:
+                serializer.save()
+            return custom_response(
+                success=True,
+                message="User created successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message="User creation failed: " + str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # -----------------------------
