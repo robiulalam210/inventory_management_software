@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
+from datetime import date, timedelta
 from decimal import Decimal
 
 
@@ -12,27 +13,63 @@ class Company(models.Model):
     address = models.TextField(blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     logo = models.ImageField(upload_to='images/company/', blank=True, null=True)
+    
+    # License / Subscription system
+    start_date = models.DateField(auto_now_add=True)
+    expiry_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        # যদি expiry_date না থাকে, ডিফল্ট ১ বছরের মেয়াদ দেই
+        if not self.expiry_date:
+            self.expiry_date = date.today() + timedelta(days=365)
+        # মেয়াদ যাচাই করে কোম্পানি অটোমেটিক ইনঅ্যাক্টিভ করে দেই
+        if self.expiry_date and self.expiry_date < date.today():
+            self.is_active = False
+        super().save(*args, **kwargs)
+
+    @property
+    def is_expired(self):
+        return self.expiry_date and self.expiry_date < date.today()
+
     def __str__(self):
-        return self.name
+        return f"{self.name} ({'Active' if self.is_active else 'Expired'})"
 
 
 # ============================
 # 🔹 Custom User Model
 # ============================
+
 class User(AbstractUser):
     class Role(models.TextChoices):
-        ADMIN = 'admin', _('Admin')
-        STAFF = 'staff', _('Staff')
-        CUSTOMER = 'customer', _('Customer')
+        SUPER_ADMIN = "SUPER_ADMIN", "Super Admin"
+        ADMIN = "ADMIN", "Admin"
+        STAFF = "STAFF", "Staff"
 
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.STAFF)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True, related_name='users')
+    company = models.ForeignKey('Company', on_delete=models.SET_NULL, null=True, blank=True)
 
-    def __str__(self):
-        return f"{self.username} ({self.company})" if self.company else self.username
+    def save(self, *args, **kwargs):
+        # Super Admin always has full access
+        if self.role == self.Role.SUPER_ADMIN:
+            self.is_staff = True
+            self.is_superuser = True
+            self.is_active = True
+        # Admin has admin panel access but not superuser
+        elif self.role == self.Role.ADMIN:
+            self.is_staff = True
+            self.is_superuser = False
+            self.is_active = True
+        # Staff may or may not have staff access
+        elif self.role == self.Role.STAFF:
+            if self.is_staff is None:
+                self.is_staff = False
+            if self.is_superuser is None:
+                self.is_superuser = False
+        super().save(*args, **kwargs)
+
 
 
 # ============================
@@ -61,8 +98,8 @@ class Staff(models.Model):
     phone = models.CharField(max_length=20, blank=True, null=True)
     image = models.ImageField(upload_to='images/staff/', blank=True, null=True)
     designation = models.CharField(max_length=120, blank=True, null=True)
-    salary = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    commission = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    salary = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    commission = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     is_main_user = models.BooleanField(default=False)
     status = models.IntegerField(choices=Status.choices, default=Status.ACTIVE)
     joining_date = models.DateField(null=True, blank=True)
@@ -78,12 +115,10 @@ class Staff(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        # Auto assign company from user if not provided
+        # Auto-assign company from user if not provided
         if not self.company and self.user and self.user.company:
             self.company = self.user.company
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user.username} - {self.company.name}"
-
-

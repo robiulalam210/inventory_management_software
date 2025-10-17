@@ -1,8 +1,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    CustomLoginView, CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet,
-    company_admin_signup, company_admin_login, dashboard, user_list, create_user, home
+    CustomLoginView, CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet, CustomTokenObtainPairView, 
+    company_admin_signup, company_admin_login, dashboard, user_list, create_user, home, user_management
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView
@@ -18,10 +18,12 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
 router = DefaultRouter()
-router.register(r'companies', CompanyViewSet)
-router.register(r'users', UserViewSet)
-router.register(r'staff-roles', StaffRoleViewSet)
-router.register(r'staffs', StaffViewSet)
+
+router.register(r'companies', CompanyViewSet, basename='company')
+router.register(r'users', UserViewSet, basename='user')
+router.register(r'staff-roles', StaffRoleViewSet, basename='staffrole')
+router.register(r'staffs', StaffViewSet, basename='staff')
+
 router.register(r'products', ProductViewSet, basename='product')
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'units', UnitViewSet, basename='unit')
@@ -42,7 +44,7 @@ router.register(r'accounts', AccountViewSet, basename='account')
 urlpatterns = [
     # API routes
     path('', include(router.urls)),
-
+    path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('pay-due/', DuePaymentAPIView.as_view(), name='pay_due'),
