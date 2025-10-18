@@ -8,7 +8,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet
 from suppliers.views import SupplierViewSet
-from sales.views import SaleViewSet, SaleItemViewSet
+from sales.views import SaleViewSet, SaleItemViewSet,get_due_sales  # Import get_due_sales here
+from sales.views import SaleViewSet, SaleItemViewSet    
 from customers.views import CustomerViewSet
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
@@ -17,6 +18,9 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, HttpRes
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
+# Remove this import since we're importing functions directly above
+# from . import views
+
 router = DefaultRouter()
 
 router.register(r'companies', CompanyViewSet, basename='company')
@@ -50,6 +54,9 @@ urlpatterns = [
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     path('reports/', include('reports.urls')),
     path('expenses/', include('expenses.urls')),
+    
+    # FIXED: Use the imported function directly, not via views.
+    path('due/', get_due_sales, name='due-sales'),  # This creates /api/due/
 
     # Admin UI
     path('admin/signup/', company_admin_signup, name='company_admin_signup'),
@@ -57,6 +64,4 @@ urlpatterns = [
     path('admin/dashboard/', dashboard, name='admin_dashboard'),
     path('admin/users/', user_list, name='user_list'),
     path('admin/users/create/', create_user, name='create_user'),
-
-
 ]

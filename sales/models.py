@@ -19,6 +19,10 @@ class Sale(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
+    
+    # NEW FIELD: Direct customer name for walk-in customers (NO DEFAULT VALUE)
+    customer_name = models.CharField(max_length=100, blank=True, null=True)
+
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
     invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
     sale_date = models.DateTimeField(auto_now_add=True)
@@ -61,6 +65,23 @@ class Sale(models.Model):
                 old_paid_amount = old_instance.paid_amount
             except Sale.DoesNotExist:
                 pass
+        
+        # Handle customer_name for walk-in customers
+        if self.customer_type == 'walk_in' and not self.customer_name:
+            self.customer_name = 'Walk-in Customer'
+        
+        # For walk-in customers without customer_id, use customer_name directly
+        if self.customer_type == 'walk_in' and not self.customer:
+            if self.customer_name and self.customer_name != 'Walk-in Customer':
+                # Use the provided customer_name directly
+                # No need to create Customer object
+                pass
+            else:
+                self.customer_name = 'Walk-in Customer'
+        
+        # For saved customers, ensure customer is set
+        if self.customer_type == 'saved_customer' and not self.customer:
+            raise ValueError("Saved customer must have a customer record.")
         
         # VALIDATION: Walk-in customers cannot have due amount
         if self.customer_type == 'walk_in' and self.due_amount > 0:
@@ -159,7 +180,6 @@ class Sale(models.Model):
     def create_money_receipt(self):
         """
         Automatically create money receipt when payment is made
-        WITHOUT circular import
         """
         # Don't create receipt if no payment
         if self.paid_amount <= 0:
@@ -168,6 +188,19 @@ class Sale(models.Model):
         try:
             # Import inside method to avoid circular import
             from money_receipts.models import MoneyReceipt
+            
+            # For walk-in customers without customer record, create a temporary one for receipt
+            if self.customer_type == 'walk_in' and not self.customer:
+                temp_customer, created = Customer.objects.get_or_create(
+                    name=self.customer_name or 'Walk-in Customer',
+                    company=self.company,
+                    defaults={
+                        'phone': '0000000000',
+                        'address': 'Temporary customer for receipt'
+                    }
+                )
+                self.customer = temp_customer
+                self.save(update_fields=['customer'])
             
             # Check if money receipt already exists for this sale
             existing_receipt = MoneyReceipt.objects.filter(sale=self).first()
@@ -189,7 +222,7 @@ class Sale(models.Model):
                 amount=self.paid_amount,
                 payment_method=self.payment_method or 'Cash',
                 payment_date=timezone.now(),
-                remark=f"Auto-generated receipt for {self.invoice_no} - {self.get_customer_type_display()}",
+                remark=f"Auto-generated receipt for {self.invoice_no} - {self.get_customer_display()}",
                 seller=self.sale_by,
                 account=self.account
             )
@@ -220,17 +253,16 @@ class Sale(models.Model):
                 })
 
     def __str__(self):
-        customer_name = self.customer.name if self.customer else "Walk-in Customer"
-        return f"{self.invoice_no} - {customer_name} - {self.get_customer_type_display()}"
+        return f"{self.invoice_no} - {self.get_customer_display()} - {self.get_customer_type_display()}"
 
     @property
     def is_walk_in_customer(self):
         return self.customer_type == 'walk_in'
 
     def get_customer_display(self):
-        """Get customer display name"""
+        """Get customer display name - uses customer_name for walk-in, customer.name for saved"""
         if self.customer_type == 'walk_in':
-            return "Walk-in Customer"
+            return self.customer_name or "Walk-in Customer"
         return self.customer.name if self.customer else "Unknown Customer"
 
 
