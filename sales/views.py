@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from core.utils import custom_response  # your helper function
 from core.base_viewsets import BaseCompanyViewSet
 from .models import Sale, SaleItem
-from .serializers import SaleSerializer, SaleItemSerializer, DuePaymentSerializer
+from .serializers import SaleSerializer, SaleItemSerializer
 
 
 # -----------------------------
@@ -125,40 +125,3 @@ class SaleItemViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
-# -----------------------------
-# Due Payment API
-# -----------------------------
-class DuePaymentAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        try:
-            serializer = DuePaymentSerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)
-            sale = serializer.save()
-
-            return custom_response(
-                success=True,
-                message="Payment successful.",
-                data={
-                    "sale_id": sale.id,
-                    "paid_amount": str(sale.paid_amount),
-                    "due_amount": str(sale.payable_amount - sale.paid_amount),
-                },
-                status_code=status.HTTP_200_OK
-            )
-        except serializers.ValidationError as e:
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=f"Payment failed: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )

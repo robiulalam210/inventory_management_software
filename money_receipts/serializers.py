@@ -3,6 +3,10 @@ from .models import MoneyReceipt
 from sales.models import Sale
 from customers.models import Customer
 from accounts.models import Account
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
 class MoneyReceiptSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     customer_phone = serializers.CharField(source='customer.phone', read_only=True)
@@ -48,7 +52,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
             'cheque_status', 'cheque_id', 'created_at', 'payment_summary'
         ]
         read_only_fields = [
-            'mr_no', 'customer_name', 'customer_phone', 'sale_invoice_no', 
+            'id', 'mr_no', 'customer_name', 'customer_phone', 'sale_invoice_no', 
             'seller_name', 'company', 'seller', 'created_at', 'payment_type',
             'specific_invoice', 'payment_summary'
         ]
@@ -68,6 +72,13 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
                 "amount": "Payment amount must be greater than 0."
             })
         
+        # Validate payment date
+        payment_date = attrs.get('payment_date')
+        if not payment_date:
+            raise serializers.ValidationError({
+                "payment_date": "Payment date is required."
+            })
+        
         return attrs
 
     def get_payment_summary(self, obj):
@@ -77,10 +88,12 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
         # Get request from context
         request = self.context.get('request')
         
-        # Set company and seller
+        # Set company and seller if not provided
         if request and request.user:
-            validated_data['company'] = getattr(request.user, 'company', None)
-            validated_data['seller'] = request.user
+            if 'company' not in validated_data:
+                validated_data['company'] = getattr(request.user, 'company', None)
+            if 'seller' not in validated_data:
+                validated_data['seller'] = request.user
         
         # Create the money receipt
         receipt = MoneyReceipt.objects.create(**validated_data)

@@ -185,11 +185,7 @@ class SaleSerializer(serializers.ModelSerializer):
         representation['due_amount'] = instance.due_amount
         return representation
 
-# -----------------------------
-# Due Payment Serializer
-# -----------------------------
-class DuePaymentSerializer(serializers.Serializer):
-    sale_id = serializers.IntegerField()
+
     pay_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
 
     def validate(self, attrs):

@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from .serializers import MoneyReceiptSerializer
 from .models import MoneyReceipt
 from core.utils import custom_response
+import json
 
 class MoneyReceiptCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -11,7 +12,7 @@ class MoneyReceiptCreateAPIView(APIView):
     def get(self, request):
         try:
             receipts = MoneyReceipt.objects.filter(company=request.user.company)
-            serializer = MoneyReceiptSerializer(receipts, many=True)
+            serializer = MoneyReceiptSerializer(receipts, many=True, context={'request': request})
             return custom_response(
                 success=True,
                 message="Money receipts fetched successfully.",
@@ -36,10 +37,36 @@ class MoneyReceiptCreateAPIView(APIView):
             # Validate required fields
             required_fields = ['customer_id', 'payment_date', 'payment_method', 'amount']
             for field in required_fields:
-                if field not in data:
+                if field not in data or data[field] in [None, '']:
                     return custom_response(
                         success=False,
                         message=f"Missing required field: {field}",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Convert amount to decimal if it's string
+            if 'amount' in data and isinstance(data['amount'], str):
+                try:
+                    data['amount'] = float(data['amount'])
+                except ValueError:
+                    return custom_response(
+                        success=False,
+                        message="Invalid amount format",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Handle sale_id if provided
+            if 'sale_id' in data and data['sale_id']:
+                try:
+                    # Convert to integer if it's string
+                    if isinstance(data['sale_id'], str):
+                        data['sale_id'] = int(data['sale_id'])
+                except (ValueError, TypeError):
+                    return custom_response(
+                        success=False,
+                        message="Invalid sale_id format",
                         data=None,
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
@@ -54,7 +81,7 @@ class MoneyReceiptCreateAPIView(APIView):
                 return custom_response(
                     success=True,
                     message="Money receipt created successfully.",
-                    data=MoneyReceiptSerializer(instance).data,
+                    data=MoneyReceiptSerializer(instance, context={'request': request}).data,
                     status_code=status.HTTP_201_CREATED
                 )
             else:

@@ -2,10 +2,10 @@ from django.db import models
 from core.models import Company
 from customers.models import Customer
 from accounts.models import Account
-from sales.models import Sale       
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+
 class MoneyReceipt(models.Model):
     PAYMENT_TYPE_CHOICES = [
         ('overall', 'Overall Payment'),
@@ -15,7 +15,7 @@ class MoneyReceipt(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
     mr_no = models.CharField(max_length=20, unique=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
-    sale = models.ForeignKey(Sale, on_delete=models.SET_NULL, null=True, blank=True)
+    sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True)  # String reference ব্যবহার করুন
     
     # Payment type fields
     payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='overall')
@@ -57,13 +57,13 @@ class MoneyReceipt(models.Model):
         
         super().save(*args, **kwargs)
         
-        # Process payment after save
-        if is_new:
+        # Process payment after save (ONLY for manual receipts)
+        if is_new and not getattr(self, '_auto_created', False):
             self.process_payment()
 
     def process_payment(self):
         """
-        Process payment based on payment type
+        Process payment based on payment type - FIXED
         """
         try:
             if self.payment_type == 'specific' and self.sale:
@@ -72,11 +72,10 @@ class MoneyReceipt(models.Model):
                 self._process_overall_payment()
         except Exception as e:
             print(f"Payment processing error: {e}")
-            # You might want to log this or handle it differently
 
     def _process_specific_invoice_payment(self):
         """
-        Process specific invoice payment
+        Process specific invoice payment - FIXED with raw SQL
         """
         if not self.sale:
             return False
@@ -85,23 +84,33 @@ class MoneyReceipt(models.Model):
         if self.amount > self.sale.due_amount:
             raise ValueError(f"Payment amount ({self.amount}) cannot be greater than due amount ({self.sale.due_amount})")
 
-        # Update sale
-        self.sale.paid_amount += self.amount
-        self.sale.due_amount = max(0, self.sale.due_amount - self.amount)
+        # Use raw SQL to avoid triggering Sale.save() method
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE sales_sale 
+                SET paid_amount = paid_amount + %s, 
+                    due_amount = GREATEST(0, due_amount - %s),
+                    payment_status = CASE 
+                        WHEN (due_amount - %s) <= 0 THEN 'paid'
+                        ELSE 'partial'
+                    END
+                WHERE id = %s
+                """,
+                [self.amount, self.amount, self.amount, self.sale.id]
+            )
         
-        # Update payment status
-        if self.sale.due_amount == 0:
-            self.sale.payment_status = 'paid'
-        elif self.sale.paid_amount > 0:
-            self.sale.payment_status = 'partial'
-            
-        self.sale.save()
+        print(f"Payment processed for invoice {self.sale.invoice_no}: {self.amount} Taka")
         return True
 
     def _process_overall_payment(self):
         """
-        Process overall payment (distribute to due sales)
+        Process overall payment - FIXED with raw SQL
         """
+        # Import inside method to avoid circular import
+        from sales.models import Sale
+        
         # Get all due sales for customer
         due_sales = Sale.objects.filter(
             customer=self.customer,
@@ -111,24 +120,31 @@ class MoneyReceipt(models.Model):
         
         remaining_amount = self.amount
         
+        # Use raw SQL to avoid circular dependency
+        from django.db import connection
+        
         for sale in due_sales:
             if remaining_amount <= 0:
                 break
                 
-            # Calculate applicable amount for this sale
             applicable_amount = min(remaining_amount, sale.due_amount)
             
-            # Update sale
-            sale.paid_amount += applicable_amount
-            sale.due_amount -= applicable_amount
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE sales_sale 
+                    SET paid_amount = paid_amount + %s, 
+                        due_amount = GREATEST(0, due_amount - %s),
+                        payment_status = CASE 
+                            WHEN (due_amount - %s) <= 0 THEN 'paid'
+                            ELSE 'partial'
+                        END
+                    WHERE id = %s
+                    """,
+                    [applicable_amount, applicable_amount, applicable_amount, sale.id]
+                )
             
-            # Update payment status
-            if sale.due_amount == 0:
-                sale.payment_status = 'paid'
-            elif sale.paid_amount > 0:
-                sale.payment_status = 'partial'
-                
-            sale.save()
+            print(f"Payment applied to invoice {sale.invoice_no}: {applicable_amount} Taka")
             remaining_amount -= applicable_amount
             
         return True
@@ -146,8 +162,17 @@ class MoneyReceipt(models.Model):
         """
         Get specific invoice payment summary
         """
-        previous_paid = self.sale.paid_amount - self.amount if self.sale else 0
-        previous_due = (self.sale.due_amount + self.amount) if self.sale else 0
+        # Refresh to get updated data
+        if self.sale:
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT paid_amount, due_amount FROM sales_sale WHERE id = %s", [self.sale.id])
+                row = cursor.fetchone()
+                if row:
+                    current_paid, current_due = row
+        
+        previous_paid = current_paid - self.amount if self.sale else 0
+        previous_due = current_due + self.amount if self.sale else 0
         
         summary = {
             'payment_type': 'specific_invoice',
@@ -158,11 +183,11 @@ class MoneyReceipt(models.Model):
                 'previous_due': float(previous_due),
             },
             'after_payment': {
-                'current_paid': float(self.sale.paid_amount) if self.sale else 0,
-                'current_due': float(self.sale.due_amount) if self.sale else 0,
+                'current_paid': float(current_paid),
+                'current_due': float(current_due),
                 'payment_applied': float(self.amount)
             },
-            'status': 'completed' if self.sale and self.sale.due_amount == 0 else 'partial'
+            'status': 'completed' if current_due == 0 else 'partial'
         }
         return summary
 
@@ -170,9 +195,10 @@ class MoneyReceipt(models.Model):
         """
         Get overall payment summary
         """
+        # Import inside method to avoid circular import
+        from sales.models import Sale
         from django.db.models import Sum
         
-        # Customer total due before payment
         total_due_before = Sale.objects.filter(
             customer=self.customer,
             company=self.company,
@@ -180,32 +206,20 @@ class MoneyReceipt(models.Model):
         ).aggregate(total_due=Sum('due_amount'))['total_due'] or 0
         
         total_due_after = max(total_due_before - self.amount, 0)
-        previous_total_paid = self.get_customer_total_paid() - self.amount
         
         summary = {
             'payment_type': 'overall',
             'before_payment': {
                 'total_due': float(total_due_before),
-                'total_paid': float(previous_total_paid),
             },
             'after_payment': {
                 'total_due': float(total_due_after),
                 'payment_applied': float(self.amount),
-                'remaining_due': float(total_due_after)
             },
             'affected_invoices': self.get_affected_invoices(),
             'status': 'completed' if total_due_after == 0 else 'partial'
         }
         return summary
-
-    def get_customer_total_paid(self):
-        """Get customer total paid amount"""
-        from django.db.models import Sum
-        total_paid = Sale.objects.filter(
-            customer=self.customer,
-            company=self.company
-        ).aggregate(total_paid=Sum('paid_amount'))['total_paid'] or 0
-        return total_paid
 
     def get_affected_invoices(self):
         """Get invoices affected by this payment"""
@@ -215,7 +229,9 @@ class MoneyReceipt(models.Model):
                 'amount_applied': float(self.amount)
             }]
         else:
-            # For overall payment - get affected invoices
+            # Import inside method to avoid circular import
+            from sales.models import Sale
+            
             affected = []
             remaining = self.amount
             
@@ -232,12 +248,36 @@ class MoneyReceipt(models.Model):
                 applied = min(remaining, sale.due_amount)
                 affected.append({
                     'invoice_no': sale.invoice_no,
-                    'amount_applied': float(applied),
-                    'sale_id': sale.id
+                    'amount_applied': float(applied)
                 })
                 remaining -= applied
                 
             return affected
+
+    @classmethod
+    def create_auto_receipt(cls, sale):
+        """
+        Create money receipt automatically without processing payment
+        """
+        from django.utils import timezone
+        
+        receipt = cls(
+            company=sale.company,
+            customer=sale.customer,
+            sale=sale,
+            payment_type='specific',
+            specific_invoice=True,
+            amount=sale.paid_amount,
+            payment_method=sale.payment_method or 'Cash',
+            payment_date=timezone.now(),
+            remark=f"অটো জেনারেটেড রিসিপ্ট - {sale.invoice_no}",
+            seller=sale.sale_by,
+            account=sale.account,
+            _auto_created=True  # Flag to prevent circular processing
+        )
+        
+        receipt.save()
+        return receipt
 
     class Meta:
         ordering = ['-created_at']

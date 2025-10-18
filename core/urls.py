@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet
 from suppliers.views import SupplierViewSet
-from sales.views import SaleViewSet, SaleItemViewSet, DuePaymentAPIView
+from sales.views import SaleViewSet, SaleItemViewSet
 from customers.views import CustomerViewSet
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
@@ -47,7 +47,6 @@ urlpatterns = [
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('pay-due/', DuePaymentAPIView.as_view(), name='pay_due'),
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     path('reports/', include('reports.urls')),
     path('expenses/', include('expenses.urls')),
