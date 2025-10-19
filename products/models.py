@@ -1,7 +1,9 @@
 # products/models.py
-from django.db import models, transaction
+from django.db import models, transaction, IntegrityError
 from django.conf import settings
 from core.models import Company
+import time
+import random
 
 class Category(models.Model):
     name = models.CharField(max_length=120)
@@ -73,16 +75,21 @@ class Source(models.Model):
 
 class CompanyProductSequence(models.Model):
     company = models.OneToOneField(Company, on_delete=models.CASCADE, related_name='product_sequence')
-    last_number = models.PositiveIntegerField(default=0)
+    last_number = models.PositiveIntegerField(default=10000)  # Start from 10000
 
     @classmethod
-    def next_for_company(cls, company):
+    def get_next_sequence(cls, company):
+        """Get next sequence number with proper locking"""
         with transaction.atomic():
-            seq, _ = cls.objects.select_for_update().get_or_create(company=company)
-            seq.last_number += 1
-            seq.save(update_fields=['last_number'])
-            return seq.last_number
-        
+            # Use select_for_update to lock the row
+            sequence, created = cls.objects.select_for_update().get_or_create(
+                company=company,
+                defaults={'last_number': 10000}
+            )
+            # Always increment - this ensures we get 10001, 10002, etc.
+            sequence.last_number += 1
+            sequence.save()
+            return sequence.last_number
 
 class Product(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="products")
@@ -123,17 +130,87 @@ class Product(models.Model):
         else:
             return 2  # In stock
 
+    def _generate_sku_with_company_id(self):
+        """Generate SKU in format: PDT-CompanyId-10001"""
+        if not self.company:
+            raise ValueError("Company is required to generate SKU")
+        
+        try:
+            # Get next sequence number for this company
+            next_num = CompanyProductSequence.get_next_sequence(self.company)
+            # Format: PDT-1-10001, PDT-2-10001, etc.
+            sku = f"PDT-{self.company.id}-{next_num}"
+            return sku
+        except Exception as e:
+            # Fallback if sequence fails
+            return self._generate_fallback_sku()
+
+    def _generate_fallback_sku(self):
+        """Generate a fallback SKU"""
+        timestamp = int(time.time())
+        random_suffix = random.randint(100, 999)
+        company_id = self.company.id if self.company else "0"
+        return f"PDT-{company_id}-{timestamp}{random_suffix}"
+
     def save(self, *args, **kwargs):
         is_new = self.pk is None
 
         if is_new:
-            # set initial stock
+            # Set initial stock
             self.stock_qty = self.opening_stock
 
-            # generate company-scoped SKU if not provided
-            if not self.sku:
-                next_num = CompanyProductSequence.next_for_company(self.company)
-                # format: PDT-0001 (adjust padding as desired)
-                self.sku = f"PDT-{next_num:04d}"
+            # Generate company-scoped SKU if not provided
+            if not self.sku and self.company:
+                try:
+                    self.sku = self._generate_sku_with_company_id()
+                except Exception as e:
+                    self.sku = self._generate_fallback_sku()
 
-        super().save(*args, **kwargs)
+        # Save with retry logic for IntegrityError
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                break
+            except IntegrityError as e:
+                if 'sku' in str(e).lower() and is_new and attempt < max_retries - 1:
+                    self.sku = self._generate_fallback_sku()
+                    continue
+                else:
+                    raise
+
+    def _generate_fallback_sku(self):
+        """Generate a fallback SKU using timestamp and random number"""
+        timestamp = int(time.time())
+        random_suffix = random.randint(100, 999)
+        company_id = self.company.id if self.company else "0"
+        return f"PDT-{company_id}-{timestamp}{random_suffix}"
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+
+        if is_new:
+            # Set initial stock
+            self.stock_qty = self.opening_stock
+
+            # Generate company-scoped SKU if not provided
+            if not self.sku and self.company:
+                try:
+                    self.sku = self._generate_sku_with_company_id()
+                except Exception as e:
+                    self.sku = self._generate_fallback_sku()
+
+        # Save with retry logic for IntegrityError
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                super().save(*args, **kwargs)
+                break  # Success, exit the loop
+            except IntegrityError as e:
+                if 'sku' in str(e).lower() and is_new and attempt < max_retries - 1:
+                    # Regenerate SKU and retry
+                    self.sku = self._generate_fallback_sku()
+                    continue
+                else:
+                    # Re-raise the exception if we've exhausted retries or it's not a SKU error
+                    raise

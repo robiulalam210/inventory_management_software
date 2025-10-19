@@ -5,6 +5,7 @@ from products.models import Product
 from core.models import Company
 from customers.models import Customer
 from django.utils import timezone
+from django.conf import settings
 
 class Sale(models.Model):
     SALE_TYPE_CHOICES = [('retail', 'Retail'), ('wholesale', 'Wholesale')]
@@ -17,17 +18,19 @@ class Sale(models.Model):
         ('overdue', 'Overdue'),
     ]
 
+    # ✅ FIXED: Use only one User import source
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
+    sale_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_made')
+
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
     
-    # NEW FIELD: Direct customer name for walk-in customers (NO DEFAULT VALUE)
     customer_name = models.CharField(max_length=100, blank=True, null=True)
 
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
     invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
     sale_date = models.DateTimeField(auto_now_add=True)
     
-    sale_by = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_made')
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, default='walk_in')
     with_money_receipt = models.CharField(max_length=3, choices=MONEY_RECEIPT_CHOICES, default='No')
     remark = models.TextField(blank=True, null=True)
@@ -39,6 +42,7 @@ class Sale(models.Model):
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     due_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    change_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     overall_discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     overall_discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percent','Percent')), blank=True, null=True)
@@ -73,8 +77,6 @@ class Sale(models.Model):
         # For walk-in customers without customer_id, use customer_name directly
         if self.customer_type == 'walk_in' and not self.customer:
             if self.customer_name and self.customer_name != 'Walk-in Customer':
-                # Use the provided customer_name directly
-                # No need to create Customer object
                 pass
             else:
                 self.customer_name = 'Walk-in Customer'
@@ -83,13 +85,9 @@ class Sale(models.Model):
         if self.customer_type == 'saved_customer' and not self.customer:
             raise ValueError("Saved customer must have a customer record.")
         
-        # VALIDATION: Walk-in customers cannot have due amount
-        if self.customer_type == 'walk_in' and self.due_amount > 0:
-            raise ValueError("Walk-in customers cannot have due amount. Payment must be full.")
-        
-        # VALIDATION: For walk-in customers, paid amount must equal payable amount
-        if self.customer_type == 'walk_in' and self.paid_amount != self.payable_amount:
-            raise ValueError("Walk-in customers must pay the full amount. Paid amount must equal payable amount.")
+        # ✅ FIXED: Allow overpayment, only prevent underpayment
+        if self.customer_type == 'walk_in' and self.paid_amount < self.payable_amount:
+            raise ValueError("Walk-in customers must pay at least the full amount. Paid amount cannot be less than payable amount.")
         
         super().save(*args, **kwargs)
 
@@ -144,37 +142,33 @@ class Sale(models.Model):
         self.grand_total = round(grand_total, 2)
         self.payable_amount = round(grand_total, 2)
         
-        # SPECIAL HANDLING FOR WALK-IN CUSTOMERS
-        if self.customer_type == 'walk_in':
-            # Walk-in customers must pay full amount immediately
-            self.paid_amount = self.payable_amount
+        # ✅ CALCULATE CHANGE AMOUNT (overpayment)
+        self.change_amount = max(0, self.paid_amount - self.payable_amount)
+        
+        # Calculate due amount (0 if overpaid)
+        self.due_amount = max(0, self.payable_amount - self.paid_amount)
+        
+        # Update payment status
+        if self.paid_amount >= self.payable_amount:
             self.due_amount = 0
             self.payment_status = 'paid'
+            if self.change_amount > 0:
+                print(f"💵 Change to return: {self.change_amount}")
+        elif self.paid_amount > 0 and self.paid_amount < self.payable_amount:
+            self.payment_status = 'partial'
         else:
-            # Saved customers can have due amount
-            self.due_amount = max(0, self.payable_amount - self.paid_amount)
-            
-            # Update payment status for saved customers
-            if self.paid_amount == 0:
-                self.payment_status = 'pending'
-            elif self.due_amount == 0 and self.paid_amount > 0:
-                self.payment_status = 'paid'
-            elif self.paid_amount > 0 and self.due_amount > 0:
-                self.payment_status = 'partial'
-            else:
-                self.payment_status = 'pending'
+            self.payment_status = 'pending'
 
         super().save(update_fields=[
             "gross_total", "net_total", "grand_total", 
-            "payable_amount", "paid_amount", "due_amount", "payment_status"
+            "payable_amount", "paid_amount", "due_amount", 
+            "payment_status", "change_amount"
         ])
         
         # Auto-create money receipt when payment is made
-        # For walk-in customers, always create receipt automatically
         if (self.paid_amount > 0 and 
             self.with_money_receipt == 'Yes' and
-            (self.customer_type == 'walk_in' or 
-             (self.payment_status in ['paid', 'partial'] and self.paid_amount > 0))):
+            self.payment_status in ['paid', 'partial']):
             self.create_money_receipt()
 
     def create_money_receipt(self):
@@ -247,9 +241,10 @@ class Sale(models.Model):
                 raise ValidationError({
                     'due_amount': 'Walk-in customers cannot have due amount.'
                 })
-            if self.paid_amount != self.payable_amount:
+            # ✅ FIXED: Allow overpayment, only prevent underpayment
+            if self.paid_amount < self.payable_amount:
                 raise ValidationError({
-                    'paid_amount': 'Walk-in customers must pay the full amount immediately.'
+                    'paid_amount': 'Walk-in customers must pay at least the full amount immediately.'
                 })
 
     def __str__(self):

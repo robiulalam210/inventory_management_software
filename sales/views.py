@@ -149,9 +149,19 @@ class SaleViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_201_CREATED
             )
         except serializers.ValidationError as e:
+            # ✅ FIXED: Corrected syntax errors
+            if isinstance(e.detail, list) and len(e.detail) > 0:
+                error_message = e.detail[0]
+            elif isinstance(e.detail, dict) and e.detail:
+                first_key = list(e.detail.keys())[0]
+                first_error = e.detail[first_key]
+                error_message = first_error[0] if isinstance(first_error, list) else first_error
+            else:
+                error_message = str(e.detail) if e.detail else "Validation Error"
+            
             return custom_response(
                 success=False,
-                message="Validation Error",
+                message=error_message,
                 data=e.detail,
                 status_code=status.HTTP_400_BAD_REQUEST
             )
@@ -203,9 +213,19 @@ class SaleItemViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_201_CREATED
             )
         except serializers.ValidationError as e:
+            # ✅ FIXED: Corrected syntax errors
+            if isinstance(e.detail, list) and len(e.detail) > 0:
+                error_message = e.detail[0]
+            elif isinstance(e.detail, dict) and e.detail:
+                first_key = list(e.detail.keys())[0]
+                first_error = e.detail[first_key]
+                error_message = first_error[0] if isinstance(first_error, list) else first_error
+            else:
+                error_message = str(e.detail) if e.detail else "Validation Error"
+            
             return custom_response(
                 success=False,
-                message="Validation Error",
+                message=error_message,
                 data=e.detail,
                 status_code=status.HTTP_400_BAD_REQUEST
             )

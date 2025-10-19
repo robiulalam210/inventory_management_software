@@ -4,6 +4,12 @@ from products.models import Product
 from accounts.models import Account
 from money_receipts.models import MoneyReceipt
 from django.utils import timezone
+from django.contrib.auth import get_user_model
+# -----------------------------
+# Sale Serializer - DEFINED AFTER SaleItemSerializer
+# -----------------------------
+
+User = get_user_model()
 
 # -----------------------------
 # SaleItem Serializer - MUST BE DEFINED FIRST
@@ -47,9 +53,8 @@ class SaleItemSerializer(serializers.ModelSerializer):
         product.save(update_fields=['stock_qty'])
         return SaleItem.objects.create(**validated_data)
 
-# -----------------------------
-# Sale Serializer - DEFINED AFTER SaleItemSerializer
-# -----------------------------
+
+
 class SaleSerializer(serializers.ModelSerializer):
     customer_id = serializers.PrimaryKeyRelatedField(
         queryset=Customer.objects.all(), 
@@ -60,6 +65,7 @@ class SaleSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(required=False, allow_blank=True)
     items = SaleItemSerializer(many=True)
     due_amount = serializers.SerializerMethodField()
+    change_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     payment_method = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     account_id = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.all(), 
@@ -69,15 +75,19 @@ class SaleSerializer(serializers.ModelSerializer):
     )
     account_name = serializers.CharField(source='account.name', read_only=True, required=False, allow_null=True)
     
+    # User fields
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+    sale_by_name = serializers.CharField(source='sale_by.username', read_only=True)
+    
     # Write-only fields for charges
     vat = serializers.DecimalField(max_digits=12, decimal_places=2, write_only=True, required=False, default=0)
     service_charge = serializers.DecimalField(max_digits=12, decimal_places=2, write_only=True, required=False, default=0)
     delivery_charge = serializers.DecimalField(max_digits=12, decimal_places=2, write_only=True, required=False, default=0)
     
-    # Make sale_by more flexible
-    sale_by = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    # ✅ SIMPLIFIED: Remove sale_by field temporarily to test
+    # sale_by = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     
-    # Add paid_amount field for payment - MAKE IT REQUIRED FOR MONEY RECEIPT
+    # Add paid_amount field for payment
     paid_amount = serializers.DecimalField(
         max_digits=12, 
         decimal_places=2, 
@@ -93,8 +103,9 @@ class SaleSerializer(serializers.ModelSerializer):
         model = Sale
         fields = [
             'id', 'invoice_no', 'customer_id', 'customer_name', 'sale_type',
-            'sale_date', 'sale_by', 'gross_total', 'net_total', 'grand_total', 'payable_amount', 'paid_amount',
-            'due_amount', 'overall_discount', 'overall_discount_type',
+            'sale_date', 'sale_by_name', 'created_by_name',  # ✅ REMOVED: sale_by from fields
+            'gross_total', 'net_total', 'grand_total', 'payable_amount', 'paid_amount',
+            'due_amount', 'change_amount', 'overall_discount', 'overall_discount_type',
             'overall_delivery_charge', 'overall_delivery_type',
             'overall_service_charge', 'overall_service_type',
             'overall_vat_amount', 'overall_vat_type',
@@ -104,8 +115,10 @@ class SaleSerializer(serializers.ModelSerializer):
             'items'
         ]
         read_only_fields = [
-            'invoice_no', 'gross_total', 'net_total', 'grand_total', 'payable_amount', 'due_amount',
-            'overall_delivery_charge', 'overall_service_charge', 'overall_vat_amount'
+            'invoice_no', 'gross_total', 'net_total', 'grand_total', 
+            'payable_amount', 'due_amount', 'change_amount',
+            'overall_delivery_charge', 'overall_service_charge', 'overall_vat_amount',
+            'created_by_name', 'sale_by_name'
         ]
 
     def get_due_amount(self, obj):
@@ -130,76 +143,6 @@ class SaleSerializer(serializers.ModelSerializer):
             )
             return customer
 
-    def validate_sale_by(self, value):
-        """Validate sale_by field - allow null or valid account ID"""
-        if value is None:
-            return None
-            
-        try:
-            account = Account.objects.get(id=value)
-            return account
-        except Account.DoesNotExist:
-            try:
-                account = Account.objects.first()
-                if account:
-                    return account
-                return None
-            except:
-                return None
-
-    def validate(self, attrs):
-        """Overall validation with payment handling"""
-        customer_type = attrs.get('customer_type', 'walk_in')
-        paid_amount = attrs.get('paid_amount', 0)
-        with_money_receipt = attrs.get('with_money_receipt', 'No')
-        account = attrs.get('account')
-        
-        # If with_money_receipt is 'Yes', ensure paid_amount > 0 and account is provided
-        if with_money_receipt == 'Yes':
-            if paid_amount <= 0:
-                raise serializers.ValidationError({
-                    "paid_amount": "Payment amount must be greater than 0 when money receipt is required."
-                })
-            if not account:
-                raise serializers.ValidationError({
-                    "account_id": "Account is required when money receipt is generated."
-                })
-        
-        # For walk-in customers, paid_amount should equal payable_amount
-        if customer_type == 'walk_in' and paid_amount > 0:
-            # We'll handle this in create method after totals are calculated
-            pass
-        
-        request = self.context.get('request')
-        company = getattr(request.user, 'company', None) if request else None
-
-        # Handle walk-in customer
-        if customer_type == 'walk_in':
-            customer = attrs.get('customer')
-            customer_name = attrs.get('customer_name')
-            
-            if not customer:
-                walk_in_customer = self.get_or_create_walk_in_customer(company, customer_name)
-                attrs['customer'] = walk_in_customer
-            
-            if 'customer_name' in attrs:
-                attrs.pop('customer_name')
-        
-        # For saved customers, customer_id is required
-        elif customer_type == 'saved_customer' and not attrs.get('customer'):
-            raise serializers.ValidationError({
-                "customer_id": "This field is required for saved customers."
-            })
-        
-        # Check if customer belongs to same company
-        if request and hasattr(request.user, 'company') and attrs.get('customer') and attrs['customer'].company:
-            if attrs['customer'].company != request.user.company:
-                raise serializers.ValidationError({
-                    "customer_id": f"Cannot use customer from another company: {attrs['customer'].company.name}"
-                })
-        
-        return attrs
-
     def create(self, validated_data):
         try:
             # Extract write-only fields
@@ -207,7 +150,6 @@ class SaleSerializer(serializers.ModelSerializer):
             service_charge_amount = validated_data.pop('service_charge', 0)
             delivery_charge_amount = validated_data.pop('delivery_charge', 0)
             items_data = validated_data.pop('items')
-            sale_by = validated_data.pop('sale_by', None)
             paid_amount = validated_data.get('paid_amount', 0)
             with_money_receipt = validated_data.get('with_money_receipt', 'No')
             
@@ -216,15 +158,16 @@ class SaleSerializer(serializers.ModelSerializer):
             validated_data['overall_service_charge'] = service_charge_amount
             validated_data['overall_delivery_charge'] = delivery_charge_amount
             
-            # Handle sale_by
-            if sale_by:
-                validated_data['sale_by'] = sale_by
+            # ✅ SIMPLIFIED: Always use current user for both fields
+            request = self.context.get('request')
+            if request and request.user.is_authenticated:
+                validated_data['created_by'] = request.user
+                validated_data['sale_by'] = request.user  # Same as created_by
 
             customer = validated_data.get('customer')
             account = validated_data.get('account', None)
 
-            request = self.context.get('request')
-            company = getattr(request.user, 'company', None)
+            company = getattr(request.user, 'company', None) if request else None
             validated_data['company'] = company
 
             # Ensure customer is set
@@ -248,22 +191,12 @@ class SaleSerializer(serializers.ModelSerializer):
 
             # Update totals after creating all items
             sale.update_totals()
-            
-            # Handle walk-in customers - auto set paid_amount to payable_amount
-            if sale.customer_type == 'walk_in':
-                sale.paid_amount = sale.payable_amount
-                sale.due_amount = 0
-                sale.payment_status = 'paid'
-                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
-                paid_amount = sale.payable_amount  # Update paid_amount for receipt creation
-            
+
             # Handle payment and money receipt creation
             if account and paid_amount > 0:
-                # Update account balance
                 account.balance += paid_amount
                 account.save(update_fields=['balance'])
                 
-                # Auto create MoneyReceipt if with_money_receipt is 'Yes'
                 if with_money_receipt == 'Yes':
                     try:
                         money_receipt = MoneyReceipt.objects.create(
@@ -280,7 +213,6 @@ class SaleSerializer(serializers.ModelSerializer):
                         print(f"Money receipt created: {money_receipt.mr_no}")
                     except Exception as e:
                         print(f"Error creating money receipt: {e}")
-                        # Don't raise error, just log it
 
             return sale
 
@@ -288,6 +220,9 @@ class SaleSerializer(serializers.ModelSerializer):
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Error creating sale: {str(e)}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise serializers.ValidationError(f"Failed to create sale: {str(e)}")
 
     def to_representation(self, instance):
@@ -297,6 +232,7 @@ class SaleSerializer(serializers.ModelSerializer):
         representation['grand_total'] = instance.grand_total
         representation['payable_amount'] = instance.payable_amount
         representation['due_amount'] = instance.due_amount
+        representation['change_amount'] = instance.change_amount
         
         # Add customer_name to response
         if instance.customer:
@@ -305,7 +241,6 @@ class SaleSerializer(serializers.ModelSerializer):
             representation['customer_name'] = 'Walk-in Customer'
             
         return representation
-    
 # sales/serializers.py
 class DueSaleSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
