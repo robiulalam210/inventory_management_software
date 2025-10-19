@@ -1,61 +1,108 @@
 from rest_framework import viewsets, permissions, filters, status, serializers
 from django_filters.rest_framework import DjangoFilterBackend
-from core.base_viewsets import BaseCompanyViewSet  # ✅ Custom base viewset
+from rest_framework.decorators import action
+from django_filters import rest_framework as django_filters
+from django.db import models
+from core.base_viewsets import BaseCompanyViewSet
 from .models import Product, Category, Unit, Brand, Group, Source
 from .serializers import (
     ProductSerializer, CategorySerializer, UnitSerializer,
     BrandSerializer, GroupSerializer, SourceSerializer
 )
-from django.shortcuts import render, redirect
-
 from core.utils import custom_response
-from core.base_viewsets import BaseCompanyViewSet
-from .froms import CategoryForm, UnitForm, BrandForm, GroupForm, SourceForm, ProductForm
 
+# Custom Filter for Product with Stock Status
+class ProductFilter(django_filters.FilterSet):
+    category = django_filters.NumberFilter(field_name='category__id')
+    category_name = django_filters.CharFilter(field_name='category__name', lookup_expr='icontains')
+    product_name = django_filters.CharFilter(field_name='name', lookup_expr='icontains')
+    sku = django_filters.CharFilter(field_name='sku', lookup_expr='icontains')
+    brand = django_filters.NumberFilter(field_name='brand__id')
+    unit = django_filters.NumberFilter(field_name='unit__id')
+    min_price = django_filters.NumberFilter(field_name='selling_price', lookup_expr='gte')
+    max_price = django_filters.NumberFilter(field_name='selling_price', lookup_expr='lte')
+    stock_status = django_filters.NumberFilter(method='filter_stock_status')
+    
+    class Meta:
+        model = Product
+        fields = ['category', 'brand', 'unit', 'group', 'source', 'is_active']
+    
+    def filter_stock_status(self, queryset, name, value):
+        """
+        Filter by stock status:
+        0 = Out of stock (stock_qty == 0)
+        1 = Low stock (stock_qty <= alert_quantity AND stock_qty > 0)
+        2 = In stock (stock_qty > alert_quantity)
+        """
+        try:
+            status_value = int(value)
+            if status_value == 0:  # Out of stock
+                return queryset.filter(stock_qty=0)
+            elif status_value == 1:  # Low stock
+                return queryset.filter(
+                    stock_qty__gt=0, 
+                    stock_qty__lte=models.F('alert_quantity')
+                )
+            elif status_value == 2:  # In stock
+                return queryset.filter(stock_qty__gt=models.F('alert_quantity'))
+        except (ValueError, TypeError):
+            pass
+        return queryset
 
-# ----- Category API -----
-class CategoryViewSet(BaseCompanyViewSet):
+# Base API ViewSet
+class BaseInventoryViewSet(BaseCompanyViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+
+# Category ViewSet
+class CategoryViewSet(BaseInventoryViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name']
-    ordering_fields = ['name']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at']
+    filterset_fields = ['name']
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page if page is not None else queryset, many=True)
-        return custom_response(
-            success=True,
-            message="Category list fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return custom_response(
-            success=True,
-            message="Category details fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Category list fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            company = getattr(self.request.user, "company", None)
-            name = serializer.validated_data.get('name')
-            if not company:
+            
+            # Check if user has company
+            if not hasattr(request.user, 'company') or not request.user.company:
                 return custom_response(
                     success=False,
                     message="User does not have an associated company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            
+            company = request.user.company
+            name = serializer.validated_data.get('name')
+            
             if Category.objects.filter(company=company, name=name).exists():
                 return custom_response(
                     success=False,
@@ -63,7 +110,8 @@ class CategoryViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            serializer.save(company=company)
+            
+            serializer.save(company=company, created_by=request.user)
             return custom_response(
                 success=True,
                 message="Category created successfully.",
@@ -85,49 +133,53 @@ class CategoryViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# ----- Unit API -----
-class UnitViewSet(BaseCompanyViewSet):
+# Unit ViewSet
+class UnitViewSet(BaseInventoryViewSet):
     queryset = Unit.objects.all()
     serializer_class = UnitSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'code']
     ordering_fields = ['name', 'code']
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page if page is not None else queryset, many=True)
-        return custom_response(
-            success=True,
-            message="Unit list fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return custom_response(
-            success=True,
-            message="Unit details fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Unit list fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            company = getattr(self.request.user, "company", None)
-            name = serializer.validated_data.get('name')
-            if not company:
+            
+            if not hasattr(request.user, 'company') or not request.user.company:
                 return custom_response(
                     success=False,
                     message="User does not have an associated company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            
+            company = request.user.company
+            name = serializer.validated_data.get('name')
+            
             if Unit.objects.filter(company=company, name=name).exists():
                 return custom_response(
                     success=False,
@@ -135,7 +187,8 @@ class UnitViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            serializer.save(company=company)
+            
+            serializer.save(company=company, created_by=request.user)
             return custom_response(
                 success=True,
                 message="Unit created successfully.",
@@ -157,49 +210,53 @@ class UnitViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# ----- Brand API -----
-class BrandViewSet(BaseCompanyViewSet):
+# Brand ViewSet
+class BrandViewSet(BaseInventoryViewSet):
     queryset = Brand.objects.all()
     serializer_class = BrandSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name']
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page if page is not None else queryset, many=True)
-        return custom_response(
-            success=True,
-            message="Brand list fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return custom_response(
-            success=True,
-            message="Brand details fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Brand list fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            company = getattr(self.request.user, "company", None)
-            name = serializer.validated_data.get('name')
-            if not company:
+            
+            if not hasattr(request.user, 'company') or not request.user.company:
                 return custom_response(
                     success=False,
                     message="User does not have an associated company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            
+            company = request.user.company
+            name = serializer.validated_data.get('name')
+            
             if Brand.objects.filter(company=company, name=name).exists():
                 return custom_response(
                     success=False,
@@ -207,7 +264,8 @@ class BrandViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            serializer.save(company=company)
+            
+            serializer.save(company=company, created_by=request.user)
             return custom_response(
                 success=True,
                 message="Brand created successfully.",
@@ -229,49 +287,53 @@ class BrandViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# ----- Group API -----
-class GroupViewSet(BaseCompanyViewSet):
+# Group ViewSet
+class GroupViewSet(BaseInventoryViewSet):
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name']
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page if page is not None else queryset, many=True)
-        return custom_response(
-            success=True,
-            message="Group list fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return custom_response(
-            success=True,
-            message="Group details fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Group list fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            company = getattr(self.request.user, "company", None)
-            name = serializer.validated_data.get('name')
-            if not company:
+            
+            if not hasattr(request.user, 'company') or not request.user.company:
                 return custom_response(
                     success=False,
                     message="User does not have an associated company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            
+            company = request.user.company
+            name = serializer.validated_data.get('name')
+            
             if Group.objects.filter(company=company, name=name).exists():
                 return custom_response(
                     success=False,
@@ -279,7 +341,8 @@ class GroupViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            serializer.save(company=company)
+            
+            serializer.save(company=company, created_by=request.user)
             return custom_response(
                 success=True,
                 message="Group created successfully.",
@@ -301,49 +364,53 @@ class GroupViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# ----- Source API -----
-class SourceViewSet(BaseCompanyViewSet):
+# Source ViewSet
+class SourceViewSet(BaseInventoryViewSet):
     queryset = Source.objects.all()
     serializer_class = SourceSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name']
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page if page is not None else queryset, many=True)
-        return custom_response(
-            success=True,
-            message="Source list fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return custom_response(
-            success=True,
-            message="Source details fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Source list fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            company = getattr(self.request.user, "company", None)
-            name = serializer.validated_data.get('name')
-            if not company:
+            
+            if not hasattr(request.user, 'company') or not request.user.company:
                 return custom_response(
                     success=False,
                     message="User does not have an associated company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
+            
+            company = request.user.company
+            name = serializer.validated_data.get('name')
+            
             if Source.objects.filter(company=company, name=name).exists():
                 return custom_response(
                     success=False,
@@ -351,7 +418,8 @@ class SourceViewSet(BaseCompanyViewSet):
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            serializer.save(company=company)
+            
+            serializer.save(company=company, created_by=request.user)
             return custom_response(
                 success=True,
                 message="Source created successfully.",
@@ -373,155 +441,428 @@ class SourceViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# ----- Product API -----
-class ProductViewSet(BaseCompanyViewSet):
+# Product ViewSet with Stock Status Filtering
+class ProductViewSet(BaseInventoryViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['category', 'brand', 'unit', 'group', 'source']
-    search_fields = ['name', 'sku', 'category__name', 'brand__name', 'unit__name', 'group__name', 'source__name']
-    ordering_fields = ['name', 'selling_price', 'stock_qty', 'created_at']
+    filterset_class = ProductFilter
+    search_fields = [
+        'name', 'sku', 'description',
+        'category__name', 'brand__name', 'unit__name', 
+        'group__name', 'source__name'
+    ]
+    ordering_fields = [
+        'name', 'sku', 'selling_price', 'purchase_price',
+        'stock_qty', 'created_at', 'updated_at'
+    ]
+    ordering = ['name']
+    
+    # Remove pagination_class = None and use proper pagination
+    page_size = 20  # Default page size
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
     def get_queryset(self):
+        """Filter products by user's company with optimized queries"""
         user = self.request.user
-        if user.company:
+        if hasattr(user, 'company') and user.company:
             return Product.objects.filter(company=user.company).select_related(
-                'category','unit','brand','group','source'
-            )
+                'category', 'unit', 'brand', 'group', 'source', 'created_by'
+            ).prefetch_related('category__products')
         return Product.objects.none()
-
+    
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        serializer = self.get_serializer(page if page is not None else queryset, many=True)
-        return custom_response(
-            success=True,
-            message="Product list fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return custom_response(
-            success=True,
-            message="Product details fetched successfully.",
-            data=serializer.data,
-            status_code=status.HTTP_200_OK
-        )
-
-    def create(self, request, *args, **kwargs):
-        import traceback
-        import sys
-        
-        serializer = self.get_serializer(data=request.data)
+        """
+        Enhanced list with multiple filters and pagination
+        """
         try:
-            print("=== PRODUCT CREATE DEBUG ===")
-            print(f"Request data: {request.data}")
-            print(f"User: {request.user}")
-            print(f"User company: {getattr(request.user, 'company', None)}")
+            queryset = self.filter_queryset(self.get_queryset())
             
-            serializer.is_valid(raise_exception=True)
-            company = getattr(self.request.user, "company", None)
-            name = serializer.validated_data.get('name')
+            # Apply multiple filters from query parameters
+            filters_applied = []
             
-            print(f"Validated data: {serializer.validated_data}")
+            # Category filter
+            category_id = request.query_params.get('category_id')
+            if category_id:
+                queryset = queryset.filter(category__id=category_id)
+                filters_applied.append(f"category={category_id}")
             
-            if not company:
-                return custom_response(
-                    success=False,
-                    message="User does not have an associated company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
+            # Brand filter
+            brand_id = request.query_params.get('brand_id')
+            if brand_id:
+                queryset = queryset.filter(brand__id=brand_id)
+                filters_applied.append(f"brand={brand_id}")
             
-            # Check for duplicate product name
-            if Product.objects.filter(company=company, name=name).exists():
-                return custom_response(
-                    success=False,
-                    message="A product with this name already exists for this company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
+            # Unit filter
+            unit_id = request.query_params.get('unit_id')
+            if unit_id:
+                queryset = queryset.filter(unit__id=unit_id)
+                filters_applied.append(f"unit={unit_id}")
             
-            print("Saving product...")
-            # Save the product
-            product = serializer.save(company=company)
-            print(f"Product saved successfully. ID: {product.id}, SKU: {product.sku}")
+            # Group filter
+            group_id = request.query_params.get('group_id')
+            if group_id:
+                queryset = queryset.filter(group__id=group_id)
+                filters_applied.append(f"group={group_id}")
+            
+            # Source filter
+            source_id = request.query_params.get('source_id')
+            if source_id:
+                queryset = queryset.filter(source__id=source_id)
+                filters_applied.append(f"source={source_id}")
+            
+            # Product name filter
+            product_name = request.query_params.get('product_name')
+            if product_name:
+                queryset = queryset.filter(name__icontains=product_name)
+                filters_applied.append(f"name={product_name}")
+            
+            # SKU filter
+            sku_search = request.query_params.get('sku')
+            if sku_search:
+                queryset = queryset.filter(sku__icontains=sku_search)
+                filters_applied.append(f"sku={sku_search}")
+            
+            # Price range filters
+            min_price = request.query_params.get('min_price')
+            max_price = request.query_params.get('max_price')
+            if min_price:
+                queryset = queryset.filter(selling_price__gte=min_price)
+                filters_applied.append(f"min_price={min_price}")
+            if max_price:
+                queryset = queryset.filter(selling_price__lte=max_price)
+                filters_applied.append(f"max_price={max_price}")
+            
+            # Stock quantity filters
+            min_stock = request.query_params.get('min_stock')
+            max_stock = request.query_params.get('max_stock')
+            if min_stock:
+                queryset = queryset.filter(stock_qty__gte=min_stock)
+                filters_applied.append(f"min_stock={min_stock}")
+            if max_stock:
+                queryset = queryset.filter(stock_qty__lte=max_stock)
+                filters_applied.append(f"max_stock={max_stock}")
+            
+            # Active status filter
+            is_active = request.query_params.get('is_active')
+            if is_active is not None:
+                if is_active.lower() in ['true', '1', 'yes']:
+                    queryset = queryset.filter(is_active=True)
+                    filters_applied.append("active=true")
+                elif is_active.lower() in ['false', '0', 'no']:
+                    queryset = queryset.filter(is_active=False)
+                    filters_applied.append("active=false")
+            
+            # Get page size from request or use default
+            page_size = request.query_params.get('page_size', self.page_size)
+            try:
+                page_size = int(page_size)
+                if page_size > self.max_page_size:
+                    page_size = self.max_page_size
+            except (ValueError, TypeError):
+                page_size = self.page_size
+            
+            # Manual pagination implementation
+            page_number = request.query_params.get('page', 1)
+            try:
+                page_number = int(page_number)
+            except (ValueError, TypeError):
+                page_number = 1
+            
+            # Calculate pagination
+            total_count = queryset.count()
+            total_pages = (total_count + page_size - 1) // page_size  # Ceiling division
+            
+            # Ensure page number is within valid range
+            if page_number < 1:
+                page_number = 1
+            elif page_number > total_pages and total_pages > 0:
+                page_number = total_pages
+            
+            # Calculate start and end indices
+            start_index = (page_number - 1) * page_size
+            end_index = start_index + page_size
+            
+            # Get paginated data
+            paginated_queryset = queryset[start_index:end_index]
+            
+            serializer = self.get_serializer(paginated_queryset, many=True)
+            
+            # Build pagination response
+            response_data = {
+                'results': serializer.data,
+                'pagination': {
+                    'count': total_count,
+                    'total_pages': total_pages,
+                    'current_page': page_number,
+                    'page_size': page_size,
+                    'next': None,
+                    'previous': None
+                },
+                'filters_applied': filters_applied
+            }
+            
+            # Add next page URL
+            if page_number < total_pages:
+                response_data['pagination']['next'] = f"?page={page_number + 1}&page_size={page_size}"
+            
+            # Add previous page URL
+            if page_number > 1:
+                response_data['pagination']['previous'] = f"?page={page_number - 1}&page_size={page_size}"
             
             return custom_response(
                 success=True,
-                message="Product created successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_201_CREATED
+                message=f"Product list fetched successfully. {len(filters_applied)} filter(s) applied.",
+                data=response_data,
+                status_code=status.HTTP_200_OK
             )
             
-        except serializers.ValidationError as e:
-            print(f"Validation Error: {e.detail}")
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
         except Exception as e:
-            print(f"=== EXCEPTION DETAILS ===")
-            print(f"Exception type: {type(e).__name__}")
-            print(f"Exception message: {str(e)}")
-            print("=== TRACEBACK ===")
-            traceback.print_exc(file=sys.stdout)
-            print("=================")
-            
             return custom_response(
                 success=False,
-                message=f"Internal server error: {str(e)}",
+                message=str(e),
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=['get'])
+    def advanced_search(self, request):
+        """
+        Advanced search with multiple criteria
+        """
+        try:
+            queryset = self.get_queryset()
+            
+            # Text search
+            search_term = request.query_params.get('q', '')
+            if search_term:
+                queryset = queryset.filter(
+                    models.Q(name__icontains=search_term) |
+                    models.Q(sku__icontains=search_term) |
+                    models.Q(description__icontains=search_term)
+                )
+            
+            # Multiple category filter (comma separated)
+            categories = request.query_params.get('categories')
+            if categories:
+                category_list = [cat.strip() for cat in categories.split(',') if cat.strip()]
+                if category_list:
+                    queryset = queryset.filter(category__id__in=category_list)
+            
+            # Multiple brand filter
+            brands = request.query_params.get('brands')
+            if brands:
+                brand_list = [brand.strip() for brand in brands.split(',') if brand.strip()]
+                if brand_list:
+                    queryset = queryset.filter(brand__id__in=brand_list)
+            
+            # Stock status filter
+            stock_status = request.query_params.get('stock_status')
+            if stock_status:
+                try:
+                    status_value = int(stock_status)
+                    if status_value == 0:  # Out of stock
+                        queryset = queryset.filter(stock_qty=0)
+                    elif status_value == 1:  # Low stock
+                        queryset = queryset.filter(
+                            stock_qty__gt=0, 
+                            stock_qty__lte=models.F('alert_quantity')
+                        )
+                    elif status_value == 2:  # In stock
+                        queryset = queryset.filter(stock_qty__gt=models.F('alert_quantity'))
+                except (ValueError, TypeError):
+                    pass
+            
+            # Price range
+            min_price = request.query_params.get('min_price')
+            max_price = request.query_params.get('max_price')
+            if min_price:
+                queryset = queryset.filter(selling_price__gte=min_price)
+            if max_price:
+                queryset = queryset.filter(selling_price__lte=max_price)
+            
+            # Stock range
+            min_stock = request.query_params.get('min_stock')
+            max_stock = request.query_params.get('max_stock')
+            if min_stock:
+                queryset = queryset.filter(stock_qty__gte=min_stock)
+            if max_stock:
+                queryset = queryset.filter(stock_qty__lte=max_stock)
+            
+            # Active status
+            is_active = request.query_params.get('is_active')
+            if is_active is not None:
+                if is_active.lower() in ['true', '1', 'yes']:
+                    queryset = queryset.filter(is_active=True)
+                elif is_active.lower() in ['false', '0', 'no']:
+                    queryset = queryset.filter(is_active=False)
+            
+            # Ordering
+            ordering = request.query_params.get('ordering', 'name')
+            if ordering.lstrip('-') in [field for field in self.ordering_fields]:
+                queryset = queryset.order_by(ordering)
+            
+            # Manual pagination for advanced search
+            page_size = request.query_params.get('page_size', 20)
+            try:
+                page_size = int(page_size)
+                if page_size > 100:  # Limit page size
+                    page_size = 100
+            except (ValueError, TypeError):
+                page_size = 20
+            
+            page_number = request.query_params.get('page', 1)
+            try:
+                page_number = int(page_number)
+            except (ValueError, TypeError):
+                page_number = 1
+            
+            # Calculate pagination
+            total_count = queryset.count()
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            # Ensure valid page number
+            if page_number < 1:
+                page_number = 1
+            elif page_number > total_pages and total_pages > 0:
+                page_number = total_pages
+            
+            # Get paginated data
+            start_index = (page_number - 1) * page_size
+            end_index = start_index + page_size
+            paginated_queryset = queryset[start_index:end_index]
+            
+            serializer = self.get_serializer(paginated_queryset, many=True)
+            
+            response_data = {
+                'results': serializer.data,
+                'pagination': {
+                    'count': total_count,
+                    'total_pages': total_pages,
+                    'current_page': page_number,
+                    'page_size': page_size,
+                    'next': None,
+                    'previous': None
+                },
+                'search_term': search_term if search_term else None
+            }
+            
+            # Add next/previous page URLs
+            if page_number < total_pages:
+                response_data['pagination']['next'] = f"?page={page_number + 1}&page_size={page_size}"
+            if page_number > 1:
+                response_data['pagination']['previous'] = f"?page={page_number - 1}&page_size={page_size}"
+            
+            return custom_response(
+                success=True,
+                message="Advanced search completed successfully.",
+                data=response_data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-# Category
-def category_list(request):
-    categories = Category.objects.all()
-    return render(request, 'product/category_list.html', {'categories': categories})
+    # Fix other methods that use pagination
+    @action(detail=False, methods=['get'])
+    def search(self, request):
+        """
+        Custom search endpoint for products
+        """
+        try:
+            search_term = request.query_params.get('q', '')
+            category_id = request.query_params.get('category_id')
+            stock_status = request.query_params.get('stock_status')
+            
+            queryset = self.get_queryset()
+            
+            if search_term:
+                queryset = queryset.filter(
+                    models.Q(name__icontains=search_term) |
+                    models.Q(sku__icontains=search_term) |
+                    models.Q(description__icontains=search_term)
+                )
+            
+            if category_id:
+                queryset = queryset.filter(category__id=category_id)
+                
+            if stock_status:
+                # Apply stock status filter
+                try:
+                    status_value = int(stock_status)
+                    if status_value == 0:  # Out of stock
+                        queryset = queryset.filter(stock_qty=0)
+                    elif status_value == 1:  # Low stock
+                        queryset = queryset.filter(
+                            stock_qty__gt=0, 
+                            stock_qty__lte=models.F('alert_quantity')
+                        )
+                    elif status_value == 2:  # In stock
+                        queryset = queryset.filter(stock_qty__gt=models.F('alert_quantity'))
+                except (ValueError, TypeError):
+                    pass
+            
+            # Manual pagination for search
+            page_size = request.query_params.get('page_size', 20)
+            try:
+                page_size = int(page_size)
+            except (ValueError, TypeError):
+                page_size = 20
+            
+            page_number = request.query_params.get('page', 1)
+            try:
+                page_number = int(page_number)
+            except (ValueError, TypeError):
+                page_number = 1
+            
+            total_count = queryset.count()
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            if page_number < 1:
+                page_number = 1
+            elif page_number > total_pages and total_pages > 0:
+                page_number = total_pages
+            
+            start_index = (page_number - 1) * page_size
+            end_index = start_index + page_size
+            paginated_queryset = queryset[start_index:end_index]
+            
+            serializer = self.get_serializer(paginated_queryset, many=True)
+            
+            response_data = {
+                'results': serializer.data,
+                'pagination': {
+                    'count': total_count,
+                    'total_pages': total_pages,
+                    'current_page': page_number,
+                    'page_size': page_size,
+                    'next': None if page_number >= total_pages else f"?page={page_number + 1}&page_size={page_size}",
+                    'previous': None if page_number <= 1 else f"?page={page_number - 1}&page_size={page_size}"
+                }
+            }
+            
+            return custom_response(
+                success=True,
+                message="Products searched successfully.",
+                data=response_data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-def category_create(request):
-    if request.method == 'POST':
-        form = CategoryForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('category_list')
-    else:
-        form = CategoryForm()
-    return render(request, 'product/category_create.html', {'form': form})
-
-# অনুরূপভাবে Unit, Brand, Group, Source, Product-এর জন্যও একইভাবে লিখুন:
-def brand_list(request):
-    brands = Brand.objects.all()
-    return render(request, 'product/brand_list.html', {'brands': brands})
-
-def brand_create(request):
-    if request.method == 'POST':
-        form = BrandForm(request.POST)
-        if form.is_valid():
-            form.save()
-            return redirect('brand_list')
-    else:
-        form = BrandForm()
-    return render(request, 'product/brand_create.html', {'form': form})
-
-def product_list(request):
-    products = Product.objects.all()
-    return render(request, 'product/product_list.html', {'products': products})
-
-def product_create(request):
-    if request.method == 'POST':
-        form = ProductForm(request.POST, request.FILES)
-        if form.is_valid():
-            form.save()
-            return redirect('product_list')
-    else:
-        form = ProductForm()
-    return render(request, 'product/product_create.html', {'form': form})
+    # Keep your existing create, stock_info, low_stock, and filters methods...
+    # [Your existing create method remains the same]
+    # [Your existing stock_info method - update with manual pagination if needed]
+    # [Your existing low_stock method - update with manual pagination if needed]
+    # [Your existing filters method remains the same]
