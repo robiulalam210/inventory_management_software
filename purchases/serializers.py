@@ -2,13 +2,11 @@ from itertools import product
 import logging
 import traceback
 from rest_framework import serializers
-from .models import  Purchase, PurchaseItem
+from .models import Purchase, PurchaseItem
 from products.models import Product
 from accounts.models import Account
 from django.db import transaction
 from decimal import Decimal
-
-
 
 class PurchaseItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
@@ -30,19 +28,23 @@ class PurchaseSerializer(serializers.ModelSerializer):
     )
     account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
     payment_method = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    
+    # Add write-only fields for mapping from Flutter request
+    delivery_charge = serializers.DecimalField(max_digits=12, decimal_places=2, write_only=True, required=False, default=0)
+    service_charge = serializers.DecimalField(max_digits=12, decimal_places=2, write_only=True, required=False, default=0)
 
     class Meta:
         model = Purchase
         fields = [
-            'id', 'company', 'supplier', 'supplier_name', 'total', 'date',
+            'id', 'company', 'supplier', 'supplier_name', 'total', 'grand_total', 'date',
             'overall_discount', 'overall_discount_type',
             'overall_delivery_charge', 'overall_delivery_charge_type',
             'overall_service_charge', 'overall_service_charge_type',
             'vat', 'vat_type', 'invoice_no', 'payment_status', 'return_amount',
             'account_id', 'account_name', 'payment_method',
-            'purchase_items', 'items'
+            'purchase_items', 'items', 'delivery_charge', 'service_charge'  # Added new fields
         ]
-        read_only_fields = ['company', 'total', 'invoice_no']
+        read_only_fields = ['company', 'total', 'grand_total', 'invoice_no']
 
     def get_supplier_name(self, obj):
         try:
@@ -65,14 +67,22 @@ class PurchaseSerializer(serializers.ModelSerializer):
             if not request or not hasattr(request.user, 'company') or not request.user.company:
                 raise serializers.ValidationError("User does not belong to a company.")
 
-            validated_data['company'] = request.user.company
+            # Extract and map write-only fields
+            delivery_charge = validated_data.pop('delivery_charge', 0)
+            service_charge = validated_data.pop('service_charge', 0)
             items_data = validated_data.pop('purchase_items', [])
+            
+            # Map to model fields
+            validated_data['overall_delivery_charge'] = delivery_charge
+            validated_data['overall_service_charge'] = service_charge
+
+            validated_data['company'] = request.user.company
             account = validated_data.get('account', None)
-            total_amount = 0
 
             with transaction.atomic():
                 purchase = Purchase.objects.create(**validated_data)
 
+                # Create purchase items
                 for item_data in items_data:
                     product = item_data['product']
                     if getattr(product, 'company', None) != request.user.company:
@@ -83,58 +93,13 @@ class PurchaseSerializer(serializers.ModelSerializer):
                     purchase_item = PurchaseItem.objects.create(purchase=purchase, **item_data)
                     product.stock_qty = (getattr(product, 'stock_qty', 0) or 0) + qty
                     product.save(update_fields=['stock_qty'])
-                    subtotal_func = getattr(purchase_item, 'subtotal', None)
-                    subtotal = subtotal_func() if callable(subtotal_func) else (purchase_item.qty * purchase_item.price)
-                    total_amount += float(subtotal)
 
-                def safe_num(val): 
-                    try:
-                        return float(val or 0)
-                    except Exception:
-                        return 0
-
-                # Defensive value assignments to avoid NoneType errors
-                overall_discount = safe_num(getattr(purchase, 'overall_discount', 0))
-                overall_discount_type = getattr(purchase, 'overall_discount_type', 'fixed') or 'fixed'
-                overall_delivery_charge = safe_num(getattr(purchase, 'overall_delivery_charge', 0))
-                overall_delivery_charge_type = getattr(purchase, 'overall_delivery_charge_type', 'fixed') or 'fixed'
-                overall_service_charge = safe_num(getattr(purchase, 'overall_service_charge', 0))
-                overall_service_charge_type = getattr(purchase, 'overall_service_charge_type', 'fixed') or 'fixed'
-                vat = safe_num(getattr(purchase, 'vat', 0))
-                vat_type = getattr(purchase, 'vat_type', 'fixed') or 'fixed'
-
-                # Apply overall charges/discounts
-                if overall_discount:
-                    if overall_discount_type == 'percentage':
-                        total_amount -= total_amount * (overall_discount / 100)
-                    else:
-                        total_amount -= overall_discount
-
-                if overall_delivery_charge:
-                    if overall_delivery_charge_type == 'percentage':
-                        total_amount += total_amount * (overall_delivery_charge / 100)
-                    else:
-                        total_amount += overall_delivery_charge
-
-                if overall_service_charge:
-                    if overall_service_charge_type == 'percentage':
-                        total_amount += total_amount * (overall_service_charge / 100)
-                    else:
-                        total_amount += overall_service_charge
-
-                if vat:
-                    if vat_type == 'percentage':
-                        total_amount += total_amount * (vat / 100)
-                    else:
-                        total_amount += vat
-
-                purchase.total = round(total_amount, 2)
-                purchase.save(update_fields=['total'])
+                # Use the model's update_totals method for consistent calculation
+                purchase.update_totals()
 
                 # Update account balance (optional, for cash outflow)
-                if account and purchase.total > 0:
-                    account.balance -= Decimal(str(purchase.total))
-
+                if account and purchase.grand_total > 0:
+                    account.balance -= Decimal(str(purchase.grand_total))
                     account.save(update_fields=['balance'])
 
             return purchase
@@ -145,5 +110,3 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 "error": f"Internal error: {e}",
                 "traceback": tb
             })
-        
-

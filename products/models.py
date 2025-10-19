@@ -1,80 +1,95 @@
-from django.db import models
+# products/models.py
+from django.db import models, transaction
+from django.conf import settings
 from core.models import Company
 
-# =========================
-# মডেলগুলো (বাংলা মন্তব্য সহ)
-# =========================
-
-# ক্যাটাগরি মডেল
 class Category(models.Model):
-    name = models.CharField(max_length=120, )
+    name = models.CharField(max_length=120)
     description = models.TextField(blank=True, null=True)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="categories")  # কোম্পানি ফিল্ড
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="categories")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    
     class Meta:
-            constraints = [
-                models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_category')
-            ]
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_category')
+        ]
+    
     def __str__(self):
         return self.name
 
-# ইউনিট মডেল
 class Unit(models.Model):
-    name = models.CharField(max_length=60,)
+    name = models.CharField(max_length=60)
     code = models.CharField(max_length=20, blank=True, null=True)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="units")  # কোম্পানি ফিল্ড
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="units")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    
     class Meta:
-            constraints = [
-                models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_unit')
-            ]
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_unit')
+        ]
 
     def __str__(self):
         return self.name
 
-# ব্র্যান্ড মডেল
 class Brand(models.Model):
-    name = models.CharField(max_length=120 )
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="brands")  # কোম্পানি ফিল্ড
+    name = models.CharField(max_length=120)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="brands")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
-            constraints = [
-                models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_brand')
-            ]
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_brand')
+        ]
+    
     def __str__(self):
         return self.name
 
-# গ্রুপ মডেল
 class Group(models.Model):
-    name = models.CharField(max_length=120 )
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="groups")  # কোম্পানি ফিল্ড
+    name = models.CharField(max_length=120)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="groups")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
-            constraints = [
-                models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_group')
-            ]
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_group')
+        ]
 
     def __str__(self):
         return self.name
 
-# সোর্স মডেল
 class Source(models.Model):
-    name = models.CharField(max_length=120 )
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="sources")  # কোম্পানি ফিল্ড
+    name = models.CharField(max_length=120)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="sources")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
-            constraints = [
-                models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_source')
-            ]
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_source')
+        ]
 
     def __str__(self):
         return self.name
 
-# প্রোডাক্ট মডেল
+
+class CompanyProductSequence(models.Model):
+    company = models.OneToOneField(Company, on_delete=models.CASCADE, related_name='product_sequence')
+    last_number = models.PositiveIntegerField(default=0)
+
+    @classmethod
+    def next_for_company(cls, company):
+        with transaction.atomic():
+            seq, _ = cls.objects.select_for_update().get_or_create(company=company)
+            seq.last_number += 1
+            seq.save(update_fields=['last_number'])
+            return seq.last_number
+        
+
 class Product(models.Model):
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="products")  # কোম্পানি ফিল্ড
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="products")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     name = models.CharField(max_length=255)
-    sku = models.CharField(max_length=120, blank=True, null=True, unique=True)  # product_no
-    bar_code = models.CharField(max_length=255, blank=True, null=True)
+    sku = models.CharField(max_length=120, blank=True, null=True, unique=True)
 
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, related_name="products")
     unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True)
@@ -85,15 +100,12 @@ class Product(models.Model):
     purchase_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     selling_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
    
-    opening_stock = models.PositiveIntegerField(default=0)  # শুরুর স্টক
-    stock_qty = models.PositiveIntegerField(default=0)      # বর্তমান স্টক
-    alert_quantity = models.PositiveIntegerField(default=5)      # সতর্কতার পরিমাণ
+    opening_stock = models.PositiveIntegerField(default=0)
+    stock_qty = models.PositiveIntegerField(default=0)
+    alert_quantity = models.PositiveIntegerField(default=5)
     description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='inventory-products/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
-
-    unit_name = models.CharField(max_length=100, blank=True, null=True)
-    unit_sub_name = models.CharField(max_length=100, blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -101,11 +113,27 @@ class Product(models.Model):
     def __str__(self):
         return f"{self.name} ({self.sku})" if self.sku else self.name
 
+    @property
+    def stock_status(self):
+        """Returns stock status: 0=out of stock, 1=low stock, 2=in stock"""
+        if self.stock_qty == 0:
+            return 0  # Out of stock
+        elif self.stock_qty <= self.alert_quantity:
+            return 1  # Low stock
+        else:
+            return 2  # In stock
+
     def save(self, *args, **kwargs):
-        is_new = self.pk is None  # নতুন প্রোডাক্ট কিনা চেক
+        is_new = self.pk is None
+
         if is_new:
-            self.stock_qty = self.opening_stock  # নতুন হলে ওপেনিং স্টক বসিয়ে দাও
+            # set initial stock
+            self.stock_qty = self.opening_stock
+
+            # generate company-scoped SKU if not provided
+            if not self.sku:
+                next_num = CompanyProductSequence.next_for_company(self.company)
+                # format: PDT-0001 (adjust padding as desired)
+                self.sku = f"PDT-{next_num:04d}"
+
         super().save(*args, **kwargs)
-        if is_new and not self.sku:
-            self.sku = f"PDT-{1000 + self.id}"  # অটো SKU
-            super().save(update_fields=["sku"])
