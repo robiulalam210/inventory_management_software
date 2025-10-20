@@ -6,6 +6,7 @@ from .views import (
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView
+from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet
 from suppliers.views import SupplierViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,get_due_sales  # Import get_due_sales here
@@ -52,7 +53,11 @@ urlpatterns = [
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
+    path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
+    path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),
+
     path('reports/', include('reports.urls')),
+
     path('expenses/', include('expenses.urls')),
     
     # FIXED: Use the imported function directly, not via views.

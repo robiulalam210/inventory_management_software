@@ -1,11 +1,13 @@
 # purchases/models.py
 from django.db import models
+from django.db.models import Sum, F
 from products.models import Product
 from accounts.models import Account
 from core.models import Company
 from suppliers.models import Supplier
 from django.conf import settings
 from django.utils import timezone
+from decimal import Decimal
 
 class Purchase(models.Model):
     PAYMENT_STATUS_CHOICES = [
@@ -13,6 +15,13 @@ class Purchase(models.Model):
         ('partial', 'Partial'),
         ('paid', 'Paid'),
         ('overdue', 'Overdue'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('cash', 'Cash'),
+        ('bank', 'Bank Transfer'),
+        ('cheque', 'Cheque'),
+        ('digital', 'Digital Payment'),
     ]
     
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
@@ -45,12 +54,15 @@ class Purchase(models.Model):
     vat_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
     
     # Payment Information
-    payment_method = models.CharField(max_length=100, blank=True, null=True)
+    payment_method = models.CharField(max_length=100, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
     account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='purchases')
     invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     remark = models.TextField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-purchase_date', '-date_created']
 
     def _update_payment_status(self):
         """Update payment status based on paid amount"""
@@ -110,9 +122,11 @@ class Purchase(models.Model):
 
         print(f"📊 Purchase totals updated: Total={self.total}, Grand Total={self.grand_total}, Due={self.due_amount}")
         
-        super().save(update_fields=[
-            "total", "grand_total", "due_amount", "change_amount", "payment_status"
-        ])
+        # Save only if instance already exists
+        if self.pk:
+            super().save(update_fields=[
+                "total", "grand_total", "due_amount", "change_amount", "payment_status"
+            ])
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -155,6 +169,9 @@ class Purchase(models.Model):
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         
+        if amount > self.due_amount:
+            raise ValueError(f"Payment amount ({amount}) exceeds due amount ({self.due_amount})")
+        
         self.paid_amount += amount
         
         if payment_method:
@@ -168,11 +185,48 @@ class Purchase(models.Model):
         if account and amount > 0:
             account.balance -= amount  # Decrease balance for purchase payment
             account.save(update_fields=['balance'])
+            
+        return True
+
+    def apply_supplier_payment(self, amount):
+        """
+        Apply payment from SupplierPayment model
+        This is called when a SupplierPayment is created for this purchase
+        """
+        if amount <= 0:
+            raise ValueError("Payment amount must be greater than 0")
+        
+        if amount > self.due_amount:
+            raise ValueError(f"Payment amount ({amount}) exceeds due amount ({self.due_amount})")
+        
+        # Update paid amount and recalculate due amount
+        self.paid_amount += amount
+        self.due_amount = max(0, self.grand_total - self.paid_amount)
+        self._update_payment_status()
+        
+        # Save without triggering the supplier update again
+        update_fields = ["paid_amount", "due_amount", "payment_status"]
+        super().save(update_fields=update_fields)
+        
+        print(f"✅ Supplier payment applied: {amount} to purchase {self.invoice_no}")
+        return True
 
     def instant_pay(self, payment_method, account):
         """Instant payment - pay the full grand total"""
         if self.grand_total > 0:
-            self.make_payment(self.grand_total, payment_method, account)
+            return self.make_payment(self.grand_total, payment_method, account)
+
+    def get_payment_summary(self):
+        """Get payment summary for API responses"""
+        return {
+            'invoice_no': self.invoice_no,
+            'grand_total': float(self.grand_total),
+            'paid_amount': float(self.paid_amount),
+            'due_amount': float(self.due_amount),
+            'payment_status': self.payment_status,
+            'payment_progress': self.payment_progress,
+            'is_overpaid': self.is_overpaid
+        }
 
     @property
     def is_overpaid(self):
@@ -184,6 +238,18 @@ class Purchase(models.Model):
         if self.grand_total == 0:
             return 0
         return min(100, (self.paid_amount / self.grand_total) * 100)
+
+    @classmethod
+    def get_due_purchases(cls, supplier=None, company=None):
+        """Get all due purchases for a supplier or company"""
+        queryset = cls.objects.filter(due_amount__gt=0)
+        
+        if supplier:
+            queryset = queryset.filter(supplier=supplier)
+        if company:
+            queryset = queryset.filter(company=company)
+            
+        return queryset.order_by('purchase_date')
 
     def __str__(self):
         return f"{self.invoice_no or 'No Invoice'} - {self.supplier.name}"
@@ -200,6 +266,9 @@ class PurchaseItem(models.Model):
     # ✅ Auto fields
     date_created = models.DateTimeField(auto_now_add=True)
     date_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date_created']
 
     def subtotal(self):
         total = self.qty * self.price
@@ -240,13 +309,50 @@ class PurchaseItem(models.Model):
         self.purchase.update_totals()
 
     def delete(self, *args, **kwargs):
+        # Store purchase reference before deletion
+        purchase = self.purchase
+        
         # Decrease stock when item is deleted
         self.product.stock_qty -= self.qty
         self.product.save(update_fields=['stock_qty'])
         
-        purchase = self.purchase
         super().delete(*args, **kwargs)
+        
+        # Update purchase totals after deletion
         purchase.update_totals()
+
+    def get_item_summary(self):
+        """Get item summary for API responses"""
+        return {
+            'product_id': self.product.id,
+            'product_name': self.product.name,
+            'qty': self.qty,
+            'price': float(self.price),
+            'discount': float(self.discount),
+            'discount_type': self.discount_type,
+            'subtotal': float(self.subtotal())
+        }
 
     def __str__(self):
         return f"{self.product.name} x {self.qty}"
+
+
+# Signal handlers for better integration
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+
+@receiver(post_save, sender=PurchaseItem)
+def purchase_item_post_save(sender, instance, **kwargs):
+    """Signal to update purchase totals after item save"""
+    try:
+        instance.purchase.update_totals()
+    except Exception as e:
+        print(f"Error updating purchase totals after item save: {e}")
+
+@receiver(post_delete, sender=PurchaseItem)
+def purchase_item_post_delete(sender, instance, **kwargs):
+    """Signal to update purchase totals after item delete"""
+    try:
+        instance.purchase.update_totals()
+    except Exception as e:
+        print(f"Error updating purchase totals after item delete: {e}")
