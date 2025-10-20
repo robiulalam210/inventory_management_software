@@ -126,25 +126,27 @@ class PurchaseSerializer(serializers.ModelSerializer):
             validated_data['created_by'] = request.user
 
             with transaction.atomic():
-                # Create purchase first
+                # Create purchase first (without items)
                 purchase = Purchase.objects.create(**validated_data)
+                print(f"✅ Created purchase ID: {purchase.id} for supplier ID: {purchase.supplier_id}")
 
-                # Create purchase items and update stock
+                # Create purchase items - let PurchaseItem.save() handle stock updates
                 for item_data in items_data:
-                    product = item_data['product']
-                    qty = item_data['qty']
                     PurchaseItem.objects.create(purchase=purchase, **item_data)
-                    
-                    # Update product stock
-                    product.stock_qty = (getattr(product, 'stock_qty', 0) or 0) + qty
-                    product.save(update_fields=['stock_qty'])
 
-                # Calculate totals
+                # Calculate totals - this will trigger supplier update
                 purchase.update_totals()
 
                 # Handle instant payment
                 if instant_pay and account and payment_method:
                     purchase.instant_pay(payment_method, account)
+
+                # Debug: Check supplier after creation
+                print(f"🔄 Purchase created. Checking supplier totals...")
+                if purchase.supplier:
+                    purchase.supplier.refresh_from_db()
+                    print(f"📊 Supplier '{purchase.supplier.name}' (ID: {purchase.supplier.id}) - "
+                          f"Purchases: {purchase.supplier.total_purchases}, Due: {purchase.supplier.total_due}")
 
             return purchase
         except Exception as e:

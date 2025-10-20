@@ -3,31 +3,35 @@ from django.contrib import admin
 from django import forms
 from .models import Category, Unit, Brand, Product, Source, Group
 
-class ProductForm(forms.ModelForm):
-    class Meta:
-        model = Product
-        fields = '__all__'
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Make SKU read-only only for existing instances
-        if self.instance and self.instance.pk:
-            self.fields['sku'].widget.attrs['readonly'] = True
-            self.fields['sku'].help_text = "Auto-generated SKU (format: PDT-CompanyId-Sequence)"
-        else:
-            # For new instances, don't show SKU field - it will be auto-generated
-            self.fields.pop('sku', None)
-
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    form = ProductForm
     list_display = ('name', 'sku', 'company', 'category', 'brand', 'stock_qty', 'selling_price', 'is_active')
     list_filter = ('company', 'category', 'brand', 'unit', 'is_active')
     search_fields = ('name', 'sku', 'category__name', 'brand__name')
-    readonly_fields = ('sku', 'stock_qty', 'created_at', 'updated_at')
     ordering = ('name',)
     
-    fieldsets = (
+    # Define base fieldsets without SKU for new objects
+    base_fieldsets = (
+        ('Basic Information', {
+            'fields': ('company', 'name', 'description', 'image', 'is_active')
+        }),
+        ('Classification', {
+            'fields': ('category', 'unit', 'brand', 'group', 'source')
+        }),
+        ('Pricing', {
+            'fields': ('purchase_price', 'selling_price')
+        }),
+        ('Stock Information', {
+            'fields': ('opening_stock', 'stock_qty', 'alert_quantity')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        })
+    )
+    
+    # Fieldsets for existing objects (includes SKU)
+    existing_fieldsets = (
         ('Basic Information', {
             'fields': ('company', 'name', 'sku', 'description', 'image', 'is_active')
         }),
@@ -45,6 +49,20 @@ class ProductAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         })
     )
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Dynamically set readonly fields"""
+        readonly_fields = ['stock_qty', 'created_at', 'updated_at']
+        if obj:  # Editing an existing object
+            readonly_fields.append('sku')
+        return readonly_fields
+    
+    def get_fieldsets(self, request, obj=None):
+        """Use different fieldsets for new vs existing objects"""
+        if obj:  # Existing object - include SKU
+            return self.existing_fieldsets
+        else:  # New object - no SKU field
+            return self.base_fieldsets
     
     def save_model(self, request, obj, form, change):
         """Handle saving the model, ensuring company is set"""

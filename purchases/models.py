@@ -1,3 +1,4 @@
+# purchases/models.py
 from django.db import models
 from products.models import Product
 from accounts.models import Account
@@ -51,27 +52,42 @@ class Purchase(models.Model):
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     remark = models.TextField(blank=True, null=True)
 
-    def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        
-        # Calculate due amount before saving
-        self.due_amount = max(0, self.grand_total - self.paid_amount)
-        self.change_amount = max(0, self.paid_amount - self.grand_total)
-        
-        # Update payment status
-        self._update_payment_status()
-        
-        super().save(*args, **kwargs)
-        
-        # Auto-generate invoice number after saving for new purchases
-        if is_new and not self.invoice_no:
-            self.invoice_no = f"PO-{1000 + self.id}"
-            # Save again to update invoice number
-            super().save(update_fields=['invoice_no'])
-        
-        # Update supplier totals after saving
-        if self.supplier:
-            self.supplier.update_purchase_totals()
+    # purchases/models.py - Fix save method with transaction handling
+def save(self, *args, **kwargs):
+    is_new = self.pk is None
+    
+    # Calculate due amount before saving
+    self.due_amount = max(0, self.grand_total - self.paid_amount)
+    self.change_amount = max(0, self.paid_amount - self.grand_total)
+    
+    # Update payment status
+    self._update_payment_status()
+    
+    super().save(*args, **kwargs)
+    
+    # Auto-generate invoice number after saving for new purchases
+    if is_new and not self.invoice_no:
+        self.invoice_no = f"PO-{1000 + self.id}"
+        super().save(update_fields=['invoice_no'])
+    
+    # Update supplier totals after saving - with transaction safety
+    if self.supplier:
+        print(f"🔄 Purchase.save: Calling supplier update for supplier ID {self.supplier_id}")
+        try:
+            # Import inside to avoid circular imports
+            from suppliers.models import Supplier
+            
+            # Get fresh supplier instance to ensure we have latest data
+            supplier = Supplier.objects.get(id=self.supplier_id)
+            
+            if hasattr(supplier, 'update_purchase_totals'):
+                print(f"   ✅ Calling update_purchase_totals for '{supplier.name}'")
+                supplier.update_purchase_totals()
+            else:
+                print(f"❌ WARNING: Supplier has no update_purchase_totals method")
+                
+        except Exception as e:
+            print(f"❌ ERROR updating supplier totals: {e}")
 
     def _update_payment_status(self):
         """Update payment status based on paid amount"""
@@ -86,6 +102,8 @@ class Purchase(models.Model):
 
     def update_totals(self):
         """Update purchase totals from items"""
+        print(f"🔄 Purchase.update_totals called for purchase ID: {self.id}")
+        
         items = self.items.all()
         subtotal = sum([item.subtotal() for item in items])
 
@@ -127,6 +145,8 @@ class Purchase(models.Model):
         self.change_amount = max(0, self.paid_amount - self.grand_total)
         self._update_payment_status()
 
+        print(f"📊 Purchase totals updated: Total={self.total}, Grand Total={self.grand_total}, Due={self.due_amount}")
+        
         super().save(update_fields=[
             "total", "grand_total", "due_amount", "change_amount", "payment_status"
         ])
@@ -168,6 +188,7 @@ class Purchase(models.Model):
 
     def __str__(self):
         return f"{self.invoice_no or 'No Invoice'} - {self.supplier.name}"
+
 
 class PurchaseItem(models.Model):
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='items')
@@ -216,6 +237,7 @@ class PurchaseItem(models.Model):
         product.save(update_fields=['stock_qty'])
         
         # Update purchase totals
+        print(f"🔄 PurchaseItem.save: Calling update_totals for purchase ID: {self.purchase.id}")
         self.purchase.update_totals()
 
     def delete(self, *args, **kwargs):
