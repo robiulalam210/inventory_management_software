@@ -18,13 +18,12 @@ class Sale(models.Model):
         ('overdue', 'Overdue'),
     ]
 
-    # ✅ FIXED: Use only one User import source
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
     sale_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_made')
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
-    
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)  # ✅ This allows null
+
     customer_name = models.CharField(max_length=100, blank=True, null=True)
 
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
@@ -85,9 +84,8 @@ class Sale(models.Model):
         if self.customer_type == 'saved_customer' and not self.customer:
             raise ValueError("Saved customer must have a customer record.")
         
-        # ✅ FIXED: Allow overpayment, only prevent underpayment
-        if self.customer_type == 'walk_in' and self.paid_amount < self.payable_amount:
-            raise ValueError("Walk-in customers must pay at least the full amount. Paid amount cannot be less than payable amount.")
+        # ✅ FIXED: Remove payment validation from save method to avoid circular issues
+        # Validation will be handled in the serializer
         
         super().save(*args, **kwargs)
 
@@ -180,39 +178,22 @@ class Sale(models.Model):
             return None
         
         try:
-            # Import inside method to avoid circular import
             from money_receipts.models import MoneyReceipt
-            
-            # For walk-in customers without customer record, create a temporary one for receipt
-            if self.customer_type == 'walk_in' and not self.customer:
-                temp_customer, created = Customer.objects.get_or_create(
-                    name=self.customer_name or 'Walk-in Customer',
-                    company=self.company,
-                    defaults={
-                        'phone': '0000000000',
-                        'address': 'Temporary customer for receipt'
-                    }
-                )
-                self.customer = temp_customer
-                self.save(update_fields=['customer'])
             
             # Check if money receipt already exists for this sale
             existing_receipt = MoneyReceipt.objects.filter(sale=self).first()
             
             if existing_receipt:
-                # Update existing receipt if amount changed
                 if existing_receipt.amount != self.paid_amount:
                     existing_receipt.amount = self.paid_amount
                     existing_receipt.save()
                 return existing_receipt
             
-            # Create new money receipt
+            # ✅ FIXED: Allow creation even without customer
             money_receipt = MoneyReceipt(
                 company=self.company,
-                customer=self.customer,
+                customer=self.customer,  # This can be None now
                 sale=self,
-                payment_type='specific',
-                specific_invoice=True,
                 amount=self.paid_amount,
                 payment_method=self.payment_method or 'Cash',
                 payment_date=timezone.now(),
@@ -228,11 +209,7 @@ class Sale(models.Model):
         except Exception as e:
             print(f"Error creating money receipt: {e}")
             return None
-
     def clean(self):
-        """
-        Django model validation
-        """
         super().clean()
         
         # Additional validation for walk-in customers
@@ -241,7 +218,6 @@ class Sale(models.Model):
                 raise ValidationError({
                     'due_amount': 'Walk-in customers cannot have due amount.'
                 })
-            # ✅ FIXED: Allow overpayment, only prevent underpayment
             if self.paid_amount < self.payable_amount:
                 raise ValidationError({
                     'paid_amount': 'Walk-in customers must pay at least the full amount immediately.'
@@ -255,7 +231,6 @@ class Sale(models.Model):
         return self.customer_type == 'walk_in'
 
     def get_customer_display(self):
-        """Get customer display name - uses customer_name for walk-in, customer.name for saved"""
         if self.customer_type == 'walk_in':
             return self.customer_name or "Walk-in Customer"
         return self.customer.name if self.customer else "Unknown Customer"

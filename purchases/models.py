@@ -52,43 +52,6 @@ class Purchase(models.Model):
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     remark = models.TextField(blank=True, null=True)
 
-    # purchases/models.py - Fix save method with transaction handling
-def save(self, *args, **kwargs):
-    is_new = self.pk is None
-    
-    # Calculate due amount before saving
-    self.due_amount = max(0, self.grand_total - self.paid_amount)
-    self.change_amount = max(0, self.paid_amount - self.grand_total)
-    
-    # Update payment status
-    self._update_payment_status()
-    
-    super().save(*args, **kwargs)
-    
-    # Auto-generate invoice number after saving for new purchases
-    if is_new and not self.invoice_no:
-        self.invoice_no = f"PO-{1000 + self.id}"
-        super().save(update_fields=['invoice_no'])
-    
-    # Update supplier totals after saving - with transaction safety
-    if self.supplier:
-        print(f"🔄 Purchase.save: Calling supplier update for supplier ID {self.supplier_id}")
-        try:
-            # Import inside to avoid circular imports
-            from suppliers.models import Supplier
-            
-            # Get fresh supplier instance to ensure we have latest data
-            supplier = Supplier.objects.get(id=self.supplier_id)
-            
-            if hasattr(supplier, 'update_purchase_totals'):
-                print(f"   ✅ Calling update_purchase_totals for '{supplier.name}'")
-                supplier.update_purchase_totals()
-            else:
-                print(f"❌ WARNING: Supplier has no update_purchase_totals method")
-                
-        except Exception as e:
-            print(f"❌ ERROR updating supplier totals: {e}")
-
     def _update_payment_status(self):
         """Update payment status based on paid amount"""
         if self.paid_amount == 0:
@@ -150,6 +113,42 @@ def save(self, *args, **kwargs):
         super().save(update_fields=[
             "total", "grand_total", "due_amount", "change_amount", "payment_status"
         ])
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        
+        # Calculate due amount before saving
+        self.due_amount = max(0, self.grand_total - self.paid_amount)
+        self.change_amount = max(0, self.paid_amount - self.grand_total)
+        
+        # Update payment status
+        self._update_payment_status()
+        
+        super().save(*args, **kwargs)
+        
+        # Auto-generate invoice number after saving for new purchases
+        if is_new and not self.invoice_no:
+            self.invoice_no = f"PO-{1000 + self.id}"
+            super().save(update_fields=['invoice_no'])
+        
+        # Update supplier totals after saving - with transaction safety
+        if self.supplier:
+            print(f"🔄 Purchase.save: Calling supplier update for supplier ID {self.supplier_id}")
+            try:
+                # Import inside to avoid circular imports
+                from suppliers.models import Supplier
+                
+                # Get fresh supplier instance to ensure we have latest data
+                supplier = Supplier.objects.get(id=self.supplier_id)
+                
+                if hasattr(supplier, 'update_purchase_totals'):
+                    print(f"   ✅ Calling update_purchase_totals for '{supplier.name}'")
+                    supplier.update_purchase_totals()
+                else:
+                    print(f"❌ WARNING: Supplier has no update_purchase_totals method")
+                    
+            except Exception as e:
+                print(f"❌ ERROR updating supplier totals: {e}")
 
     def make_payment(self, amount, payment_method=None, account=None):
         """Make a payment towards this purchase"""
