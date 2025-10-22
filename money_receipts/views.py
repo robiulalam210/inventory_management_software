@@ -1,25 +1,113 @@
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from django.db.models import Q
+from core.utils import custom_response
+from core.pagination import CustomPageNumberPagination
 from .serializers import MoneyReceiptSerializer
 from .models import MoneyReceipt
-from core.utils import custom_response
-import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 class MoneyReceiptCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPageNumberPagination
+
+    def get_paginated_response(self, queryset, request, serializer_class, message="Data fetched successfully."):
+        """Helper method to handle pagination"""
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        
+        if page is not None:
+            serializer = serializer_class(page, many=True, context={'request': request})
+            return paginator.get_paginated_response(serializer.data, message=message)
+        
+        # If no pagination, return all results
+        serializer = serializer_class(queryset, many=True, context={'request': request})
+        return custom_response(
+            success=True,
+            message=message,
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
+        )
+
+    def get_queryset(self):
+        """Base queryset with company filtering"""
+        return MoneyReceipt.objects.filter(company=self.request.user.company) \
+                                  .select_related('customer', 'sale', 'company')
+
+    def apply_filters(self, queryset, request):
+        """Apply filters to the queryset"""
+        # Date range filtering
+        start_date = request.GET.get('start_date')
+        end_date = request.GET.get('end_date')
+        if start_date and end_date:
+            queryset = queryset.filter(payment_date__range=[start_date, end_date])
+        elif start_date:
+            queryset = queryset.filter(payment_date__gte=start_date)
+        elif end_date:
+            queryset = queryset.filter(payment_date__lte=end_date)
+
+        # Customer filtering
+        customer_id = request.GET.get('customer_id')
+        if customer_id:
+            queryset = queryset.filter(customer_id=customer_id)
+
+        # Sale filtering
+        sale_id = request.GET.get('sale_id')
+        if sale_id:
+            queryset = queryset.filter(sale_id=sale_id)
+
+        # Payment method filtering
+        payment_method = request.GET.get('payment_method')
+        if payment_method:
+            queryset = queryset.filter(payment_method=payment_method)
+
+        # Amount range filtering
+        min_amount = request.GET.get('min_amount')
+        max_amount = request.GET.get('max_amount')
+        if min_amount:
+            queryset = queryset.filter(amount__gte=min_amount)
+        if max_amount:
+            queryset = queryset.filter(amount__lte=max_amount)
+
+        # Search by receipt number or note
+        search = request.GET.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(receipt_number__icontains=search) |
+                Q(note__icontains=search) |
+                Q(customer__name__icontains=search)
+            )
+
+        # Order by payment date (newest first by default)
+        order_by = request.GET.get('order_by', '-payment_date')
+        if order_by.lstrip('-') in ['payment_date', 'amount', 'created_at', 'receipt_number']:
+            queryset = queryset.order_by(order_by)
+        else:
+            queryset = queryset.order_by('-payment_date')
+
+        return queryset
 
     def get(self, request):
         try:
-            receipts = MoneyReceipt.objects.filter(company=request.user.company)
-            serializer = MoneyReceiptSerializer(receipts, many=True, context={'request': request})
-            return custom_response(
-                success=True,
-                message="Money receipts fetched successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
+            # Get base queryset
+            queryset = self.get_queryset()
+            
+            # Apply filters
+            queryset = self.apply_filters(queryset, request)
+            
+            # Return paginated response
+            return self.get_paginated_response(
+                queryset, 
+                request, 
+                MoneyReceiptSerializer,
+                message="Money receipts fetched successfully."
             )
+            
         except Exception as e:
+            logger.error(f"Error fetching money receipts: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message=str(e),
@@ -29,27 +117,34 @@ class MoneyReceiptCreateAPIView(APIView):
 
     def post(self, request):
         try:
-            print("Received money receipt data:", request.data)
+            logger.info("Creating money receipt", extra={
+                'user': request.user.id,
+                'company': request.user.company.id,
+                'data_received': request.data
+            })
             
             # Prepare data
             data = request.data.copy()
             
             # Validate required fields
             required_fields = ['customer_id', 'payment_date', 'payment_method', 'amount']
-            for field in required_fields:
-                if field not in data or data[field] in [None, '']:
-                    return custom_response(
-                        success=False,
-                        message=f"Missing required field: {field}",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
+            missing_fields = [field for field in required_fields if field not in data or data[field] in [None, '']]
+            
+            if missing_fields:
+                logger.warning(f"Missing required fields: {missing_fields}")
+                return custom_response(
+                    success=False,
+                    message=f"Missing required fields: {', '.join(missing_fields)}",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # Convert amount to decimal if it's string
             if 'amount' in data and isinstance(data['amount'], str):
                 try:
                     data['amount'] = float(data['amount'])
                 except ValueError:
+                    logger.warning(f"Invalid amount format: {data['amount']}")
                     return custom_response(
                         success=False,
                         message="Invalid amount format",
@@ -60,10 +155,10 @@ class MoneyReceiptCreateAPIView(APIView):
             # Handle sale_id if provided
             if 'sale_id' in data and data['sale_id']:
                 try:
-                    # Convert to integer if it's string
                     if isinstance(data['sale_id'], str):
                         data['sale_id'] = int(data['sale_id'])
                 except (ValueError, TypeError):
+                    logger.warning(f"Invalid sale_id format: {data['sale_id']}")
                     return custom_response(
                         success=False,
                         message="Invalid sale_id format",
@@ -78,6 +173,8 @@ class MoneyReceiptCreateAPIView(APIView):
             
             if serializer.is_valid():
                 instance = serializer.save()
+                logger.info(f"Money receipt created successfully: {instance.id}")
+                
                 return custom_response(
                     success=True,
                     message="Money receipt created successfully.",
@@ -85,7 +182,7 @@ class MoneyReceiptCreateAPIView(APIView):
                     status_code=status.HTTP_201_CREATED
                 )
             else:
-                print("Validation errors:", serializer.errors)
+                logger.warning(f"Money receipt validation errors: {serializer.errors}")
                 return custom_response(
                     success=False,
                     message="Validation error occurred.",
@@ -94,7 +191,123 @@ class MoneyReceiptCreateAPIView(APIView):
                 )
                 
         except Exception as e:
-            print("Error in money receipt creation:", str(e))
+            logger.error(f"Error creating money receipt: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MoneyReceiptDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self, receipt_id, company):
+        """Get money receipt object with company check"""
+        try:
+            return MoneyReceipt.objects.get(id=receipt_id, company=company)
+        except MoneyReceipt.DoesNotExist:
+            return None
+
+    def get(self, request, receipt_id):
+        try:
+            receipt = self.get_object(receipt_id, request.user.company)
+            if not receipt:
+                return custom_response(
+                    success=False,
+                    message="Money receipt not found.",
+                    data=None,
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            serializer = MoneyReceiptSerializer(receipt, context={'request': request})
+            return custom_response(
+                success=True,
+                message="Money receipt fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching money receipt {receipt_id}: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def put(self, request, receipt_id):
+        try:
+            receipt = self.get_object(receipt_id, request.user.company)
+            if not receipt:
+                return custom_response(
+                    success=False,
+                    message="Money receipt not found.",
+                    data=None,
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            serializer = MoneyReceiptSerializer(
+                receipt, 
+                data=request.data, 
+                context={'request': request},
+                partial=True  # Allow partial updates
+            )
+            
+            if serializer.is_valid():
+                instance = serializer.save()
+                logger.info(f"Money receipt updated successfully: {instance.id}")
+                
+                return custom_response(
+                    success=True,
+                    message="Money receipt updated successfully.",
+                    data=MoneyReceiptSerializer(instance, context={'request': request}).data,
+                    status_code=status.HTTP_200_OK
+                )
+            else:
+                logger.warning(f"Money receipt update validation errors: {serializer.errors}")
+                return custom_response(
+                    success=False,
+                    message="Validation error occurred.",
+                    data=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            logger.error(f"Error updating money receipt {receipt_id}: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def delete(self, request, receipt_id):
+        try:
+            receipt = self.get_object(receipt_id, request.user.company)
+            if not receipt:
+                return custom_response(
+                    success=False,
+                    message="Money receipt not found.",
+                    data=None,
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            
+            receipt_id = receipt.id
+            receipt.delete()
+            logger.info(f"Money receipt deleted successfully: {receipt_id}")
+            
+            return custom_response(
+                success=True,
+                message="Money receipt deleted successfully.",
+                data=None,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error deleting money receipt {receipt_id}: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message=str(e),

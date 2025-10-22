@@ -7,7 +7,8 @@ from .views import (
 from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
-from purchases.views import PurchaseViewSet, PurchaseItemViewSet
+from purchases.views import PurchaseViewSet, PurchaseItemViewSet,get_due_purchases
+from purchases.views import get_due_purchases
 from suppliers.views import SupplierViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
@@ -62,12 +63,13 @@ urlpatterns = [
     
     # FIXED: Use the imported function directly, not via views.
     path('due/', get_due_sales, name='due-sales'),  # This creates /api/due/
+    path('purchase-due/', get_due_purchases, name='get_due_purchases'),
 
     # Custom API endpoints for stock filtering
     path('api/products/search/', ProductViewSet.as_view({'get': 'search'}), name='product-search'),
     path('api/products/stock-info/', ProductViewSet.as_view({'get': 'stock_info'}), name='product-stock-info'),
     path('api/products/low-stock/', ProductViewSet.as_view({'get': 'low_stock'}), name='product-low-stock'),
- path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
+    path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
     path('api/products/filters/', ProductViewSet.as_view({'get': 'filters'}), name='product-filters'),
 # GET /api/products/stock-info/?status=0  # Out of stock
 # GET /api/products/stock-info/?status=1  # Low stock  

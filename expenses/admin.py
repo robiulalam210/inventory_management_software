@@ -19,7 +19,8 @@ class ExpenseSubHeadAdmin(admin.ModelAdmin):
 
 @admin.register(Expense)
 class ExpenseAdmin(admin.ModelAdmin):
-    list_display = ('description', 'head', 'subhead', 'amount', 'account', 'expense_date', 'company')
+    list_display = ('invoice_number', 'head', 'subhead', 'amount', 'account', 'expense_date', 'company')
     list_filter = ('head', 'subhead', 'account', 'company', 'expense_date', 'payment_method')
-    search_fields = ('description',)
+    search_fields = ('invoice_number',)
     date_hierarchy = 'expense_date'
+
