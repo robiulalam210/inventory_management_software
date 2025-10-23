@@ -13,7 +13,7 @@ import logging
 from customers.models import Customer
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Q, F, Sum, Value
+from django.db.models import Q, F, Sum, Value, Count
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -134,140 +134,72 @@ class SaleViewSet(BaseCompanyViewSet):
         """
         params = self.request.GET
         
-        # Date range filters
+        print("🔄 APPLYING FILTERS")
+        print(f"📝 All GET params: {dict(params)}")
+        
+        # Customer filter
+        customer_id = params.get('customer')
+        if customer_id:
+            print(f"🔍 Filtering by customer ID: {customer_id}")
+            queryset = queryset.filter(customer_id=customer_id)
+        
+
+          # SALER filter
+     # SALE_BY filter
+       # SALE_BY (Seller) filter
+        seller_id = params.get('seller')
+
+        if seller_id:
+            print(f"🔍 Filtering by seller (user) ID: {seller_id}")
+            queryset = queryset.filter(sale_by_id=seller_id)
+
+
+        # Date range filters - FIXED date parsing
         start_date = params.get('start_date')
         end_date = params.get('end_date')
-        date_range = params.get('date_range')  # today, yesterday, this_week, this_month, last_month
         
         if start_date and end_date:
             try:
-                start = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end = datetime.strptime(end_date, '%Y-%m-%d').date()
+                # Handle both full ISO string and date-only formats
+                if 'T' in start_date:
+                    start = datetime.fromisoformat(start_date.replace('Z', '+00:00')).date()
+                else:
+                    start = datetime.strptime(start_date, '%Y-%m-%d').date()
+                    
+                if 'T' in end_date:
+                    end = datetime.fromisoformat(end_date.replace('Z', '+00:00')).date()
+                else:
+                    end = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    
                 queryset = queryset.filter(sale_date__range=[start, end])
-                logger.info(f"Filtered by date range: {start_date} to {end_date}")
-            except ValueError:
-                logger.warning(f"Invalid date format: {start_date} or {end_date}")
+                print(f"📅 Filtered by date range: {start} to {end}")
+            except ValueError as e:
+                print(f"❌ Invalid date format: {e}")
+                print(f"❌ Start date: {start_date}, End date: {end_date}")
         
-        elif date_range:
-            today = timezone.now().date()
-            if date_range == 'today':
-                queryset = queryset.filter(sale_date=today)
-            elif date_range == 'yesterday':
-                yesterday = today - timedelta(days=1)
-                queryset = queryset.filter(sale_date=yesterday)
-            elif date_range == 'this_week':
-                start_of_week = today - timedelta(days=today.weekday())
-                queryset = queryset.filter(sale_date__gte=start_of_week)
-            elif date_range == 'this_month':
-                start_of_month = today.replace(day=1)
-                queryset = queryset.filter(sale_date__gte=start_of_month)
-            elif date_range == 'last_month':
-                first_day_current_month = today.replace(day=1)
-                last_day_previous_month = first_day_current_month - timedelta(days=1)
-                first_day_previous_month = last_day_previous_month.replace(day=1)
-                queryset = queryset.filter(
-                    sale_date__range=[first_day_previous_month, last_day_previous_month]
-                )
-        
-        # Customer filter
-        customer_id = params.get('customer_id')
-        if customer_id:
-            queryset = queryset.filter(customer_id=customer_id)
-            logger.info(f"Filtered by customer ID: {customer_id}")
-        
-        # Customer name search
-        customer_name = params.get('customer_name')
-        if customer_name:
-            queryset = queryset.filter(
-                Q(customer__name__icontains=customer_name) |
-                Q(customer__phone__icontains=customer_name) |
-                Q(customer__email__icontains=customer_name)
-            )
-            logger.info(f"Filtered by customer name: {customer_name}")
-        
-        # Invoice number filter
-        invoice_no = params.get('invoice_no')
-        if invoice_no:
-            queryset = queryset.filter(invoice_no__icontains=invoice_no)
-            logger.info(f"Filtered by invoice number: {invoice_no}")
-        
-        # Payment status filter
-        payment_status = params.get('payment_status')
-        if payment_status:
-            queryset = queryset.filter(payment_status=payment_status)
-            logger.info(f"Filtered by payment status: {payment_status}")
-        
-        # Payment method filter
-        payment_method = params.get('payment_method')
-        if payment_method:
-            queryset = queryset.filter(payment_method__icontains=payment_method)
-            logger.info(f"Filtered by payment method: {payment_method}")
-        
-        # Amount range filters
-        min_amount = params.get('min_amount')
-        max_amount = params.get('max_amount')
-        if min_amount:
-            try:
-                queryset = queryset.filter(grand_total__gte=float(min_amount))
-                logger.info(f"Filtered by min amount: {min_amount}")
-            except (ValueError, TypeError):
-                pass
-        if max_amount:
-            try:
-                queryset = queryset.filter(grand_total__lte=float(max_amount))
-                logger.info(f"Filtered by max amount: {max_amount}")
-            except (ValueError, TypeError):
-                pass
-        
-        # Due sales filter
-        due_only = params.get('due_only', '').lower() == 'true'
-        if due_only:
-            queryset = queryset.filter(payable_amount__gt=F('paid_amount'))
-            logger.info("Filtered due sales only")
-        
-        # Paid sales filter
-        paid_only = params.get('paid_only', '').lower() == 'true'
-        if paid_only:
-            queryset = queryset.filter(paid_amount__gte=F('payable_amount'))
-            logger.info("Filtered paid sales only")
-        
-        # Partial payment filter
-        partial_payment = params.get('partial_payment', '').lower() == 'true'
-        if partial_payment:
-            queryset = queryset.filter(
-                paid_amount__gt=0,
-                paid_amount__lt=F('payable_amount')
-            )
-            logger.info("Filtered partial payment sales")
-        
-        # Search across multiple fields
+        # Search filter
         search = params.get('search')
         if search:
+            print(f"🔍 Applying search filter: {search}")
             queryset = queryset.filter(
                 Q(invoice_no__icontains=search) |
                 Q(customer__name__icontains=search) |
-                Q(customer__phone__icontains=search) |
-                Q(customer__email__icontains=search) |
-                Q(payment_method__icontains=search) |
-                Q(payment_status__icontains=search) |
-                Q(notes__icontains=search)
+                Q(customer__phone__icontains=search)
             )
-            logger.info(f"Search filter applied: {search}")
         
-        # Sort by various fields
-        sort_by = params.get('sort_by', '-sale_date')
-        valid_sort_fields = [
-            'sale_date', '-sale_date', 'grand_total', '-grand_total',
-            'payable_amount', '-payable_amount', 'paid_amount', '-paid_amount',
-            'invoice_no', '-invoice_no', 'customer__name', '-customer__name'
-        ]
+        # Due only filter
+        due_only = params.get('due_only')
+        if due_only and due_only.lower() == 'true':
+            print(f"🔍 Filtering due sales only")
+            queryset = queryset.filter(payable_amount__gt=models.F('paid_amount'))
         
-        if sort_by in valid_sort_fields:
-            queryset = queryset.order_by(sort_by)
-            logger.info(f"Sorted by: {sort_by}")
-        else:
-            # Default sorting by latest sale date
-            queryset = queryset.order_by('-sale_date')
+        print(f"✅ Final queryset count: {queryset.count()}")
+        
+        # Debug: Print first few results to verify filtering
+        if queryset.count() > 0:
+            print("📋 Sample filtered results:")
+            for sale in queryset[:3]:
+                print(f"   - Invoice: {sale.invoice_no}, Customer: {sale.customer.name if sale.customer else 'None'}")
         
         return queryset
 
@@ -320,10 +252,8 @@ class SaleViewSet(BaseCompanyViewSet):
         
         filter_mapping = {
             'start_date': 'Date From',
-            'end_date': 'Date To',
-            'date_range': 'Date Range',
-            'customer_id': 'Customer ID',
-            'customer_name': 'Customer Name',
+            'end_date': 'Date To', 
+            'customer': 'Customer',
             'invoice_no': 'Invoice Number',
             'payment_status': 'Payment Status',
             'payment_method': 'Payment Method',
@@ -380,7 +310,9 @@ class SaleViewSet(BaseCompanyViewSet):
         Get today's sales
         """
         self.request.GET = self.request.GET.copy()
-        self.request.GET['date_range'] = 'today'
+        today = timezone.now().date()
+        self.request.GET['start_date'] = today.isoformat()
+        self.request.GET['end_date'] = today.isoformat()
         return self.list(request)
 
     @action(detail=False, methods=['get'])
@@ -404,6 +336,8 @@ class SaleViewSet(BaseCompanyViewSet):
             data=serializer.data,
             status_code=status.HTTP_200_OK
         )
+
+
 # -----------------------------
 # SaleItem ViewSet
 # -----------------------------
