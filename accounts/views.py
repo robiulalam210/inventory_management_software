@@ -37,8 +37,9 @@ class AccountViewSet(BaseCompanyViewSet):
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) |
-                Q(ac_number__icontains=search) |
-                Q(description__icontains=search)
+                Q(number__icontains=search) |
+                Q(bank_name__icontains=search) |  # Added bank_name to search
+                Q(branch__icontains=search)       # Added branch to search
             )
             
         if min_balance:
@@ -49,7 +50,7 @@ class AccountViewSet(BaseCompanyViewSet):
         
         # Order by name by default
         order_by = self.request.query_params.get('order_by', 'name')
-        if order_by.lstrip('-') in ['name', 'ac_type', 'balance', 'created_at', 'ac_number']:
+        if order_by.lstrip('-') in ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch']:
             queryset = queryset.order_by(order_by)
         else:
             queryset = queryset.order_by('name')
@@ -90,9 +91,9 @@ class AccountViewSet(BaseCompanyViewSet):
     def _process_account_data(self, data):
         """Process account data to ensure consistent format"""
         for item in data:
-            # Ensure ac_number is None if blank or empty string
-            if item.get('ac_number') in ('', None):
-                item['ac_number'] = None
+            # Ensure number is None if blank or empty string
+            if item.get('number') in ('', None):
+                item['number'] = None
                 
             # Ensure balance is float
             if 'balance' in item and item['balance'] is not None:
@@ -101,6 +102,13 @@ class AccountViewSet(BaseCompanyViewSet):
             # Ensure opening_balance is float
             if 'opening_balance' in item and item['opening_balance'] is not None:
                 item['opening_balance'] = float(item['opening_balance'])
+                
+            # Ensure bank_name and branch are None if empty
+            if item.get('bank_name') in ('', None):
+                item['bank_name'] = None
+                
+            if item.get('branch') in ('', None):
+                item['branch'] = None
                 
         return data
 
@@ -132,13 +140,13 @@ class AccountViewSet(BaseCompanyViewSet):
             serializer.is_valid(raise_exception=True)
             company = self.request.user.company
             ac_type = serializer.validated_data.get('ac_type')
-            ac_number = serializer.validated_data.get('ac_number')
+            number = serializer.validated_data.get('number')
 
             # Uniqueness check for the same company, type, and number
             if Account.objects.filter(
                 company=company, 
                 ac_type=ac_type, 
-                ac_number=ac_number
+                number=number
             ).exists():
                 return custom_response(
                     success=False,
@@ -189,13 +197,13 @@ class AccountViewSet(BaseCompanyViewSet):
             serializer.is_valid(raise_exception=True)
             company = self.request.user.company
             ac_type = serializer.validated_data.get('ac_type')
-            ac_number = serializer.validated_data.get('ac_number')
+            number = serializer.validated_data.get('number')
 
             # Uniqueness check (exclude current instance)
             if Account.objects.filter(
                 company=company, 
                 ac_type=ac_type, 
-                ac_number=ac_number
+                number=number
             ).exclude(id=instance.id).exists():
                 return custom_response(
                     success=False,

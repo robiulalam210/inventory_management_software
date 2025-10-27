@@ -852,429 +852,187 @@ class ProductViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class ProductNonPaginationViewSet(viewsets.ModelViewSet):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = ProductFilter
+    search_fields = [
+        'name', 'sku', 'description',
+        'category__name', 'brand__name', 'unit__name',
+        'group__name', 'source__name'
+    ]
+    ordering_fields = [
+        'name', 'sku', 'selling_price', 'purchase_price',
+        'stock_qty', 'created_at', 'updated_at'
+    ]
+    ordering = ['name']
 
-# # Product ViewSet with Stock Status Filtering
-# class ProductViewSet(BaseInventoryViewSet):
-#     queryset = Product.objects.all()
-#     serializer_class = ProductSerializer
-#     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-#     filterset_class = ProductFilter
-#     search_fields = [
-#         'name', 'sku', 'description',
-#         'category__name', 'brand__name', 'unit__name', 
-#         'group__name', 'source__name'
-#     ]
-#     ordering_fields = [
-#         'name', 'sku', 'selling_price', 'purchase_price',
-#         'stock_qty', 'created_at', 'updated_at'
-#     ]
-#     ordering = ['name']
-    
-#     # Remove pagination_class = None and use proper pagination
-#     page_size = 20  # Default page size
-#     page_size_query_param = 'page_size'
-#     max_page_size = 100
+    # Remove pagination completely
+    pagination_class = None
 
-#     def get_queryset(self):
-#         """Filter products by user's company with optimized queries"""
-#         user = self.request.user
-#         if hasattr(user, 'company') and user.company:
-#             return Product.objects.filter(company=user.company).select_related(
-#                 'category', 'unit', 'brand', 'group', 'source', 'created_by'
-#             ).prefetch_related('category__products')
-#         return Product.objects.none()
-    
-#     def list(self, request, *args, **kwargs):
-#         """
-#         Enhanced list with multiple filters and pagination
-#         """
-#         try:
-#             queryset = self.filter_queryset(self.get_queryset())
-            
-#             # Apply multiple filters from query parameters
-#             filters_applied = []
-            
-#             # Category filter
-#             category_id = request.query_params.get('category_id')
-#             if category_id:
-#                 queryset = queryset.filter(category__id=category_id)
-#                 filters_applied.append(f"category={category_id}")
-            
-#             # Brand filter
-#             brand_id = request.query_params.get('brand_id')
-#             if brand_id:
-#                 queryset = queryset.filter(brand__id=brand_id)
-#                 filters_applied.append(f"brand={brand_id}")
-            
-#             # Unit filter
-#             unit_id = request.query_params.get('unit_id')
-#             if unit_id:
-#                 queryset = queryset.filter(unit__id=unit_id)
-#                 filters_applied.append(f"unit={unit_id}")
-            
-#             # Group filter
-#             group_id = request.query_params.get('group_id')
-#             if group_id:
-#                 queryset = queryset.filter(group__id=group_id)
-#                 filters_applied.append(f"group={group_id}")
-            
-#             # Source filter
-#             source_id = request.query_params.get('source_id')
-#             if source_id:
-#                 queryset = queryset.filter(source__id=source_id)
-#                 filters_applied.append(f"source={source_id}")
-            
-#             # Product name filter
-#             product_name = request.query_params.get('product_name')
-#             if product_name:
-#                 queryset = queryset.filter(name__icontains=product_name)
-#                 filters_applied.append(f"name={product_name}")
-            
-#             # SKU filter
-#             sku_search = request.query_params.get('sku')
-#             if sku_search:
-#                 queryset = queryset.filter(sku__icontains=sku_search)
-#                 filters_applied.append(f"sku={sku_search}")
-            
-#             # Price range filters
-#             min_price = request.query_params.get('min_price')
-#             max_price = request.query_params.get('max_price')
-#             if min_price:
-#                 queryset = queryset.filter(selling_price__gte=min_price)
-#                 filters_applied.append(f"min_price={min_price}")
-#             if max_price:
-#                 queryset = queryset.filter(selling_price__lte=max_price)
-#                 filters_applied.append(f"max_price={max_price}")
-            
-#             # Stock quantity filters
-#             min_stock = request.query_params.get('min_stock')
-#             max_stock = request.query_params.get('max_stock')
-#             if min_stock:
-#                 queryset = queryset.filter(stock_qty__gte=min_stock)
-#                 filters_applied.append(f"min_stock={min_stock}")
-#             if max_stock:
-#                 queryset = queryset.filter(stock_qty__lte=max_stock)
-#                 filters_applied.append(f"max_stock={max_stock}")
-            
-#             # Active status filter
-#             is_active = request.query_params.get('is_active')
-#             if is_active is not None:
-#                 if is_active.lower() in ['true', '1', 'yes']:
-#                     queryset = queryset.filter(is_active=True)
-#                     filters_applied.append("active=true")
-#                 elif is_active.lower() in ['false', '0', 'no']:
-#                     queryset = queryset.filter(is_active=False)
-#                     filters_applied.append("active=false")
-            
-#             # Get page size from request or use default
-#             page_size = request.query_params.get('page_size', self.page_size)
-#             try:
-#                 page_size = int(page_size)
-#                 if page_size > self.max_page_size:
-#                     page_size = self.max_page_size
-#             except (ValueError, TypeError):
-#                 page_size = self.page_size
-            
-#             # Manual pagination implementation
-#             page_number = request.query_params.get('page', 1)
-#             try:
-#                 page_number = int(page_number)
-#             except (ValueError, TypeError):
-#                 page_number = 1
-            
-#             # Calculate pagination
-#             total_count = queryset.count()
-#             total_pages = (total_count + page_size - 1) // page_size  # Ceiling division
-            
-#             # Ensure page number is within valid range
-#             if page_number < 1:
-#                 page_number = 1
-#             elif page_number > total_pages and total_pages > 0:
-#                 page_number = total_pages
-            
-#             # Calculate start and end indices
-#             start_index = (page_number - 1) * page_size
-#             end_index = start_index + page_size
-            
-#             # Get paginated data
-#             paginated_queryset = queryset[start_index:end_index]
-            
-#             serializer = self.get_serializer(paginated_queryset, many=True)
-            
-#             # Build pagination response
-#             response_data = {
-#                 'results': serializer.data,
-#                 'pagination': {
-#                     'count': total_count,
-#                     'total_pages': total_pages,
-#                     'current_page': page_number,
-#                     'page_size': page_size,
-#                     'next': None,
-#                     'previous': None
-#                 },
-#                 'filters_applied': filters_applied
-#             }
-            
-#             # Add next page URL
-#             if page_number < total_pages:
-#                 response_data['pagination']['next'] = f"?page={page_number + 1}&page_size={page_size}"
-            
-#             # Add previous page URL
-#             if page_number > 1:
-#                 response_data['pagination']['previous'] = f"?page={page_number - 1}&page_size={page_size}"
-            
-#             return custom_response(
-#                 success=True,
-#                 message=f"Product list fetched successfully. {len(filters_applied)} filter(s) applied.",
-#                 data=response_data,
-#                 status_code=status.HTTP_200_OK
-#             )
-            
-#         except Exception as e:
-#             return custom_response(
-#                 success=False,
-#                 message=str(e),
-#                 data=None,
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-#             )
+    def get_queryset(self):
+        """Filter products by user's company, only active products with stock > 0"""
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            return Product.objects.filter(
+                company=user.company,
+                is_active=True,
+                stock_qty__gt=0
+            ).select_related(
+                'category', 'unit', 'brand', 'group', 'source', 'created_by'
+            ).prefetch_related('category__products')
+        return Product.objects.none()
 
-#     @action(detail=False, methods=['get'])
-#     def advanced_search(self, request):
-#         """
-#         Advanced search with multiple criteria
-#         """
-#         try:
-#             queryset = self.get_queryset()
-            
-#             # Text search
-#             search_term = request.query_params.get('q', '')
-#             if search_term:
-#                 queryset = queryset.filter(
-#                     models.Q(name__icontains=search_term) |
-#                     models.Q(sku__icontains=search_term) |
-#                     models.Q(description__icontains=search_term)
-#                 )
-            
-#             # Multiple category filter (comma separated)
-#             categories = request.query_params.get('categories')
-#             if categories:
-#                 category_list = [cat.strip() for cat in categories.split(',') if cat.strip()]
-#                 if category_list:
-#                     queryset = queryset.filter(category__id__in=category_list)
-            
-#             # Multiple brand filter
-#             brands = request.query_params.get('brands')
-#             if brands:
-#                 brand_list = [brand.strip() for brand in brands.split(',') if brand.strip()]
-#                 if brand_list:
-#                     queryset = queryset.filter(brand__id__in=brand_list)
-            
-#             # Stock status filter
-#             stock_status = request.query_params.get('stock_status')
-#             if stock_status:
-#                 try:
-#                     status_value = int(stock_status)
-#                     if status_value == 0:  # Out of stock
-#                         queryset = queryset.filter(stock_qty=0)
-#                     elif status_value == 1:  # Low stock
-#                         queryset = queryset.filter(
-#                             stock_qty__gt=0, 
-#                             stock_qty__lte=models.F('alert_quantity')
-#                         )
-#                     elif status_value == 2:  # In stock
-#                         queryset = queryset.filter(stock_qty__gt=models.F('alert_quantity'))
-#                 except (ValueError, TypeError):
-#                     pass
-            
-#             # Price range
-#             min_price = request.query_params.get('min_price')
-#             max_price = request.query_params.get('max_price')
-#             if min_price:
-#                 queryset = queryset.filter(selling_price__gte=min_price)
-#             if max_price:
-#                 queryset = queryset.filter(selling_price__lte=max_price)
-            
-#             # Stock range
-#             min_stock = request.query_params.get('min_stock')
-#             max_stock = request.query_params.get('max_stock')
-#             if min_stock:
-#                 queryset = queryset.filter(stock_qty__gte=min_stock)
-#             if max_stock:
-#                 queryset = queryset.filter(stock_qty__lte=max_stock)
-            
-#             # Active status
-#             is_active = request.query_params.get('is_active')
-#             if is_active is not None:
-#                 if is_active.lower() in ['true', '1', 'yes']:
-#                     queryset = queryset.filter(is_active=True)
-#                 elif is_active.lower() in ['false', '0', 'no']:
-#                     queryset = queryset.filter(is_active=False)
-            
-#             # Ordering
-#             ordering = request.query_params.get('ordering', 'name')
-#             if ordering.lstrip('-') in [field for field in self.ordering_fields]:
-#                 queryset = queryset.order_by(ordering)
-            
-#             # Manual pagination for advanced search
-#             page_size = request.query_params.get('page_size', 20)
-#             try:
-#                 page_size = int(page_size)
-#                 if page_size > 100:  # Limit page size
-#                     page_size = 100
-#             except (ValueError, TypeError):
-#                 page_size = 20
-            
-#             page_number = request.query_params.get('page', 1)
-#             try:
-#                 page_number = int(page_number)
-#             except (ValueError, TypeError):
-#                 page_number = 1
-            
-#             # Calculate pagination
-#             total_count = queryset.count()
-#             total_pages = (total_count + page_size - 1) // page_size
-            
-#             # Ensure valid page number
-#             if page_number < 1:
-#                 page_number = 1
-#             elif page_number > total_pages and total_pages > 0:
-#                 page_number = total_pages
-            
-#             # Get paginated data
-#             start_index = (page_number - 1) * page_size
-#             end_index = start_index + page_size
-#             paginated_queryset = queryset[start_index:end_index]
-            
-#             serializer = self.get_serializer(paginated_queryset, many=True)
-            
-#             response_data = {
-#                 'results': serializer.data,
-#                 'pagination': {
-#                     'count': total_count,
-#                     'total_pages': total_pages,
-#                     'current_page': page_number,
-#                     'page_size': page_size,
-#                     'next': None,
-#                     'previous': None
-#                 },
-#                 'search_term': search_term if search_term else None
-#             }
-            
-#             # Add next/previous page URLs
-#             if page_number < total_pages:
-#                 response_data['pagination']['next'] = f"?page={page_number + 1}&page_size={page_size}"
-#             if page_number > 1:
-#                 response_data['pagination']['previous'] = f"?page={page_number - 1}&page_size={page_size}"
-            
-#             return custom_response(
-#                 success=True,
-#                 message="Advanced search completed successfully.",
-#                 data=response_data,
-#                 status_code=status.HTTP_200_OK
-#             )
-            
-#         except Exception as e:
-#             return custom_response(
-#                 success=False,
-#                 message=str(e),
-#                 data=None,
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-#             )
+    def _get_filters_applied(self, request):
+        """Extract applied filters from request parameters"""
+        filters_applied = []
+        filter_params = [
+            'category_id', 'brand_id', 'unit_id', 'group_id', 'source_id',
+            'product_name', 'sku', 'min_price', 'max_price', 'min_stock', 'max_stock',
+            'q', 'categories', 'brands', 'stock_status', 'ordering'
+        ]
+        
+        for param in filter_params:
+            value = request.query_params.get(param)
+            if value:
+                filters_applied.append(f"{param}={value}")
+        
+        return filters_applied
 
-#     # Fix other methods that use pagination
-#     @action(detail=False, methods=['get'])
-#     def search(self, request):
-#         """
-#         Custom search endpoint for products
-#         """
-#         try:
-#             search_term = request.query_params.get('q', '')
-#             category_id = request.query_params.get('category_id')
-#             stock_status = request.query_params.get('stock_status')
+    def list(self, request, *args, **kwargs):
+        """
+        Get all active products with stock > 0 without pagination
+        """
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            filters_applied = self._get_filters_applied(request)
             
-#             queryset = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
             
-#             if search_term:
-#                 queryset = queryset.filter(
-#                     models.Q(name__icontains=search_term) |
-#                     models.Q(sku__icontains=search_term) |
-#                     models.Q(description__icontains=search_term)
-#                 )
+            return custom_response(
+                success=True,
+                message=f"Active products with stock fetched successfully. {len(filters_applied)} filter(s) applied. Total: {len(serializer.data)} products.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def advanced_search(self, request):
+        """
+        Advanced search with multiple criteria without pagination
+        Only returns active products with stock > 0
+        """
+        try:
+            queryset = self.get_queryset()
+
+            # Text search
+            search_term = request.query_params.get('q', '')
+            if search_term:
+                queryset = queryset.filter(
+                    models.Q(name__icontains=search_term) |
+                    models.Q(sku__icontains=search_term) |
+                    models.Q(description__icontains=search_term)
+                )
+
+            # Multiple category filter (comma separated)
+            categories = request.query_params.get('categories')
+            if categories:
+                category_list = [cat.strip() for cat in categories.split(',') if cat.strip()]
+                if category_list:
+                    queryset = queryset.filter(category__id__in=category_list)
+
+            # Multiple brand filter
+            brands = request.query_params.get('brands')
+            if brands:
+                brand_list = [brand.strip() for brand in brands.split(',') if brand.strip()]
+                if brand_list:
+                    queryset = queryset.filter(brand__id__in=brand_list)
+
+            # Stock status filter
+            stock_status = request.query_params.get('stock_status')
+            if stock_status:
+                try:
+                    status_value = int(stock_status)
+                    if status_value == 1:  # Low stock
+                        queryset = queryset.filter(
+                            stock_qty__gt=0,
+                            stock_qty__lte=models.F('alert_quantity')
+                        )
+                    elif status_value == 2:  # In stock
+                        queryset = queryset.filter(stock_qty__gt=models.F('alert_quantity'))
+                except (ValueError, TypeError):
+                    pass
+
+            # Apply ordering
+            ordering = request.query_params.get('ordering', 'name')
+            if ordering.lstrip('-') in self.ordering_fields:
+                queryset = queryset.order_by(ordering)
+
+            filters_applied = self._get_filters_applied(request)
+            serializer = self.get_serializer(queryset, many=True)
             
-#             if category_id:
-#                 queryset = queryset.filter(category__id=category_id)
+            return custom_response(
+                success=True,
+                message="Advanced search completed successfully.",
+                data={
+                    'products': serializer.data,
+                    'total_count': len(serializer.data),
+                    'search_term': search_term if search_term else None,
+                    'filters_applied': filters_applied
+                },
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def active_stock_products(self, request):
+        """
+        Special endpoint specifically for active products with stock > 0
+        Simplified version without complex filtering
+        """
+        try:
+            queryset = self.get_queryset()
+            
+            # Apply basic filters
+            category_id = request.query_params.get('category_id')
+            if category_id:
+                queryset = queryset.filter(category__id=category_id)
                 
-#             if stock_status:
-#                 # Apply stock status filter
-#                 try:
-#                     status_value = int(stock_status)
-#                     if status_value == 0:  # Out of stock
-#                         queryset = queryset.filter(stock_qty=0)
-#                     elif status_value == 1:  # Low stock
-#                         queryset = queryset.filter(
-#                             stock_qty__gt=0, 
-#                             stock_qty__lte=models.F('alert_quantity')
-#                         )
-#                     elif status_value == 2:  # In stock
-#                         queryset = queryset.filter(stock_qty__gt=models.F('alert_quantity'))
-#                 except (ValueError, TypeError):
-#                     pass
+            brand_id = request.query_params.get('brand_id')
+            if brand_id:
+                queryset = queryset.filter(brand__id=brand_id)
             
-#             # Manual pagination for search
-#             page_size = request.query_params.get('page_size', 20)
-#             try:
-#                 page_size = int(page_size)
-#             except (ValueError, TypeError):
-#                 page_size = 20
-            
-#             page_number = request.query_params.get('page', 1)
-#             try:
-#                 page_number = int(page_number)
-#             except (ValueError, TypeError):
-#                 page_number = 1
-            
-#             total_count = queryset.count()
-#             total_pages = (total_count + page_size - 1) // page_size
-            
-#             if page_number < 1:
-#                 page_number = 1
-#             elif page_number > total_pages and total_pages > 0:
-#                 page_number = total_pages
-            
-#             start_index = (page_number - 1) * page_size
-#             end_index = start_index + page_size
-#             paginated_queryset = queryset[start_index:end_index]
-            
-#             serializer = self.get_serializer(paginated_queryset, many=True)
-            
-#             response_data = {
-#                 'results': serializer.data,
-#                 'pagination': {
-#                     'count': total_count,
-#                     'total_pages': total_pages,
-#                     'current_page': page_number,
-#                     'page_size': page_size,
-#                     'next': None if page_number >= total_pages else f"?page={page_number + 1}&page_size={page_size}",
-#                     'previous': None if page_number <= 1 else f"?page={page_number - 1}&page_size={page_size}"
-#                 }
-#             }
-            
-#             return custom_response(
-#                 success=True,
-#                 message="Products searched successfully.",
-#                 data=response_data,
-#                 status_code=status.HTTP_200_OK
-#             )
-#         except Exception as e:
-#             return custom_response(
-#                 success=False,
-#                 message=str(e),
-#                 data=None,
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-#             )
+            # Apply ordering
+            ordering = request.query_params.get('ordering', 'name')
+            if ordering.lstrip('-') in self.ordering_fields:
+                queryset = queryset.order_by(ordering)
 
-#     # Keep your existing create, stock_info, low_stock, and filters methods...
-#     # [Your existing create method remains the same]
-#     # [Your existing stock_info method - update with manual pagination if needed]
-#     # [Your existing low_stock method - update with manual pagination if needed]
-#     # [Your existing filters method remains the same]
+            serializer = self.get_serializer(queryset, many=True)
+            
+            return custom_response(
+                success=True,
+                message=f"Active products with available stock fetched successfully. Total: {len(serializer.data)} products.",
+                data=sserializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

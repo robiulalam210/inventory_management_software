@@ -35,10 +35,10 @@ class MoneyReceiptCreateAPIView(APIView):
     def get_queryset(self):
         """Base queryset with company filtering"""
         return MoneyReceipt.objects.filter(company=self.request.user.company) \
-                                  .select_related('customer', 'sale', 'company')
+                                  .select_related('customer', 'sale', 'company', 'seller')
 
     def apply_filters(self, queryset, request):
-        """Apply filters to the queryset"""
+        """Apply filters to the queryset - SIMPLIFIED VERSION"""
         # Date range filtering
         start_date = request.GET.get('start_date')
         end_date = request.GET.get('end_date')
@@ -49,41 +49,34 @@ class MoneyReceiptCreateAPIView(APIView):
         elif end_date:
             queryset = queryset.filter(payment_date__lte=end_date)
 
-        # Customer filtering
-        customer_id = request.GET.get('customer_id')
-        if customer_id:
-            queryset = queryset.filter(customer_id=customer_id)
+        # Customer filtering - by ID only
+        customer = request.GET.get('customer')
+        if customer:
+            queryset = queryset.filter(customer_id=customer)
 
-        # Sale filtering
-        sale_id = request.GET.get('sale_id')
-        if sale_id:
-            queryset = queryset.filter(sale_id=sale_id)
+        # Seller filtering - by ID only
+        seller = request.GET.get('seller')
+        if seller:
+            queryset = queryset.filter(seller_id=seller)
 
         # Payment method filtering
         payment_method = request.GET.get('payment_method')
         if payment_method:
-            queryset = queryset.filter(payment_method=payment_method)
+            queryset = queryset.filter(payment_method__icontains=payment_method)
 
-        # Amount range filtering
-        min_amount = request.GET.get('min_amount')
-        max_amount = request.GET.get('max_amount')
-        if min_amount:
-            queryset = queryset.filter(amount__gte=min_amount)
-        if max_amount:
-            queryset = queryset.filter(amount__lte=max_amount)
-
-        # Search by receipt number or note
+        # Search filtering - ONLY direct fields on MoneyReceipt model
         search = request.GET.get('search')
         if search:
             queryset = queryset.filter(
-                Q(receipt_number__icontains=search) |
-                Q(note__icontains=search) |
-                Q(customer__name__icontains=search)
+                Q(mr_no__icontains=search) |
+                Q(remark__icontains=search) |
+                Q(payment_method__icontains=search) |
+                Q(amount__icontains=search)
             )
 
         # Order by payment date (newest first by default)
         order_by = request.GET.get('order_by', '-payment_date')
-        if order_by.lstrip('-') in ['payment_date', 'amount', 'created_at', 'receipt_number']:
+        if order_by.lstrip('-') in ['payment_date', 'amount', 'created_at', 'mr_no']:
             queryset = queryset.order_by(order_by)
         else:
             queryset = queryset.order_by('-payment_date')
@@ -110,7 +103,7 @@ class MoneyReceiptCreateAPIView(APIView):
             logger.error(f"Error fetching money receipts: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="An error occurred while fetching money receipts.",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -125,9 +118,10 @@ class MoneyReceiptCreateAPIView(APIView):
             
             # Prepare data
             data = request.data.copy()
+            data['company'] = request.user.company.id
             
-            # Validate required fields
-            required_fields = ['customer_id', 'payment_date', 'payment_method', 'amount']
+            # Make all fields optional except basic ones
+            required_fields = ['customer', 'payment_date', 'payment_method', 'amount']
             missing_fields = [field for field in required_fields if field not in data or data[field] in [None, '']]
             
             if missing_fields:
@@ -148,20 +142,6 @@ class MoneyReceiptCreateAPIView(APIView):
                     return custom_response(
                         success=False,
                         message="Invalid amount format",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            
-            # Handle sale_id if provided
-            if 'sale_id' in data and data['sale_id']:
-                try:
-                    if isinstance(data['sale_id'], str):
-                        data['sale_id'] = int(data['sale_id'])
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid sale_id format: {data['sale_id']}")
-                    return custom_response(
-                        success=False,
-                        message="Invalid sale_id format",
                         data=None,
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
@@ -194,7 +174,7 @@ class MoneyReceiptCreateAPIView(APIView):
             logger.error(f"Error creating money receipt: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="An error occurred while creating money receipt.",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -233,7 +213,7 @@ class MoneyReceiptDetailAPIView(APIView):
             logger.error(f"Error fetching money receipt {receipt_id}: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="An error occurred while fetching money receipt.",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -249,11 +229,14 @@ class MoneyReceiptDetailAPIView(APIView):
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             
+            data = request.data.copy()
+            data['company'] = request.user.company.id
+            
             serializer = MoneyReceiptSerializer(
                 receipt, 
-                data=request.data, 
+                data=data, 
                 context={'request': request},
-                partial=True  # Allow partial updates
+                partial=True
             )
             
             if serializer.is_valid():
@@ -279,7 +262,7 @@ class MoneyReceiptDetailAPIView(APIView):
             logger.error(f"Error updating money receipt {receipt_id}: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="An error occurred while updating money receipt.",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -295,9 +278,9 @@ class MoneyReceiptDetailAPIView(APIView):
                     status_code=status.HTTP_404_NOT_FOUND
                 )
             
-            receipt_id = receipt.id
+            receipt_id_val = receipt.id
             receipt.delete()
-            logger.info(f"Money receipt deleted successfully: {receipt_id}")
+            logger.info(f"Money receipt deleted successfully: {receipt_id_val}")
             
             return custom_response(
                 success=True,
@@ -310,7 +293,7 @@ class MoneyReceiptDetailAPIView(APIView):
             logger.error(f"Error deleting money receipt {receipt_id}: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="An error occurred while deleting money receipt.",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

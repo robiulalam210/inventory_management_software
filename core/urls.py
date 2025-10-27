@@ -13,7 +13,7 @@ from suppliers.views import SupplierViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
 from customers.views import CustomerViewSet
-from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
+from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet,ProductNonPaginationViewSet
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 from accounts.views import AccountViewSet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, HttpResponsePermanentRedirect
@@ -31,6 +31,8 @@ router.register(r'staff-roles', StaffRoleViewSet, basename='staffrole')
 router.register(r'staffs', StaffViewSet, basename='staff')
 
 router.register(r'products', ProductViewSet, basename='product')
+router.register(r'product-active',ProductNonPaginationViewSet,basename="products")
+
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'units', UnitViewSet, basename='unit')
 router.register(r'brands', BrandViewSet, basename='brand')

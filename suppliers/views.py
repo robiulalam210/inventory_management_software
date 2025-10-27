@@ -1,31 +1,20 @@
+# suppliers/views.py
 from rest_framework import viewsets, status, permissions, serializers
 from django.db.models import Q
 from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
-from .models import Supplier
+from .models import Supplier  # Import from models, not defined here
 from .serializers import SupplierSerializer
 import logging
 
 logger = logging.getLogger(__name__)
-
-class BaseCompanyViewSet(viewsets.ModelViewSet):
-    """Automatically filter by logged-in user's company"""
-    pagination_class = CustomPageNumberPagination
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        company = getattr(self.request.user, "company", None)
-        if company:
-            return queryset.filter(company=company)
-        return queryset.none()
-
-    def perform_create(self, serializer):
-        serializer.save(company=self.request.user.company)
+from core.views import BaseCompanyViewSet
 
 class SupplierViewSet(BaseCompanyViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = CustomPageNumberPagination
 
     def get_queryset(self):
         """Apply filters and search to the queryset"""
@@ -34,35 +23,26 @@ class SupplierViewSet(BaseCompanyViewSet):
         # Get filter parameters
         search = self.request.query_params.get('search')
         status_filter = self.request.query_params.get('status')
-        supplier_type = self.request.query_params.get('type')
-        email = self.request.query_params.get('email')
-        phone = self.request.query_params.get('phone')
         
         # Apply filters
         if search:
             queryset = queryset.filter(
+                Q(supplier_no__icontains=search) |
                 Q(name__icontains=search) |
-                Q(contact_person__icontains=search) |
                 Q(address__icontains=search) |
                 Q(email__icontains=search) |
                 Q(phone__icontains=search)
             )
             
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
-            
-        if supplier_type:
-            queryset = queryset.filter(type=supplier_type)
-            
-        if email:
-            queryset = queryset.filter(email__icontains=email)
-            
-        if phone:
-            queryset = queryset.filter(phone__icontains=phone)
+            if status_filter.lower() == 'active':
+                queryset = queryset.filter(is_active=True)
+            elif status_filter.lower() == 'inactive':
+                queryset = queryset.filter(is_active=False)
         
         # Order by name by default
         order_by = self.request.query_params.get('order_by', 'name')
-        if order_by.lstrip('-') in ['name', 'contact_person', 'email', 'created_at', 'updated_at']:
+        if order_by.lstrip('-') in ['name', 'email', 'created_at', 'updated_at', 'total_purchases']:
             queryset = queryset.order_by(order_by)
         else:
             queryset = queryset.order_by('name')
@@ -139,7 +119,7 @@ class SupplierViewSet(BaseCompanyViewSet):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            instance = serializer.save(company=company)
+            instance = serializer.save(company=company, created_by=request.user)
             logger.info(f"Supplier created successfully: {instance.id}")
             
             return custom_response(
