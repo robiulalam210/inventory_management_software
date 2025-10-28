@@ -9,10 +9,10 @@ from money_receipts.views import MoneyReceiptCreateAPIView
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet,get_due_purchases
 from purchases.views import get_due_purchases
-from suppliers.views import SupplierViewSet
+from suppliers.views import SupplierViewSet,SupplierNonPaginationViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
-from customers.views import CustomerViewSet
+from customers.views import CustomerViewSet,CustomerNonPaginationViewSet
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet,ProductNonPaginationViewSet
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 from accounts.views import AccountViewSet
@@ -41,7 +41,11 @@ router.register(r'sources', SourceViewSet, basename='source')
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'sale-items', SaleItemViewSet, basename='sale-item')
 router.register(r'customers', CustomerViewSet, basename='customer')
+router.register(r'customers-active', CustomerNonPaginationViewSet, basename='customer-active')
+
 router.register(r'suppliers', SupplierViewSet, basename='supplier')
+router.register(r'suppliers-active', SupplierNonPaginationViewSet, basename='s')
+
 router.register(r'purchases', PurchaseViewSet, basename='purchase')
 router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item')
 router.register(r'sales-returns', SalesReturnViewSet, basename='sales-return')

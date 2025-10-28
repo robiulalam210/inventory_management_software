@@ -162,6 +162,19 @@ class UserViewSet(BaseCompanyViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Filter users by company
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        else:
+            # If user has no company, return only themselves
+            queryset = queryset.filter(id=user.id)
+        
+        return queryset
+
     # -----------------------------
     # List Users
     # -----------------------------

@@ -193,3 +193,65 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+
+
+
+
+
+
+
+
+class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
+    queryset = Customer.objects.all()
+    serializer_class = CustomerSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]  # Removed DjangoFilterBackend
+    pagination_class = None  # Disable pagination
+    
+    search_fields = ['name', 'phone', 'email', 'address']
+    ordering_fields = ['name', 'date_created']
+    ordering = ['name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by company only (no active/inactive filter)
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        else:
+            return Customer.objects.none()
+        
+       
+        
+        # Optimize queryset with annotations
+        queryset = queryset.annotate(
+            sales_count=Count('sale', distinct=True),
+            total_paid_amount=Sum('sale__paid_amount'),
+            total_due_amount=Sum('sale__grand_total') - Sum('sale__paid_amount')
+        )
+        
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # No pagination - return all results
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message=f"Found {queryset.count()} customers",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=f"Error fetching customers: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+ 

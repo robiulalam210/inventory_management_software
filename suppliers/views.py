@@ -213,3 +213,64 @@ class SupplierViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+class SupplierNonPaginationViewSet(BaseCompanyViewSet):  # Correct spelling
+    queryset = Supplier.objects.all()
+    serializer_class = SupplierSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None  # Explicitly disable pagination
+
+    def get_queryset(self):
+        """Apply filters and search to the queryset"""
+        queryset = super().get_queryset()
+        
+        # Get filter parameters
+        search = self.request.query_params.get('search')
+        status_filter = self.request.query_params.get('status')
+        
+        # Apply filters
+        if search:
+            queryset = queryset.filter(
+                Q(supplier_no__icontains=search) |
+                Q(name__icontains=search) |
+                Q(address__icontains=search) |
+                Q(email__icontains=search) |
+                Q(phone__icontains=search)
+            )
+            
+        if status_filter:
+            if status_filter.lower() == 'active':
+                queryset = queryset.filter(is_active=True)
+            elif status_filter.lower() == 'inactive':
+                queryset = queryset.filter(is_active=False)
+        
+        # Order by name by default
+        order_by = self.request.query_params.get('order_by', 'name')
+        if order_by.lstrip('-') in ['name', 'email', 'created_at', 'updated_at', 'total_purchases']:
+            queryset = queryset.order_by(order_by)
+        else:
+            queryset = queryset.order_by('name')
+            
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Return all results without pagination
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Supplier list fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching supplier list: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
