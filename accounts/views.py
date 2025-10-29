@@ -5,7 +5,7 @@ from core.base_viewsets import BaseCompanyViewSet
 from core.pagination import CustomPageNumberPagination
 from core.utils import custom_response
 from .models import Account
-from .serializers import AccountSerializer
+from .serializers import AccountSerializer  # Fixed import
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,21 +32,31 @@ class AccountViewSet(BaseCompanyViewSet):
             queryset = queryset.filter(ac_type=ac_type)
             
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
+            # Fix: Use is_active field instead of status property
+            if status_filter.lower() == 'active':
+                queryset = queryset.filter(is_active=True)
+            elif status_filter.lower() == 'inactive':
+                queryset = queryset.filter(is_active=False)
             
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) |
                 Q(number__icontains=search) |
-                Q(bank_name__icontains=search) |  # Added bank_name to search
-                Q(branch__icontains=search)       # Added branch to search
+                Q(bank_name__icontains=search) |
+                Q(branch__icontains=search)
             )
             
         if min_balance:
-            queryset = queryset.filter(balance__gte=min_balance)
+            try:
+                queryset = queryset.filter(balance__gte=Decimal(min_balance))
+            except (ValueError, TypeError):
+                pass
             
         if max_balance:
-            queryset = queryset.filter(balance__lte=max_balance)
+            try:
+                queryset = queryset.filter(balance__lte=Decimal(max_balance))
+            except (ValueError, TypeError):
+                pass
         
         # Order by name by default
         order_by = self.request.query_params.get('order_by', 'name')
@@ -83,7 +93,7 @@ class AccountViewSet(BaseCompanyViewSet):
             logger.error(f"Error fetching account list: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -92,7 +102,9 @@ class AccountViewSet(BaseCompanyViewSet):
         """Process account data to ensure consistent format"""
         for item in data:
             # Ensure number is None if blank or empty string
-            if item.get('number') in ('', None):
+            if item.get('ac_number') in ('', None):
+                item['ac_number'] = None
+            elif item.get('number') in ('', None):  # Handle both field names
                 item['number'] = None
                 
             # Ensure balance is float
@@ -129,7 +141,7 @@ class AccountViewSet(BaseCompanyViewSet):
             logger.error(f"Error fetching account details: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -141,6 +153,10 @@ class AccountViewSet(BaseCompanyViewSet):
             company = self.request.user.company
             ac_type = serializer.validated_data.get('ac_type')
             number = serializer.validated_data.get('number')
+
+            # Fix: Handle empty string as None for uniqueness check
+            if number == '':
+                number = None
 
             # Uniqueness check for the same company, type, and number
             if Account.objects.filter(
@@ -157,17 +173,12 @@ class AccountViewSet(BaseCompanyViewSet):
 
             instance = serializer.save(company=company)
 
-            # Initialize balance if not set
-            if instance.balance is None:
-                instance.balance = instance.opening_balance or 0
-                instance.save()
-
             logger.info(f"Account created successfully: {instance.id}")
             
             return custom_response(
                 success=True,
                 message="Account created successfully.",
-                data=AccountSerializer(instance).data,
+                data=self.get_serializer(instance).data,
                 status_code=status.HTTP_201_CREATED
             )
 
@@ -183,7 +194,7 @@ class AccountViewSet(BaseCompanyViewSet):
             logger.error(f"Error creating account: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -198,6 +209,10 @@ class AccountViewSet(BaseCompanyViewSet):
             company = self.request.user.company
             ac_type = serializer.validated_data.get('ac_type')
             number = serializer.validated_data.get('number')
+
+            # Fix: Handle empty string as None for uniqueness check
+            if number == '':
+                number = None
 
             # Uniqueness check (exclude current instance)
             if Account.objects.filter(
@@ -219,7 +234,7 @@ class AccountViewSet(BaseCompanyViewSet):
             return custom_response(
                 success=True,
                 message="Account updated successfully.",
-                data=AccountSerializer(updated_instance).data,
+                data=self.get_serializer(updated_instance).data,
                 status_code=status.HTTP_200_OK
             )
 
@@ -235,7 +250,7 @@ class AccountViewSet(BaseCompanyViewSet):
             logger.error(f"Error updating account: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -259,7 +274,7 @@ class AccountViewSet(BaseCompanyViewSet):
             logger.error(f"Error deleting account: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -279,16 +294,24 @@ class AccountViewSet(BaseCompanyViewSet):
                 total_balance=Sum('balance')
             )
             
-            # Count by status
-            status_count = queryset.values('status').annotate(
+            # Count by status (using is_active field)
+            status_count = queryset.values('is_active').annotate(
                 count=Count('id')
             )
+            
+            # Convert status count to more readable format
+            status_breakdown = []
+            for item in status_count:
+                status_breakdown.append({
+                    'status': 'Active' if item['is_active'] else 'Inactive',
+                    'count': item['count']
+                })
             
             summary_data = {
                 'total_accounts': total_accounts,
                 'total_balance': float(total_balance),
                 'account_type_breakdown': list(type_count),
-                'status_breakdown': list(status_count)
+                'status_breakdown': status_breakdown
             }
             
             return custom_response(
@@ -301,7 +324,103 @@ class AccountViewSet(BaseCompanyViewSet):
             logger.error(f"Error fetching account summary: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class AccountNonPaginationViewSet(BaseCompanyViewSet):
+    """API for accounts without pagination - shows active accounts by default"""
+    queryset = Account.objects.all()
+    serializer_class = AccountSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        """Apply filters and search to the queryset"""
+        queryset = super().get_queryset()
+        
+        # Get filter parameters
+        ac_type = self.request.query_params.get('ac_type')
+        status_filter = self.request.query_params.get('status')
+        search = self.request.query_params.get('search')
+    
+        # Apply filters - DEFAULT: show only active accounts
+        queryset = queryset.filter(is_active=True)  # Default to active accounts only
+        
+        if ac_type:
+            queryset = queryset.filter(ac_type=ac_type)
+
+        if status_filter:
+            if status_filter.lower() == 'active':
+                queryset = queryset.filter(is_active=True)
+            elif status_filter.lower() == 'inactive':
+                queryset = queryset.filter(is_active=False)
+        
+        # Apply search filter
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(number__icontains=search) |
+                Q(bank_name__icontains=search) |
+                Q(branch__icontains=search)
+            )
+        
+        # Order by name by default
+        order_by = self.request.query_params.get('order_by', 'name')
+        if order_by.lstrip('-') in ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch']:
+            queryset = queryset.order_by(order_by)
+        else:
+            queryset = queryset.order_by('name')
+            
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # If no pagination, return all results
+            serializer = self.get_serializer(queryset, many=True)
+            data = self._process_account_data(serializer.data)
+            
+            return custom_response(
+                success=True,
+                message="Active accounts list fetched successfully.",
+                data=data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching account list: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _process_account_data(self, data):
+        """Process account data to ensure consistent format with status"""
+        for item in data:
+            # Ensure ac_number is None if blank or empty string
+            if item.get('ac_number') in ('', None):
+                item['ac_number'] = None
+                
+            # Ensure balance is float
+            if 'balance' in item and item['balance'] is not None:
+                item['balance'] = float(item['balance'])
+                
+            # Ensure opening_balance is float
+            if 'opening_balance' in item and item['opening_balance'] is not None:
+                item['opening_balance'] = float(item['opening_balance'])
+                
+            # Ensure bank_name and branch are None if empty
+            if item.get('bank_name') in ('', None):
+                item['bank_name'] = None
+                
+            if item.get('branch') in ('', None):
+                item['branch'] = None
+                
+            # Add status field (all will be "Active" since we filter by is_active=True)
+            item['status'] = "Active"
+                
+        return data

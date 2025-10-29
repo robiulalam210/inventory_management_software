@@ -11,10 +11,12 @@ class AccountSerializer(serializers.ModelSerializer):
     bank_name = serializers.CharField(allow_null=True, allow_blank=True)
     branch = serializers.CharField(allow_null=True, allow_blank=True)
     opening_balance = serializers.DecimalField(max_digits=14, decimal_places=2)
+    status = serializers.CharField(read_only=True)  # Add status field
+
 
     class Meta:
         model = Account
         fields = [
             'ac_id', 'ac_name', 'ac_type', 'ac_number', 'balance',
-            'bank_name', 'branch', 'opening_balance', 'company',
+            'bank_name', 'branch', 'opening_balance', 'company', 'status',
         ]

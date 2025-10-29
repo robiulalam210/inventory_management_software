@@ -25,6 +25,8 @@ class Account(models.Model):
     balance = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0.00'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+
 
     class Meta:
         ordering = ['-id']
@@ -35,8 +37,18 @@ class Account(models.Model):
     def __str__(self):
         return f"{self.name} ({self.ac_type})"
 
+
+    @property
+    def status(self):
+            return "Active" if self.is_active else "Inactive"
+
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         if is_new and (self.balance is None or self.balance == 0):
             self.balance = self.opening_balance
         super().save(*args, **kwargs)
+
+
+    
+
+
