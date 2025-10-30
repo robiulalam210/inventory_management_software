@@ -9,6 +9,8 @@ class Category(models.Model):
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True, null=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="categories")
+    is_active = models.BooleanField(default=True)
+
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     
     class Meta:
@@ -24,6 +26,8 @@ class Unit(models.Model):
     code = models.CharField(max_length=20, blank=True, null=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="units")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
     
     class Meta:
         constraints = [
@@ -37,6 +41,7 @@ class Brand(models.Model):
     name = models.CharField(max_length=120)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="brands")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         constraints = [
@@ -50,6 +55,7 @@ class Group(models.Model):
     name = models.CharField(max_length=120)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="groups")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         constraints = [
@@ -63,6 +69,7 @@ class Source(models.Model):
     name = models.CharField(max_length=120)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="sources")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         constraints = [

@@ -146,6 +146,7 @@ class AccountViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # accounts/views.py
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
@@ -153,25 +154,46 @@ class AccountViewSet(BaseCompanyViewSet):
             company = self.request.user.company
             ac_type = serializer.validated_data.get('ac_type')
             number = serializer.validated_data.get('number')
+            name = serializer.validated_data.get('name')
 
-            # Fix: Handle empty string as None for uniqueness check
+            # Handle empty string as None for uniqueness check
             if number == '':
                 number = None
 
-            # Uniqueness check for the same company, type, and number
-            if Account.objects.filter(
-                company=company, 
-                ac_type=ac_type, 
-                number=number
-            ).exists():
-                return custom_response(
-                    success=False,
-                    message="An account with this type and number already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
+            # For Cash and Other accounts, number should be None
+            if ac_type in [Account.TYPE_CASH, Account.TYPE_OTHER]:
+                number = None
 
-            instance = serializer.save(company=company)
+            # Check for existing accounts based on type
+            if ac_type == Account.TYPE_CASH:
+                if Account.objects.filter(company=company, ac_type=Account.TYPE_CASH).exists():
+                    return custom_response(
+                        success=False,
+                        message="A Cash account already exists for your company. You can only have one Cash account.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            elif ac_type == Account.TYPE_OTHER:
+                if Account.objects.filter(company=company, ac_type=Account.TYPE_OTHER).exists():
+                    return custom_response(
+                        success=False,
+                        message="An Other account already exists for your company. You can only have one Other account.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            else:
+                # For Bank and Mobile banking, check by number
+                if Account.objects.filter(company=company, ac_type=ac_type, number=number).exists():
+                    return custom_response(
+                        success=False,
+                        message="An account with this type and number already exists.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+
+            instance = serializer.save(company=company, created_by=request.user)
 
             logger.info(f"Account created successfully: {instance.id}")
             
@@ -198,7 +220,7 @@ class AccountViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+  
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         instance = self.get_object()

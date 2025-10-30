@@ -110,11 +110,11 @@ class SupplierViewSet(BaseCompanyViewSet):
                 )
             
             # Check for duplicate supplier name in the same company
-            name = serializer.validated_data.get('name')
-            if Supplier.objects.filter(company=company, name=name).exists():
+            phone = serializer.validated_data.get('phone')
+            if Supplier.objects.filter(company=company, phone=phone).exists():
                 return custom_response(
                     success=False,
-                    message="A supplier with this name already exists in your company.",
+                    message="A supplier with this phone already exists in your company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
@@ -155,11 +155,11 @@ class SupplierViewSet(BaseCompanyViewSet):
             company = getattr(self.request.user, "company", None)
             
             # Check for duplicate supplier name (excluding current instance)
-            name = serializer.validated_data.get('name')
-            if Supplier.objects.filter(company=company, name=name).exclude(id=instance.id).exists():
+            phone = serializer.validated_data.get('phone')
+            if Supplier.objects.filter(company=company, phone=phone).exclude(id=instance.id).exists():
                 return custom_response(
                     success=False,
-                    message="A supplier with this name already exists in your company.",
+                    message="A supplier with this phone already exists in your company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )

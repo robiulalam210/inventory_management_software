@@ -9,6 +9,7 @@ class ExpenseHead(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     date_created = models.DateTimeField(default=timezone.now)
+    is_active = models.BooleanField(default=True)
     def __str__(self):
         return self.name
 
@@ -19,6 +20,8 @@ class ExpenseSubHead(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     date_created = models.DateTimeField(default=timezone.now)
+    is_active = models.BooleanField(default=True)
+
     def __str__(self):
         return f"{self.head.name} - {self.name}"
 
