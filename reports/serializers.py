@@ -110,14 +110,17 @@ class ProfitLossReportSerializer(serializers.Serializer):
     expense_breakdown = serializers.ListField(required=False)
     date_range = serializers.DictField(required=False)
 
+
+# serializers.py - Add this serializer
 class PurchaseReturnReportSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
     invoice_no = serializers.CharField()
     supplier = serializers.CharField()
-    total_amount = serializers.FloatField()
-    return_amount = serializers.FloatField()
+    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    return_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     date = serializers.DateField()
 
+    
 class SalesReturnReportSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
     invoice_no = serializers.CharField()
@@ -163,7 +166,6 @@ class StockReportSerializer(serializers.Serializer):
     value = serializers.FloatField()
 
 class ExpenseSerializer(serializers.Serializer):
-    sl = serializers.IntegerField()
     id = serializers.IntegerField()
     head = serializers.CharField(source='head.name')
     subhead = serializers.CharField(source='subhead.name', allow_null=True)

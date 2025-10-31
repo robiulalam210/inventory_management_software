@@ -402,3 +402,148 @@ class SaleItemViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+
+class SaleAllListViewSet(BaseCompanyViewSet):
+    queryset = Sale.objects.all()
+    serializer_class = SaleSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        queryset = self.apply_filters(queryset)
+        return queryset
+
+    def apply_filters(self, queryset):
+        """
+        Apply comprehensive filtering to sales queryset
+        """
+        params = self.request.GET
+
+        print("🔄 APPLYING FILTERS")
+        print(f"📝 All GET params: {dict(params)}")
+
+        # Customer filter
+        customer_id = params.get('customer')
+        if customer_id:
+            print(f"🔍 Filtering by customer ID: {customer_id}")
+            queryset = queryset.filter(customer_id=customer_id)
+
+        # Seller filter
+        seller_id = params.get('seller')
+        if seller_id:
+            print(f"🔍 Filtering by seller (user) ID: {seller_id}")
+            queryset = queryset.filter(sale_by_id=seller_id)
+
+        # Date range filter (supports ISO or YYYY-MM-DD)
+        start_date = params.get('start_date')
+        end_date = params.get('end_date')
+        if start_date or end_date:
+            try:
+                def parse_date(date_str):
+                    if not date_str:
+                        return None
+                    if 'T' in date_str:
+                        return datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
+                    return datetime.strptime(date_str, '%Y-%m-%d').date()
+
+                start = parse_date(start_date)
+                end = parse_date(end_date)
+
+                if start and end:
+                    queryset = queryset.filter(sale_date__range=[start, end])
+                elif start:
+                    queryset = queryset.filter(sale_date__gte=start)
+                elif end:
+                    queryset = queryset.filter(sale_date__lte=end)
+
+                print(f"📅 Filtered by date: start={start}, end={end}")
+
+            except ValueError as e:
+                print(f"❌ Invalid date format: {e}")
+                print(f"❌ Start date: {start_date}, End date: {end_date}")
+
+        # Search filter
+        search = params.get('search')
+        if search:
+            print(f"🔍 Applying search filter: {search}")
+            queryset = queryset.filter(
+                Q(invoice_no__icontains=search) |
+                Q(customer__name__icontains=search) |
+                Q(customer__phone__icontains=search)
+            )
+
+        # Due-only filter
+        due_only = params.get('due_only')
+        if due_only and due_only.lower() == 'true':
+            print("🔍 Filtering due sales only")
+            queryset = queryset.filter(payable_amount__gt=F('paid_amount'))
+
+        # Final debug info
+        count = queryset.count()
+        print(f"✅ Final queryset count: {count}")
+
+        if count > 0:
+            print("📋 Sample filtered results:")
+            for sale in queryset[:3]:
+                print(f"   - Invoice: {sale.invoice_no}, Customer: {sale.customer.name if sale.customer else 'None'}")
+
+        return queryset
+
+    def get_applied_filters_info(self):
+        """Return a summary of filters applied"""
+        params = self.request.GET
+        return {
+            "customer": params.get('customer'),
+            "seller": params.get('seller'),
+            "start_date": params.get('start_date'),
+            "end_date": params.get('end_date'),
+            "search": params.get('search'),
+            "due_only": params.get('due_only')
+        }
+
+
+    def get_sales_summary(self, queryset):
+        """Return total sales, amount, and due summary"""
+        total_sales = queryset.count()
+        total_amount = queryset.aggregate(total=models.Sum('grand_total'))['total'] or 0
+        total_due = queryset.aggregate(
+            due=models.Sum(F('payable_amount') - F('paid_amount'))
+        )['due'] or 0
+
+        return {
+            "total_sales": total_sales,
+            "total_amount": total_amount,
+            "total_due": total_due
+        }
+
+    def list(self, request, *args, **kwargs):
+        """Enhanced list method with filtering and summaries"""
+        try:
+            logger.info(f"Sales list called with filters: {dict(request.GET)}")
+
+            queryset = self.filter_queryset(self.get_queryset())
+            page = self.paginate_queryset(queryset)
+
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+
+            serializer = self.get_serializer(queryset, many=True)
+        
+            return custom_response(
+                success=True,
+                message=f"Found {queryset.count()} sales",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Error in sales list: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error fetching sales: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

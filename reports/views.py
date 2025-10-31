@@ -487,6 +487,7 @@ class SupplierDueAdvanceReportView(BaseReportView):
 # --------------------
 # Supplier Ledger Details - Updated Format
 # --------------------
+
 class SupplierLedgerReportView(BaseReportView):
     filter_serializer_class = SupplierLedgerFilterSerializer
     
@@ -571,39 +572,57 @@ class SupplierLedgerReportView(BaseReportView):
                 except ImportError:
                     pass
             
-            # 3. Purchase Return transactions
+            # 3. Purchase Return transactions - CORRECTED SECTION
             if filters.get('transaction_type') in ['all', 'return']:
                 purchase_returns = PurchaseReturn.objects.filter(company=company)
                 
+                # Filter by supplier - multiple possible relationships
                 if hasattr(PurchaseReturn, 'purchase_ref'):
                     purchase_returns = purchase_returns.filter(purchase_ref__supplier=supplier)
                 elif hasattr(PurchaseReturn, 'purchase'):
                     purchase_returns = purchase_returns.filter(purchase__supplier=supplier)
+                elif hasattr(PurchaseReturn, 'supplier'):
+                    # Direct supplier relationship
+                    purchase_returns = purchase_returns.filter(supplier=supplier)
                 
+                # Use return_date instead of date for filtering and ordering
                 if start and end:
-                    purchase_returns = purchase_returns.filter(date__range=[start, end])
+                    purchase_returns = purchase_returns.filter(return_date__range=[start, end])
                 
-                for return_obj in purchase_returns.order_by('date'):
+                for return_obj in purchase_returns.order_by('return_date'):  # Use return_date for ordering
                     return_amount = 0
-                    if hasattr(return_obj, 'items'):
+                    
+                    # Calculate return amount from items if available
+                    if hasattr(return_obj, 'items') and hasattr(return_obj.items, 'all'):
                         for item in return_obj.items.all():
                             if hasattr(item, 'subtotal'):
                                 return_amount += float(item.subtotal())
+                            elif hasattr(item, 'amount'):
+                                return_amount += float(item.amount)
+                    
+                    # Use return_amount field if items are not available
+                    if return_amount == 0 and hasattr(return_obj, 'return_amount'):
+                        return_amount = float(return_obj.return_amount)
                     
                     running_balance -= return_amount
                     
+                    # Get reference number
                     reference_no = "RET-UNKNOWN"
-                    if hasattr(return_obj, 'purchase_ref') and return_obj.purchase_ref:
+                    if hasattr(return_obj, 'invoice_no') and return_obj.invoice_no:
+                        reference_no = return_obj.invoice_no
+                    elif hasattr(return_obj, 'purchase_ref') and return_obj.purchase_ref:
                         reference_no = f"RET-{return_obj.purchase_ref.invoice_no}"
+                    elif hasattr(return_obj, 'purchase') and return_obj.purchase:
+                        reference_no = f"RET-{return_obj.purchase.invoice_no}"
                     
                     ledger_entries.append({
                         'sl': sl_number,
                         'voucher_no': reference_no,
-                        'date': return_obj.date,
+                        'date': return_obj.return_date,  # Use return_date here
                         'particular': 'Return',
                         'details': 'Purchase Return',
                         'type': 'Return',
-                        'method': 'N/A',
+                        'method': getattr(return_obj, 'payment_method', 'N/A'),
                         'debit': 0.0,
                         'credit': round(return_amount, 2),
                         'due': round(running_balance, 2),
@@ -612,12 +631,90 @@ class SupplierLedgerReportView(BaseReportView):
                     })
                     sl_number += 1
             
+            # 4. Opening balance (if needed for the period)
+            if filters.get('include_opening_balance', True):
+                # Calculate opening balance before the start date
+                opening_balance = 0
+                
+                # Purchases before start date
+                opening_purchases = Purchase.objects.filter(
+                    company=company,
+                    supplier=supplier
+                )
+                if start:
+                    opening_purchases = opening_purchases.filter(purchase_date__lt=start)
+                for purchase in opening_purchases:
+                    opening_balance += float(purchase.grand_total)
+                
+                # Payments before start date
+                try:
+                    from suppliers.models import SupplierPayment
+                    opening_payments = SupplierPayment.objects.filter(
+                        company=company,
+                        supplier=supplier
+                    )
+                    if start:
+                        opening_payments = opening_payments.filter(payment_date__lt=start)
+                    for payment in opening_payments:
+                        opening_balance -= float(payment.amount)
+                except ImportError:
+                    pass
+                
+                # Purchase returns before start date
+                opening_returns = PurchaseReturn.objects.filter(company=company)
+                if hasattr(PurchaseReturn, 'purchase_ref'):
+                    opening_returns = opening_returns.filter(purchase_ref__supplier=supplier)
+                elif hasattr(PurchaseReturn, 'purchase'):
+                    opening_returns = opening_returns.filter(purchase__supplier=supplier)
+                elif hasattr(PurchaseReturn, 'supplier'):
+                    opening_returns = opening_returns.filter(supplier=supplier)
+                
+                if start:
+                    opening_returns = opening_returns.filter(return_date__lt=start)
+                
+                for return_obj in opening_returns:
+                    return_amount = 0
+                    if hasattr(return_obj, 'items') and hasattr(return_obj.items, 'all'):
+                        for item in return_obj.items.all():
+                            if hasattr(item, 'subtotal'):
+                                return_amount += float(item.subtotal())
+                    elif hasattr(return_obj, 'return_amount'):
+                        return_amount = float(return_obj.return_amount)
+                    opening_balance -= return_amount
+                
+                # Add opening balance as first entry if non-zero
+                if opening_balance != 0:
+                    ledger_entries.insert(0, {
+                        'sl': 0,
+                        'voucher_no': 'OPENING',
+                        'date': start if start else datetime.now().date(),
+                        'particular': 'Opening Balance',
+                        'details': 'Balance brought forward',
+                        'type': 'Opening',
+                        'method': 'N/A',
+                        'debit': round(opening_balance, 2) if opening_balance > 0 else 0.0,
+                        'credit': round(abs(opening_balance), 2) if opening_balance < 0 else 0.0,
+                        'due': round(opening_balance, 2),
+                        'supplier_id': supplier.id,
+                        'supplier_name': supplier.name
+                    })
+                    running_balance += opening_balance
+            
             # Sort all entries by date
             ledger_entries.sort(key=lambda x: x['date'])
             
             # Re-number SL after sorting
             for i, entry in enumerate(ledger_entries, 1):
                 entry['sl'] = i
+            
+            # Recalculate running balance after sorting
+            current_balance = 0
+            for entry in ledger_entries:
+                if entry['type'] == 'Opening':
+                    current_balance = entry['due']
+                else:
+                    current_balance += entry['debit'] - entry['credit']
+                    entry['due'] = round(current_balance, 2)
             
             serializer = SupplierLedgerSerializer(ledger_entries, many=True)
             
@@ -626,7 +723,10 @@ class SupplierLedgerReportView(BaseReportView):
                 'summary': {
                     'supplier_id': supplier.id,
                     'supplier_name': supplier.name,
-                    'closing_balance': round(running_balance, 2),
+                    'opening_balance': round(ledger_entries[0]['due'] - ledger_entries[0]['debit'] + ledger_entries[0]['credit'] if ledger_entries else 0, 2),
+                    'closing_balance': round(current_balance, 2),
+                    'total_debit': round(sum(entry['debit'] for entry in ledger_entries), 2),
+                    'total_credit': round(sum(entry['credit'] for entry in ledger_entries), 2),
                     'total_transactions': len(ledger_entries),
                     'date_range': {
                         'start': start.isoformat() if start else None,
@@ -639,7 +739,6 @@ class SupplierLedgerReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
-
 # --------------------
 # Customer Due & Advance Report - Updated Format
 # --------------------
@@ -958,7 +1057,7 @@ class ProfitLossReportView(BaseReportView):
             # Sales data
             sales_query = Sale.objects.filter(company=company)
             if start and end:
-                sales_query = sales_query.filter(sale_date__date__range=[start, end])
+                sales_query = sales_query.filter(sale_date__range=[start, end])  # Fixed: removed extra __date
             
             sales_data = sales_query.aggregate(
                 total_sales=Sum('grand_total'),
@@ -985,41 +1084,56 @@ class ProfitLossReportView(BaseReportView):
                 expense_count=Count('id')
             )
             
-            # Return data
+            # Return data - FIXED: Use return_date for both SalesReturn and PurchaseReturn
             sales_return_query = SalesReturn.objects.filter(company=company)
             purchase_return_query = PurchaseReturn.objects.filter(company=company)
             
             if start and end:
                 sales_return_query = sales_return_query.filter(return_date__range=[start, end])
-                purchase_return_query = purchase_return_query.filter(date__range=[start, end])
+                purchase_return_query = purchase_return_query.filter(return_date__range=[start, end])  # FIXED: changed date to return_date
             
-            # Calculate sales return total
+            # Calculate sales return total - UPDATED for new model structure
             sales_return_total = 0
             for sales_return in sales_return_query:
+                # Calculate from items
                 items_total = sum([
-                    (item.quantity or 0) * (item.unit_price or 0) 
+                    float(item.total) if hasattr(item, 'total') and item.total else 
+                    (float(item.quantity or 0) * float(item.unit_price or 0)) - float(item.discount or 0)
                     for item in sales_return.items.all()
                 ])
-                discount = float(getattr(sales_return, 'discount', 0) or 0)
-                vat = float(getattr(sales_return, 'vat', 0) or 0)
-                service_charge = float(getattr(sales_return, 'service_charge', 0) or 0)
-                delivery_charge = float(getattr(sales_return, 'delivery_charge', 0) or 0)
                 
-                return_amount = items_total - discount + vat + service_charge + delivery_charge
+                # Add return charge
+                return_charge = float(getattr(sales_return, 'return_charge', 0) or 0)
+                if sales_return.return_charge_type == 'percentage' and return_charge > 0:
+                    return_charge_amount = (items_total * return_charge) / 100
+                else:
+                    return_charge_amount = return_charge
+                
+                return_amount = items_total + return_charge_amount
                 sales_return_total += return_amount
             
-            # Calculate purchase return total
+            # Calculate purchase return total - UPDATED for new model structure
             purchase_return_total = 0
             for purchase_return in purchase_return_query:
-                if hasattr(purchase_return, 'return_amount') and purchase_return.return_amount:
+                # Use return_amount field if available, otherwise calculate from items
+                if purchase_return.return_amount:
                     purchase_return_total += float(purchase_return.return_amount)
                 else:
-                    items_total = 0
-                    if hasattr(purchase_return, 'items'):
-                        for item in purchase_return.items.all():
-                            if hasattr(item, 'subtotal'):
-                                items_total += float(item.subtotal())
-                    purchase_return_total += items_total
+                    # Calculate from items
+                    items_total = sum([
+                        float(item.total) if hasattr(item, 'total') and item.total else 
+                        (float(item.quantity or 0) * float(item.unit_price or 0)) - float(item.discount or 0)
+                        for item in purchase_return.items.all()
+                    ])
+                    
+                    # Add return charge
+                    return_charge = float(getattr(purchase_return, 'return_charge', 0) or 0)
+                    if purchase_return.return_charge_type == 'percentage' and return_charge > 0:
+                        return_charge_amount = (items_total * return_charge) / 100
+                    else:
+                        return_charge_amount = return_charge
+                    
+                    purchase_return_total += items_total + return_charge_amount
             
             # Calculations
             total_sales = sales_data['total_sales'] or 0
@@ -1101,27 +1215,21 @@ class ExpenseReportView(BaseReportView):
             if filters.get('max_amount'):
                 expenses = expenses.filter(amount__lte=filters['max_amount'])
             
-            report_data = []
-            sl_number = 1
-            for expense in expenses:
-                report_data.append({
-                    'sl': sl_number,
-                    'id': expense.id,
-                    'head': expense.head.name,
-                    'subhead': expense.subhead.name if expense.subhead else None,
-                    'amount': expense.amount,
-                    'payment_method': expense.payment_method,
-                    'expense_date': expense.expense_date,
-                    'note': expense.note
-                })
-                sl_number += 1
+            # Serialize the actual Expense objects, not the dictionary
+            serializer = ExpenseSerializer(expenses, many=True)
             
-            serializer = ExpenseSerializer(report_data, many=True)
+            # Transform the serialized data to include SL numbers
+            report_data = []
+            for index, expense_data in enumerate(serializer.data, 1):
+                report_data.append({
+                    'sl': index,
+                    **expense_data
+                })
             
             total_expenses = expenses.aggregate(total=Sum('amount', output_field=FloatField()))
             
             response_data = {
-                'report': self.paginate_data(serializer.data),
+                'report': self.paginate_data(report_data),
                 'summary': {
                     'total_count': expenses.count(),
                     'total_amount': total_expenses.get('total') or 0,
@@ -1136,7 +1244,6 @@ class ExpenseReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
-
 class PurchaseReturnReportView(BaseReportView):
     def get(self, request):
         try:
@@ -1147,41 +1254,45 @@ class PurchaseReturnReportView(BaseReportView):
             
             supplier_id = request.GET.get('supplier')
             if supplier_id:
-                if hasattr(PurchaseReturn, 'purchase_ref'):
-                    returns = returns.filter(purchase_ref__supplier_id=supplier_id)
-                elif hasattr(PurchaseReturn, 'purchase'):
-                    returns = returns.filter(purchase__supplier_id=supplier_id)
+                # Since your PurchaseReturn model has a direct supplier field (CharField)
+                # You can't filter by supplier_id. If you need to filter by supplier name:
+                from purchases.models import Purchase  # Import if you need to reference purchase model
+                # If you want to filter by supplier name pattern:
+                # returns = returns.filter(supplier__icontains=supplier_id)
+                pass
             
+            # FIX: Use return_date instead of date
             if start and end:
-                returns = returns.filter(date__range=[start, end])
+                returns = returns.filter(return_date__range=[start, end])
             
-            returns = returns.prefetch_related('items').order_by('-date')
+            # FIX: Order by return_date instead of date
+            returns = returns.prefetch_related('items').order_by('-return_date')
             
             report_data = []
             sl_number = 1
             
             for return_obj in returns:
+                # Calculate total from items
                 total_amount = 0
-                if hasattr(return_obj, 'items'):
-                    for item in return_obj.items.all():
-                        if hasattr(item, 'subtotal'):
-                            total_amount += float(item.subtotal())
+                for item in return_obj.items.all():
+                    # Calculate item total based on your model fields
+                    base_amount = float(item.unit_price) * float(item.quantity)
+                    
+                    # Apply discount
+                    if item.discount_type == 'percentage' and item.discount > 0:
+                        discount_amount = (base_amount * float(item.discount)) / 100
+                    else:
+                        discount_amount = float(item.discount)
+                    
+                    item_total = base_amount - discount_amount
+                    total_amount += item_total
                 
-                return_amount = 0
-                if hasattr(return_obj, 'return_amount') and return_obj.return_amount:
-                    return_amount = float(return_obj.return_amount)
-                else:
-                    return_amount = total_amount
+                # Use return_amount from model or calculated total
+                return_amount = float(return_obj.return_amount) if return_obj.return_amount else total_amount
                 
-                supplier_name = "Unknown Supplier"
-                invoice_no = "N/A"
-                
-                if hasattr(return_obj, 'purchase_ref') and return_obj.purchase_ref:
-                    supplier_name = return_obj.purchase_ref.supplier.name if return_obj.purchase_ref.supplier else 'N/A'
-                    invoice_no = return_obj.purchase_ref.invoice_no
-                elif hasattr(return_obj, 'purchase') and return_obj.purchase:
-                    supplier_name = return_obj.purchase.supplier.name if return_obj.purchase.supplier else 'N/A'
-                    invoice_no = return_obj.purchase.invoice_no
+                # Get supplier name - your model has direct supplier field (CharField)
+                supplier_name = return_obj.supplier or "Unknown Supplier"
+                invoice_no = return_obj.invoice_no or "N/A"
                 
                 report_data.append({
                     'sl': sl_number,
@@ -1189,10 +1300,11 @@ class PurchaseReturnReportView(BaseReportView):
                     'supplier': supplier_name,
                     'total_amount': total_amount,
                     'return_amount': return_amount,
-                    'date': return_obj.date
+                    'date': return_obj.return_date  # FIX: Use return_date
                 })
                 sl_number += 1
             
+            # Make sure you have this serializer
             serializer = PurchaseReturnReportSerializer(report_data, many=True)
             
             response_data = {
@@ -1211,6 +1323,7 @@ class PurchaseReturnReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
+
 
 class SalesReturnReportView(BaseReportView):
     def get(self, request):

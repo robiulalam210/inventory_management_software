@@ -10,7 +10,7 @@ from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaym
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet,get_due_purchases
 from purchases.views import get_due_purchases
 from suppliers.views import SupplierViewSet,SupplierNonPaginationViewSet
-from sales.views import SaleViewSet, SaleItemViewSet,get_due_sales  # Import get_due_sales here
+from sales.views import SaleViewSet, SaleItemViewSet,SaleAllListViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
 from customers.views import CustomerViewSet,CustomerNonPaginationViewSet
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet,ProductNonPaginationViewSet
@@ -39,6 +39,8 @@ router.register(r'brands', BrandViewSet, basename='brand')
 router.register(r'groups', GroupViewSet, basename='group')
 router.register(r'sources', SourceViewSet, basename='source')
 router.register(r'sales', SaleViewSet, basename='sale')
+router.register(r'sale-invoice', SaleAllListViewSet, basename='sale-invoice')
+
 router.register(r'sale-items', SaleItemViewSet, basename='sale-item')
 router.register(r'customers', CustomerViewSet, basename='customer')
 router.register(r'customers-active', CustomerNonPaginationViewSet, basename='customer-active')
