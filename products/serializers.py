@@ -52,34 +52,154 @@ class SourceSerializer(serializers.ModelSerializer):
         model = Source
         fields = '__all__'
 
+
+
+class ProductCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = [
+            'name', 'category', 'unit', 'brand', 'group', 'source',
+            'purchase_price', 'selling_price', 'opening_stock', 
+            'alert_quantity', 'description', 'image', 'is_active'
+        ]
+
+    def validate_name(self, value):
+        """Ensure product name is unique within company"""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and hasattr(request.user, 'company'):
+            if Product.objects.filter(company=request.user.company, name=value).exists():
+                raise serializers.ValidationError("A product with this name already exists in your company.")
+        return value
+
+    def validate(self, data):
+        """
+        Custom validation for product data
+        """
+        # Validate selling price vs purchase price
+        purchase_price = data.get('purchase_price', 0)
+        selling_price = data.get('selling_price', 0)
+        
+        if selling_price < purchase_price:
+            raise serializers.ValidationError({
+                "selling_price": "Selling price cannot be less than purchase price"
+            })
+        
+        # Validate stock quantities
+        opening_stock = data.get('opening_stock', 0)
+        if opening_stock < 0:
+            raise serializers.ValidationError({
+                "opening_stock": "Opening stock cannot be negative"
+            })
+        
+        alert_quantity = data.get('alert_quantity', 5)
+        if alert_quantity < 0:
+            raise serializers.ValidationError({
+                "alert_quantity": "Alert quantity cannot be negative"
+            })
+        
+        return data
+
+    def create(self, validated_data):
+        """
+        Create product with automatic SKU generation and company assignment
+        """
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError("Authentication required")
+
+        # Set company from user
+        company = getattr(request.user, 'company', None)
+        if not company:
+            raise serializers.ValidationError("User must be associated with a company")
+        validated_data['company'] = company
+
+        # Set created_by
+        validated_data['created_by'] = request.user
+
+        # Generate SKU
+        if not validated_data.get('sku'):
+            try:
+                next_num = CompanyProductSequence.get_next_sequence(company)
+                validated_data['sku'] = f"PDT-{company.id}-{next_num:05d}"
+            except Exception as e:
+                # Fallback SKU generation
+                timestamp = int(time.time())
+                random_suffix = random.randint(100, 999)
+                validated_data['sku'] = f"PDT-{company.id}-{timestamp}{random_suffix}"
+
+        # Save with retry logic for IntegrityError
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with transaction.atomic():
+                    product = Product.objects.create(**validated_data)
+                return product
+            except IntegrityError as e:
+                if 'sku' in str(e).lower() and attempt < max_retries - 1:
+                    # Regenerate SKU and retry
+                    timestamp = int(time.time())
+                    random_suffix = random.randint(100, 999)
+                    validated_data['sku'] = f"PDT-{company.id}-{timestamp}{random_suffix}"
+                    continue
+                else:
+                    raise serializers.ValidationError({
+                        'sku': f'Could not generate unique SKU after {max_retries} attempts. Please try again.'
+                    })
+
+class ProductUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = [
+            'name', 'category', 'unit', 'brand', 'group', 'source',
+            'purchase_price', 'selling_price', 'alert_quantity', 
+            'description', 'image', 'is_active'
+        ]
+        # Don't include opening_stock in update as it should only be set once
+
+    def validate_name(self, value):
+        """Ensure product name is unique within company, excluding current instance"""
+        request = self.context.get('request')
+        instance = self.instance
+        
+        if request and hasattr(request, 'user') and hasattr(request.user, 'company'):
+            if Product.objects.filter(
+                company=request.user.company, 
+                name=value
+            ).exclude(id=instance.id).exists():
+                raise serializers.ValidationError("A product with this name already exists in your company.")
+        return value
+
+    def validate(self, data):
+        """
+        Custom validation for product update data
+        """
+        purchase_price = data.get('purchase_price', self.instance.purchase_price)
+        selling_price = data.get('selling_price', self.instance.selling_price)
+        
+        if selling_price < purchase_price:
+            raise serializers.ValidationError({
+                "selling_price": "Selling price cannot be less than purchase price"
+            })
+        
+        alert_quantity = data.get('alert_quantity', self.instance.alert_quantity)
+        if alert_quantity < 0:
+            raise serializers.ValidationError({
+                "alert_quantity": "Alert quantity cannot be negative"
+            })
+        
+        return data
+
+
 class ProductSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
     
-    # Make foreign key fields optional and allow null
-    category = serializers.PrimaryKeyRelatedField(
-        queryset=Category.objects.all(), 
-        required=True  # Changed to required=True since it's mandatory
-    )
-    unit = serializers.PrimaryKeyRelatedField(
-        queryset=Unit.objects.all(), 
-        required=True  # Changed to required=True since it's mandatory
-    )
-    brand = serializers.PrimaryKeyRelatedField(
-        queryset=Brand.objects.all(), 
-        required=False, 
-        allow_null=True
-    )
-    group = serializers.PrimaryKeyRelatedField(
-        queryset=Group.objects.all(), 
-        required=False, 
-        allow_null=True
-    )
-    source = serializers.PrimaryKeyRelatedField(
-        queryset=Source.objects.all(), 
-        required=False, 
-        allow_null=True
-    )
+    # Foreign key fields
+    category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all(), required=True)
+    unit = serializers.PrimaryKeyRelatedField(queryset=Unit.objects.all(), required=True)
+    brand = serializers.PrimaryKeyRelatedField(queryset=Brand.objects.all(), required=False, allow_null=True)
+    group = serializers.PrimaryKeyRelatedField(queryset=Group.objects.all(), required=False, allow_null=True)
+    source = serializers.PrimaryKeyRelatedField(queryset=Source.objects.all(), required=False, allow_null=True)
     
     # Read-only info fields
     category_info = serializers.SerializerMethodField(read_only=True)
@@ -88,8 +208,8 @@ class ProductSerializer(serializers.ModelSerializer):
     group_info = serializers.SerializerMethodField(read_only=True)
     source_info = serializers.SerializerMethodField(read_only=True)
     created_by_info = serializers.SerializerMethodField(read_only=True)
-    
     stock_status = serializers.ReadOnlyField()
+    stock_status_display = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Product
@@ -100,9 +220,12 @@ class ProductSerializer(serializers.ModelSerializer):
             'stock_qty', 'alert_quantity', 'description', 'image',
             'is_active', 'created_at', 'updated_at',
             'category_info', 'unit_info', 'brand_info', 'group_info', 
-            'source_info', 'created_by_info', 'stock_status'
+            'source_info', 'created_by_info', 'stock_status', 'stock_status_display'
         ]
-        read_only_fields = ['id', 'company', 'created_by', 'created_at', 'updated_at', 'sku', 'stock_status']
+        read_only_fields = [
+            'id', 'company', 'created_by', 'created_at', 'updated_at', 
+            'sku', 'stock_status', 'stock_qty'
+        ]
 
     def get_category_info(self, obj):
         if obj.category:
@@ -131,121 +254,18 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_created_by_info(self, obj):
         if obj.created_by:
-            return {'id': obj.created_by.id, 'username': obj.created_by.username}
+            return {
+                'id': obj.created_by.id, 
+                'username': obj.created_by.username,
+                'email': obj.created_by.email
+            }
         return None
 
-    def validate(self, data):
-        """
-        Custom validation for product data
-        """
-        # Validate required fields
-        if not data.get('category'):
-            raise serializers.ValidationError({"category": "Category is required"})
-        
-        if not data.get('unit'):
-            raise serializers.ValidationError({"unit": "Unit is required"})
-        
-        if not data.get('name'):
-            raise serializers.ValidationError({"name": "Product name is required"})
-
-        # Ensure selling price is not less than purchase price
-        purchase_price = data.get('purchase_price', 0)
-        selling_price = data.get('selling_price', 0)
-        
-        try:
-            if selling_price < purchase_price:
-                raise serializers.ValidationError({
-                    "selling_price": "Selling price cannot be less than purchase price"
-                })
-        except TypeError:
-            # If values are not comparable, let field validation handle it
-            pass
-        
-        # Ensure stock quantities are valid
-        opening_stock = data.get('opening_stock', 0)
-        if opening_stock is not None and opening_stock < 0:
-            raise serializers.ValidationError({
-                "opening_stock": "Opening stock cannot be negative"
-            })
-        
-        alert_quantity = data.get('alert_quantity', 5)
-        if alert_quantity is not None and alert_quantity < 0:
-            raise serializers.ValidationError({
-                "alert_quantity": "Alert quantity cannot be negative"
-            })
-        
-        return data
-
-    def _generate_fallback_sku(self, company):
-        """Generate a fallback SKU using timestamp and random number"""
-        timestamp = int(time.time())
-        random_suffix = random.randint(100, 999)
-        company_id = company.id if company else "0"
-        return f"PDT-{company_id}-{timestamp}{random_suffix}"
-
-    def create(self, validated_data):
-        """
-        Create product with automatic SKU generation
-        """
-        request = self.context.get('request', None)
-        user = getattr(request, 'user', None)
-
-        # Ensure company is set
-        company = validated_data.get('company', None)
-        if company is None:
-            company = getattr(user, 'company', None) or getattr(getattr(user, 'profile', None), 'company', None)
-            if company is None:
-                raise serializers.ValidationError({'company': 'Company is required.'})
-            validated_data['company'] = company
-
-        # Set created_by if possible
-        if 'created_by' not in validated_data or validated_data.get('created_by') is None:
-            if user and getattr(user, 'is_authenticated', False):
-                validated_data['created_by'] = user
-
-        # Set initial stock
-        if 'stock_qty' not in validated_data:
-            validated_data['stock_qty'] = validated_data.get('opening_stock', 0)
-
-        # SKU generation if not provided
-        if not validated_data.get('sku'):
-            # Use CompanyProductSequence if available
-            if CompanyProductSequence is not None:
-                try:
-                    # FIX: Use the correct method name get_next_sequence instead of next_for_company
-                    next_num = CompanyProductSequence.get_next_sequence(company)
-                    validated_data['sku'] = f"PDT-{company.id}-{next_num}"
-                except Exception as e:
-                    # Fallback if sequence fails
-                    validated_data['sku'] = self._generate_fallback_sku(company)
-            else:
-                # Fallback SKU generation
-                validated_data['sku'] = self._generate_fallback_sku(company)
-
-        # Save with retry logic for IntegrityError (SKU conflicts)
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                with transaction.atomic():
-                    product = super().create(validated_data)
-                return product
-            except IntegrityError as e:
-                if 'sku' in str(e).lower() and attempt < max_retries - 1:
-                    # Regenerate SKU and retry
-                    validated_data['sku'] = self._generate_fallback_sku(company)
-                    continue
-                else:
-                    # Re-raise the exception if we've exhausted retries
-                    raise serializers.ValidationError({
-                        'sku': f'Could not generate unique SKU after {max_retries} attempts. Please try again.'
-                    })
-
-    def update(self, instance, validated_data):
-        """
-        Ensure we don't accidentally overwrite read-only fields
-        """
-        # Remove read-only fields
-        for read_only in ('company', 'created_by', 'sku', 'id', 'created_at', 'updated_at'):
-            validated_data.pop(read_only, None)
-
-        return super().update(instance, validated_data)
+    def get_stock_status_display(self, obj):
+        """Get human-readable stock status"""
+        status_map = {
+            0: 'Out of Stock',
+            1: 'Low Stock', 
+            2: 'In Stock'
+        }
+        return status_map.get(obj.stock_status, 'Unknown')
