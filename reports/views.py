@@ -1442,6 +1442,8 @@ class BadStockReportView(BaseReportView):
         except Exception as e:
             return self.handle_exception(e)
 
+
+
 class DashboardSummaryView(BaseReportView):
     @method_decorator(cache_page(300))
     def get(self, request):
@@ -1451,23 +1453,113 @@ class DashboardSummaryView(BaseReportView):
             
             today = timezone.now().date()
             
-            # Sales metrics
+            # Sales metrics with enhanced calculations
             today_sales = Sale.objects.filter(
                 company=company, 
                 sale_date__date=today
             ).aggregate(
                 total=Sum('grand_total'),
-                count=Count('id')
+                count=Count('id'),
+                total_due=Sum('due_amount')
             )
             
-            # Purchase metrics
+            # Calculate total sales quantity from sale items - FIXED: SaleItem uses 'quantity'
+            today_sales_quantity = SaleItem.objects.filter(
+                sale__company=company,
+                sale__sale_date__date=today
+            ).aggregate(
+                total_quantity=Sum('quantity')
+            )
+            
+            # Sales profit calculation - FIXED: using unit_price instead of sale_price
+            today_sales_profit = SaleItem.objects.filter(
+                sale__company=company,
+                sale__sale_date__date=today
+            ).annotate(
+                item_profit=(F('unit_price') - F('product__purchase_price')) * F('quantity')
+            ).aggregate(
+                total_profit=Sum('item_profit', output_field=FloatField())
+            )
+            
+            # Sales returns - FIXED: Check if SalesReturn model exists and has correct fields
+            try:
+                today_sales_returns = SalesReturn.objects.filter(
+                    company=company,
+                    return_date=today
+                ).aggregate(
+                    total_amount=Sum('return_amount'),
+                    count=Count('id')
+                )
+                
+                # Calculate sales return quantity from return items if model exists
+                today_sales_return_quantity = {'total_quantity': 0}
+                if hasattr(SalesReturn, 'items'):
+                    # Check what field name SalesReturnItem uses for quantity
+                    return_items = SalesReturnItem.objects.filter(
+                        sales_return__company=company,
+                        sales_return__return_date=today
+                    )
+                    if hasattr(SalesReturnItem, 'quantity'):
+                        today_sales_return_quantity = return_items.aggregate(
+                            total_quantity=Sum('quantity')
+                        )
+                    elif hasattr(SalesReturnItem, 'qty'):
+                        today_sales_return_quantity = return_items.aggregate(
+                            total_quantity=Sum('qty')
+                        )
+            except Exception:
+                # If SalesReturn model doesn't exist or has issues, use defaults
+                today_sales_returns = {'total_amount': 0, 'count': 0}
+                today_sales_return_quantity = {'total_quantity': 0}
+            
+            # Purchase metrics with enhanced calculations
             today_purchases = Purchase.objects.filter(
                 company=company,
                 purchase_date=today
             ).aggregate(
                 total=Sum('grand_total'),
-                count=Count('id')
+                count=Count('id'),
+                total_due=Sum('due_amount')
             )
+            
+            # Calculate total purchase quantity from purchase items - FIXED: PurchaseItem uses 'qty'
+            today_purchases_quantity = PurchaseItem.objects.filter(
+                purchase__company=company,
+                purchase__purchase_date=today
+            ).aggregate(
+                total_quantity=Sum('qty')  # FIXED: Changed 'quantity' to 'qty'
+            )
+            
+            # Purchase returns - FIXED: Check if PurchaseReturn model exists
+            try:
+                today_purchase_returns = PurchaseReturn.objects.filter(
+                    company=company,
+                    return_date=today
+                ).aggregate(
+                    total_amount=Sum('return_amount'),
+                    count=Count('id')
+                )
+                
+                # Calculate purchase return quantity from return items if model exists
+                today_purchase_return_quantity = {'total_quantity': 0}
+                if hasattr(PurchaseReturn, 'items'):
+                    # Check what field name PurchaseReturnItem uses for quantity
+                    return_items = PurchaseReturnItem.objects.filter(
+                        purchase_return__company=company,
+                        purchase_return__return_date=today
+                    )
+                    if hasattr(PurchaseReturnItem, 'quantity'):
+                        today_purchase_return_quantity = return_items.aggregate(
+                            total_quantity=Sum('quantity')
+                        )
+                    elif hasattr(PurchaseReturnItem, 'qty'):
+                        today_purchase_return_quantity = return_items.aggregate(
+                            total_quantity=Sum('qty')
+                        )
+            except Exception:
+                # If PurchaseReturn model doesn't exist or has issues, use defaults
+                today_purchase_returns = {'total_amount': 0, 'count': 0}
+                today_purchase_return_quantity = {'total_quantity': 0}
             
             # Expense metrics
             today_expenses = Expense.objects.filter(
@@ -1477,6 +1569,20 @@ class DashboardSummaryView(BaseReportView):
                 total=Sum('amount'),
                 count=Count('id')
             )
+            
+            # Overall financial summary
+            net_sales = float(today_sales['total'] or 0) - float(today_sales_returns['total_amount'] or 0)
+            net_purchases = float(today_purchases['total'] or 0) - float(today_purchase_returns['total_amount'] or 0)
+            gross_profit = float(today_sales_profit['total_profit'] or 0)
+            net_profit = gross_profit - float(today_expenses['total'] or 0)
+            
+            overall_financials = {
+                'net_sales': net_sales,
+                'net_purchases': net_purchases,
+                'gross_profit': gross_profit,
+                'net_profit': net_profit,
+                'total_cash_flow': net_sales - net_purchases - float(today_expenses['total'] or 0)
+            }
             
             # Stock alerts
             low_stock_count = Product.objects.filter(
@@ -1495,46 +1601,89 @@ class DashboardSummaryView(BaseReportView):
                 company=company
             ).select_related('customer').order_by('-sale_date')[:5]
             
+            # Calculate quantities for recent sales - FIXED: SaleItem uses 'quantity'
+            recent_sales_data = []
+            for sale in recent_sales:
+                sale_quantity = SaleItem.objects.filter(sale=sale).aggregate(
+                    total_quantity=Sum('quantity')  # FIXED: SaleItem uses 'quantity'
+                )['total_quantity'] or 0
+                
+                recent_sales_data.append({
+                    'invoice_no': sale.invoice_no,
+                    'customer': sale.customer.name if sale.customer else "Walk-in",
+                    'amount': float(sale.grand_total),
+                    'due_amount': float(sale.due_amount),
+                    'quantity': sale_quantity,
+                    'date': sale.sale_date.date()
+                })
+            
             recent_purchases = Purchase.objects.filter(
                 company=company
             ).select_related('supplier').order_by('-purchase_date')[:5]
+            
+            # Calculate quantities for recent purchases - FIXED: PurchaseItem uses 'qty'
+            recent_purchases_data = []
+            for purchase in recent_purchases:
+                purchase_quantity = PurchaseItem.objects.filter(purchase=purchase).aggregate(
+                    total_quantity=Sum('qty')  # FIXED: Changed 'quantity' to 'qty'
+                )['total_quantity'] or 0
+                
+                recent_purchases_data.append({
+                    'invoice_no': purchase.invoice_no,
+                    'supplier': purchase.supplier.name,
+                    'amount': float(purchase.grand_total),
+                    'due_amount': float(purchase.due_amount),
+                    'quantity': purchase_quantity,
+                    'date': purchase.purchase_date
+                })
             
             dashboard_data = {
                 'today_metrics': {
                     'sales': {
                         'total': float(today_sales['total'] or 0),
-                        'count': today_sales['count'] or 0
+                        'count': today_sales['count'] or 0,
+                        'total_quantity': today_sales_quantity['total_quantity'] or 0,
+                        'total_due': float(today_sales['total_due'] or 0),
+                        'net_total': float(today_sales['total'] or 0) - float(today_sales['total_due'] or 0)
+                    },
+                    'sales_returns': {
+                        'total_amount': float(today_sales_returns['total_amount'] or 0),
+                        'total_quantity': today_sales_return_quantity['total_quantity'] or 0,
+                        'count': today_sales_returns['count'] or 0
                     },
                     'purchases': {
                         'total': float(today_purchases['total'] or 0),
-                        'count': today_purchases['count'] or 0
+                        'count': today_purchases['count'] or 0,
+                        'total_quantity': today_purchases_quantity['total_quantity'] or 0,
+                        'total_due': float(today_purchases['total_due'] or 0),
+                        'net_total': float(today_purchases['total'] or 0) - float(today_purchases['total_due'] or 0)
+                    },
+                    'purchase_returns': {
+                        'total_amount': float(today_purchase_returns['total_amount'] or 0),
+                        'total_quantity': today_purchase_return_quantity['total_quantity'] or 0,
+                        'count': today_purchase_returns['count'] or 0
                     },
                     'expenses': {
                         'total': float(today_expenses['total'] or 0),
                         'count': today_expenses['count'] or 0
                     }
                 },
+                'profit_loss': {
+                    'gross_profit': gross_profit,
+                    'net_profit': net_profit,
+                    'profit_margin': (
+                        (gross_profit / float(today_sales['total'] or 1)) * 100 
+                        if today_sales['total'] else 0
+                    )
+                },
+                'financial_summary': overall_financials,
                 'stock_alerts': {
                     'low_stock': low_stock_count,
                     'out_of_stock': out_of_stock_count
                 },
                 'recent_activities': {
-                    'sales': [
-                        {
-                            'invoice_no': sale.invoice_no,
-                            'customer': sale.customer.name if sale.customer else "Walk-in",
-                            'amount': float(sale.grand_total),
-                            'date': sale.sale_date.date()
-                        } for sale in recent_sales
-                    ],
-                    'purchases': [
-                        {
-                            'invoice_no': purchase.invoice_no,
-                            'supplier': purchase.supplier.name,
-                            'amount': float(purchase.grand_total),
-                            'date': purchase.purchase_date
-                        } for purchase in recent_purchases
-                    ]
+                    'sales': recent_sales_data,
+                    'purchases': recent_purchases_data
                 }
             }
             

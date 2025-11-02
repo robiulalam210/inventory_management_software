@@ -7,7 +7,7 @@ from .views import (
 from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
-from purchases.views import PurchaseViewSet, PurchaseItemViewSet,get_due_purchases
+from purchases.views import PurchaseViewSet, PurchaseItemViewSet,PurchaseAllListViewSet
 from purchases.views import get_due_purchases
 from suppliers.views import SupplierViewSet,SupplierNonPaginationViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,SaleAllListViewSet,get_due_sales  # Import get_due_sales here
@@ -49,6 +49,8 @@ router.register(r'suppliers', SupplierViewSet, basename='supplier')
 router.register(r'suppliers-active', SupplierNonPaginationViewSet, basename='s')
 
 router.register(r'purchases', PurchaseViewSet, basename='purchase')
+router.register(r'purchases-invocie', PurchaseAllListViewSet, basename='purchase-invoice')
+
 router.register(r'purchase-items', PurchaseItemViewSet, basename='purchase-item')
 router.register(r'sales-returns', SalesReturnViewSet, basename='sales-return')
 router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-return')
@@ -74,7 +76,9 @@ urlpatterns = [
     # FIXED: Use the imported function directly, not via views.
     path('due/', get_due_sales, name='due-sales'),  # This creates /api/due/
     path('purchase-due/', get_due_purchases, name='get_due_purchases'),
-
+     path('purchases-invoice/supplier/<int:supplier_id>/', 
+         PurchaseAllListViewSet.as_view({'get': 'supplier_invoices'}), 
+         name='supplier-invoices'),
     # Custom API endpoints for stock filtering
     path('api/products/search/', ProductViewSet.as_view({'get': 'search'}), name='product-search'),
     path('api/products/stock-info/', ProductViewSet.as_view({'get': 'stock_info'}), name='product-stock-info'),

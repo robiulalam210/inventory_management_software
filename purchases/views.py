@@ -347,3 +347,193 @@ class PurchaseItemViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+
+class PurchaseAllListViewSet(BaseCompanyViewSet):
+    queryset = Purchase.objects.all().select_related('supplier', 'account')
+    serializer_class = PurchaseSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update({"request": self.request})
+        return context
+
+    def get_queryset(self):
+        """Apply filters to queryset"""
+        queryset = super().get_queryset()
+        
+        # Get filter parameters
+        payment_status = self.request.query_params.get('payment_status')
+        supplier_id = self.request.query_params.get('supplier_id')
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        invoice_no = self.request.query_params.get('invoice_no')
+        
+        # Apply filters
+        if payment_status:
+            queryset = queryset.filter(payment_status=payment_status)
+            
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
+            
+        if start_date and end_date:
+            queryset = queryset.filter(purchase_date__range=[start_date, end_date])
+        elif start_date:
+            queryset = queryset.filter(purchase_date__gte=start_date)
+        elif end_date:
+            queryset = queryset.filter(purchase_date__lte=end_date)
+            
+        if invoice_no:
+            queryset = queryset.filter(invoice_no__icontains=invoice_no)
+            
+        return queryset.order_by('-purchase_date', '-id')
+
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Apply pagination
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            # If no pagination, return all results
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Purchases fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error in purchase list: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get purchase summary statistics"""
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            total_purchases = queryset.count()
+            total_amount = queryset.aggregate(total=models.Sum('grand_total'))['total'] or 0
+            total_due = queryset.aggregate(total=models.Sum('due_amount'))['total'] or 0
+            total_paid = queryset.aggregate(total=models.Sum('paid_amount'))['total'] or 0
+            
+            # Count by payment status
+            status_count = queryset.values('payment_status').annotate(
+                count=models.Count('id')
+            )
+            
+            summary_data = {
+                'total_purchases': total_purchases,
+                'total_amount': float(total_amount),
+                'total_due': float(total_due),
+                'total_paid': float(total_paid),
+                'payment_status_breakdown': list(status_count)
+            }
+            
+            return custom_response(
+                success=True,
+                message="Purchase summary fetched successfully.",
+                data=summary_data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error in purchase summary: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='supplier/(?P<supplier_id>[^/.]+)')
+    def supplier_invoices(self, request, supplier_id=None):
+        """Get all invoices for a specific supplier"""
+        try:
+            if not supplier_id:
+                return custom_response(
+                    success=False,
+                    message="Supplier ID is required",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Filter purchases by supplier
+            purchases = Purchase.objects.filter(
+                supplier_id=supplier_id,
+                company=request.user.company
+            ).select_related('supplier', 'account').order_by('-purchase_date')
+            
+            serializer = self.get_serializer(purchases, many=True)
+            
+            return custom_response(
+                success=True,
+                message=f"Invoices fetched successfully for supplier {supplier_id}",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching supplier invoices: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='suppliers-with-invoices')
+    def suppliers_with_invoices(self, request):
+        """Get all suppliers who have purchases with their invoice counts"""
+        try:
+            # Get distinct suppliers who have purchases
+            suppliers_with_purchases = Purchase.objects.filter(
+                company=request.user.company
+            ).values(
+                'supplier_id',
+                'supplier__name',
+                'supplier__phone',
+                'supplier__email'
+            ).annotate(
+                invoice_count=models.Count('id'),
+                total_purchase_amount=models.Sum('grand_total'),
+                last_purchase_date=models.Max('purchase_date')
+            ).order_by('supplier__name')
+            
+            supplier_list = []
+            for supplier in suppliers_with_purchases:
+                supplier_list.append({
+                    'id': supplier['supplier_id'],
+                    'name': supplier['supplier__name'],
+                    'phone': supplier['supplier__phone'],
+                    'email': supplier['supplier__email'],
+                    'invoice_count': supplier['invoice_count'],
+                    'total_purchase_amount': float(supplier['total_purchase_amount'] or 0),
+                    'last_purchase_date': supplier['last_purchase_date']
+                })
+            
+            return custom_response(
+                success=True,
+                message="Suppliers with invoices fetched successfully",
+                data=supplier_list,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching suppliers with invoices: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
