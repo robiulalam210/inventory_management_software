@@ -7,9 +7,12 @@ from django.views.decorators.cache import cache_page
 from decimal import Decimal
 from django.utils import timezone
 
+from django.db.models import Sum, Count, F
+from django.db.models.functions import TruncDate
+from datetime import datetime, timedelta
 from sales.models import Sale, SaleItem
 from purchases.models import Purchase, PurchaseItem
-from returns.models import SalesReturn, PurchaseReturn, BadStock
+from returns.models import SalesReturn, PurchaseReturn, BadStock,SalesReturnItem, PurchaseReturnItem
 from products.models import Product
 from expenses.models import Expense
 from core.base_viewsets import BaseReportView
@@ -1442,62 +1445,78 @@ class BadStockReportView(BaseReportView):
         except Exception as e:
             return self.handle_exception(e)
 
-
-
 class DashboardSummaryView(BaseReportView):
     @method_decorator(cache_page(300))
     def get(self, request):
         try:
             company = self.get_company(request)
-            start, end = self.get_date_range(request)
             
+            # Get date range from request with proper defaults
+            date_filter = request.GET.get('dateFilter', 'current_day')
+            
+            # Calculate date range based on filter
             today = timezone.now().date()
-            
-            # Sales metrics with enhanced calculations
-            today_sales = Sale.objects.filter(
+            if date_filter == 'current_day':
+                start_date = today
+                end_date = today
+            elif date_filter == 'this_month':
+                start_date = today.replace(day=1)
+                end_date = today
+            elif date_filter == 'lifeTime':
+                # For lifetime, use a very early date
+                start_date = datetime(2020, 1, 1).date()
+                end_date = today
+            else:
+                start_date = today
+                end_date = today
+
+            print(f"Date filter: {date_filter}, Range: {start_date} to {end_date}")
+
+            # Sales metrics with date range
+            sales_query = Sale.objects.filter(
                 company=company, 
-                sale_date__date=today
-            ).aggregate(
+                sale_date__date__range=[start_date, end_date]
+            )
+            
+            today_sales = sales_query.aggregate(
                 total=Sum('grand_total'),
                 count=Count('id'),
                 total_due=Sum('due_amount')
             )
-            
-            # Calculate total sales quantity from sale items - FIXED: SaleItem uses 'quantity'
+
+            # Calculate total sales quantity from sale items
             today_sales_quantity = SaleItem.objects.filter(
                 sale__company=company,
-                sale__sale_date__date=today
+                sale__sale_date__date__range=[start_date, end_date]
             ).aggregate(
                 total_quantity=Sum('quantity')
             )
-            
-            # Sales profit calculation - FIXED: using unit_price instead of sale_price
+
+            # Sales profit calculation
             today_sales_profit = SaleItem.objects.filter(
                 sale__company=company,
-                sale__sale_date__date=today
+                sale__sale_date__date__range=[start_date, end_date]
             ).annotate(
                 item_profit=(F('unit_price') - F('product__purchase_price')) * F('quantity')
             ).aggregate(
                 total_profit=Sum('item_profit', output_field=FloatField())
             )
-            
-            # Sales returns - FIXED: Check if SalesReturn model exists and has correct fields
+
+            # Sales returns with date range
             try:
                 today_sales_returns = SalesReturn.objects.filter(
                     company=company,
-                    return_date=today
+                    return_date__range=[start_date, end_date]
                 ).aggregate(
                     total_amount=Sum('return_amount'),
                     count=Count('id')
                 )
                 
-                # Calculate sales return quantity from return items if model exists
                 today_sales_return_quantity = {'total_quantity': 0}
                 if hasattr(SalesReturn, 'items'):
-                    # Check what field name SalesReturnItem uses for quantity
                     return_items = SalesReturnItem.objects.filter(
                         sales_return__company=company,
-                        sales_return__return_date=today
+                        sales_return__return_date__range=[start_date, end_date]
                     )
                     if hasattr(SalesReturnItem, 'quantity'):
                         today_sales_return_quantity = return_items.aggregate(
@@ -1507,46 +1526,46 @@ class DashboardSummaryView(BaseReportView):
                         today_sales_return_quantity = return_items.aggregate(
                             total_quantity=Sum('qty')
                         )
-            except Exception:
-                # If SalesReturn model doesn't exist or has issues, use defaults
+            except Exception as e:
+                print(f"Sales return error: {e}")
                 today_sales_returns = {'total_amount': 0, 'count': 0}
                 today_sales_return_quantity = {'total_quantity': 0}
-            
-            # Purchase metrics with enhanced calculations
-            today_purchases = Purchase.objects.filter(
+
+            # Purchase metrics with date range
+            purchases_query = Purchase.objects.filter(
                 company=company,
-                purchase_date=today
-            ).aggregate(
+                purchase_date__range=[start_date, end_date]
+            )
+            
+            today_purchases = purchases_query.aggregate(
                 total=Sum('grand_total'),
                 count=Count('id'),
                 total_due=Sum('due_amount')
             )
-            
-            # Calculate total purchase quantity from purchase items - FIXED: PurchaseItem uses 'qty'
+
+            # Calculate total purchase quantity from purchase items
             today_purchases_quantity = PurchaseItem.objects.filter(
                 purchase__company=company,
-                purchase__purchase_date=today
+                purchase__purchase_date__range=[start_date, end_date]
             ).aggregate(
-                total_quantity=Sum('qty')  # FIXED: Changed 'quantity' to 'qty'
+                total_quantity=Sum('qty')
             )
-            
-            # Purchase returns - FIXED: Check if PurchaseReturn model exists
+
+            # Purchase returns with date range
             try:
                 today_purchase_returns = PurchaseReturn.objects.filter(
                     company=company,
-                    return_date=today
+                    return_date__range=[start_date, end_date]
                 ).aggregate(
                     total_amount=Sum('return_amount'),
                     count=Count('id')
                 )
                 
-                # Calculate purchase return quantity from return items if model exists
                 today_purchase_return_quantity = {'total_quantity': 0}
                 if hasattr(PurchaseReturn, 'items'):
-                    # Check what field name PurchaseReturnItem uses for quantity
                     return_items = PurchaseReturnItem.objects.filter(
                         purchase_return__company=company,
-                        purchase_return__return_date=today
+                        purchase_return__return_date__range=[start_date, end_date]
                     )
                     if hasattr(PurchaseReturnItem, 'quantity'):
                         today_purchase_return_quantity = return_items.aggregate(
@@ -1556,35 +1575,72 @@ class DashboardSummaryView(BaseReportView):
                         today_purchase_return_quantity = return_items.aggregate(
                             total_quantity=Sum('qty')
                         )
-            except Exception:
-                # If PurchaseReturn model doesn't exist or has issues, use defaults
+            except Exception as e:
+                print(f"Purchase return error: {e}")
                 today_purchase_returns = {'total_amount': 0, 'count': 0}
                 today_purchase_return_quantity = {'total_quantity': 0}
-            
-            # Expense metrics
+
+            # Expense metrics with date range
             today_expenses = Expense.objects.filter(
                 company=company,
-                expense_date=today
+                expense_date__range=[start_date, end_date]
             ).aggregate(
                 total=Sum('amount'),
                 count=Count('id')
             )
+
+            # Debug information
+            print(f"Sales count: {today_sales['count']}, Total: {today_sales['total']}")
+            print(f"Sales quantity: {today_sales_quantity['total_quantity']}")
+            print(f"Purchases count: {today_purchases['count']}, Total: {today_purchases['total']}")
+            print(f"Purchases quantity: {today_purchases_quantity['total_quantity']}")
+
+            # ========== CORRECTED FINANCIAL CALCULATIONS ==========
             
-            # Overall financial summary
-            net_sales = float(today_sales['total'] or 0) - float(today_sales_returns['total_amount'] or 0)
-            net_purchases = float(today_purchases['total'] or 0) - float(today_purchase_returns['total_amount'] or 0)
+            # Calculate net amounts (after deducting due amounts)
+            sales_net_amount = float(today_sales['total'] or 0) - float(today_sales['total_due'] or 0)
+            purchases_net_amount = float(today_purchases['total'] or 0) - float(today_purchases['total_due'] or 0)
+            
+            # Calculate net sales and purchases after returns
+            net_sales_after_returns = float(today_sales['total'] or 0) - float(today_sales_returns['total_amount'] or 0)
+            net_purchases_after_returns = float(today_purchases['total'] or 0) - float(today_purchase_returns['total_amount'] or 0)
+            
+            # Profit calculations
             gross_profit = float(today_sales_profit['total_profit'] or 0)
             net_profit = gross_profit - float(today_expenses['total'] or 0)
             
+            # Cash flow calculation (actual cash movement)
+            cash_inflows = sales_net_amount  # Actual cash received from sales
+            cash_outflows = purchases_net_amount + float(today_expenses['total'] or 0)  # Cash paid for purchases + expenses
+            operating_cash_flow = cash_inflows - cash_outflows
+
+            # Corrected financial summary
             overall_financials = {
-                'net_sales': net_sales,
-                'net_purchases': net_purchases,
+                'net_sales': net_sales_after_returns,  # Sales after returns
+                'net_purchases': net_purchases_after_returns,  # Purchases after returns
                 'gross_profit': gross_profit,
                 'net_profit': net_profit,
-                'total_cash_flow': net_sales - net_purchases - float(today_expenses['total'] or 0)
+                'operating_cash_flow': operating_cash_flow,  # Actual cash movement
+                'cash_components': {
+                    'cash_in': cash_inflows,
+                    'cash_out_purchases': purchases_net_amount,
+                    'cash_out_expenses': float(today_expenses['total'] or 0)
+                }
             }
-            
-            # Stock alerts
+
+            # Print debug info for calculations
+            print(f"=== FINANCIAL CALCULATIONS ===")
+            print(f"Sales Total: {today_sales['total']}")
+            print(f"Sales Due: {today_sales['total_due']}")
+            print(f"Sales Net Amount: {sales_net_amount}")
+            print(f"Net Sales After Returns: {net_sales_after_returns}")
+            print(f"Purchases Net Amount: {purchases_net_amount}")
+            print(f"Net Purchases After Returns: {net_purchases_after_returns}")
+            print(f"Gross Profit: {gross_profit}")
+            print(f"Net Profit: {net_profit}")
+            print(f"Cash Flow: {operating_cash_flow}")
+
+            # Stock alerts (not date dependent)
             low_stock_count = Product.objects.filter(
                 company=company,
                 stock_qty__lte=F('alert_quantity'),
@@ -1595,17 +1651,17 @@ class DashboardSummaryView(BaseReportView):
                 company=company,
                 stock_qty=0
             ).count()
-            
-            # Recent activities
+
+            # Recent activities (always show latest 5 regardless of date filter)
             recent_sales = Sale.objects.filter(
                 company=company
             ).select_related('customer').order_by('-sale_date')[:5]
             
-            # Calculate quantities for recent sales - FIXED: SaleItem uses 'quantity'
+            # Calculate quantities for recent sales
             recent_sales_data = []
             for sale in recent_sales:
                 sale_quantity = SaleItem.objects.filter(sale=sale).aggregate(
-                    total_quantity=Sum('quantity')  # FIXED: SaleItem uses 'quantity'
+                    total_quantity=Sum('quantity')
                 )['total_quantity'] or 0
                 
                 recent_sales_data.append({
@@ -1614,18 +1670,18 @@ class DashboardSummaryView(BaseReportView):
                     'amount': float(sale.grand_total),
                     'due_amount': float(sale.due_amount),
                     'quantity': sale_quantity,
-                    'date': sale.sale_date.date()
+                    'date': sale.sale_date.date().isoformat() if sale.sale_date else None
                 })
-            
+
             recent_purchases = Purchase.objects.filter(
                 company=company
             ).select_related('supplier').order_by('-purchase_date')[:5]
             
-            # Calculate quantities for recent purchases - FIXED: PurchaseItem uses 'qty'
+            # Calculate quantities for recent purchases
             recent_purchases_data = []
             for purchase in recent_purchases:
                 purchase_quantity = PurchaseItem.objects.filter(purchase=purchase).aggregate(
-                    total_quantity=Sum('qty')  # FIXED: Changed 'quantity' to 'qty'
+                    total_quantity=Sum('qty')
                 )['total_quantity'] or 0
                 
                 recent_purchases_data.append({
@@ -1634,9 +1690,9 @@ class DashboardSummaryView(BaseReportView):
                     'amount': float(purchase.grand_total),
                     'due_amount': float(purchase.due_amount),
                     'quantity': purchase_quantity,
-                    'date': purchase.purchase_date
+                    'date': purchase.purchase_date.isoformat() if purchase.purchase_date else None
                 })
-            
+
             dashboard_data = {
                 'today_metrics': {
                     'sales': {
@@ -1644,7 +1700,7 @@ class DashboardSummaryView(BaseReportView):
                         'count': today_sales['count'] or 0,
                         'total_quantity': today_sales_quantity['total_quantity'] or 0,
                         'total_due': float(today_sales['total_due'] or 0),
-                        'net_total': float(today_sales['total'] or 0) - float(today_sales['total_due'] or 0)
+                        'net_total': sales_net_amount  # Use calculated net amount
                     },
                     'sales_returns': {
                         'total_amount': float(today_sales_returns['total_amount'] or 0),
@@ -1656,7 +1712,7 @@ class DashboardSummaryView(BaseReportView):
                         'count': today_purchases['count'] or 0,
                         'total_quantity': today_purchases_quantity['total_quantity'] or 0,
                         'total_due': float(today_purchases['total_due'] or 0),
-                        'net_total': float(today_purchases['total'] or 0) - float(today_purchases['total_due'] or 0)
+                        'net_total': purchases_net_amount  # Use calculated net amount
                     },
                     'purchase_returns': {
                         'total_amount': float(today_purchase_returns['total_amount'] or 0),
@@ -1673,7 +1729,7 @@ class DashboardSummaryView(BaseReportView):
                     'net_profit': net_profit,
                     'profit_margin': (
                         (gross_profit / float(today_sales['total'] or 1)) * 100 
-                        if today_sales['total'] else 0
+                        if today_sales['total'] and today_sales['total'] > 0 else 0
                     )
                 },
                 'financial_summary': overall_financials,
@@ -1684,10 +1740,16 @@ class DashboardSummaryView(BaseReportView):
                 'recent_activities': {
                     'sales': recent_sales_data,
                     'purchases': recent_purchases_data
+                },
+                'date_filter_info': {
+                    'filter_type': date_filter,
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat()
                 }
             }
-            
+
             return custom_response(True, "Dashboard data fetched successfully", dashboard_data)
             
         except Exception as e:
+            print(f"Dashboard error: {str(e)}")
             return self.handle_exception(e)
