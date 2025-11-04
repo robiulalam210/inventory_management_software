@@ -13,9 +13,9 @@ from suppliers.views import SupplierViewSet,SupplierNonPaginationViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,SaleAllListViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
 from customers.views import CustomerViewSet,CustomerNonPaginationViewSet
-from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet,ProductNonPaginationViewSet
+from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
-from accounts.views import AccountViewSet,AccountNonPaginationViewSet
+from accounts.views import AccountViewSet,AccountReportViewSet
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, HttpResponsePermanentRedirect
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
@@ -31,7 +31,7 @@ router.register(r'staff-roles', StaffRoleViewSet, basename='staffrole')
 router.register(r'staffs', StaffViewSet, basename='staff')
 
 router.register(r'products', ProductViewSet, basename='product')
-router.register(r'product-active',ProductNonPaginationViewSet,basename="products")
+# router.register(r'product-active',ProductNonPaginationViewSet,basename="products")
 
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'units', UnitViewSet, basename='unit')
@@ -56,7 +56,7 @@ router.register(r'sales-returns', SalesReturnViewSet, basename='sales-return')
 router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-return')
 router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
 router.register(r'accounts', AccountViewSet, basename='account')
-router.register(r'accounts-active', AccountNonPaginationViewSet, basename='account-active')
+router.register(r'account-reports', AccountReportViewSet, basename='account-report')
 
 
 urlpatterns = [

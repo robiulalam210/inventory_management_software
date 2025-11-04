@@ -1,10 +1,40 @@
-# accounts/models.py
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, Max
 from decimal import Decimal
 from core.models import Company
 from django.conf import settings
+from products.models import Product
+from customers.models import Customer
+from suppliers.models import Supplier
+from django.utils import timezone   
+from django.contrib.auth import get_user_model
+from django.db import transaction as db_transaction
+import random
+import string
 
+# Add these imports at the top of accounts/views.py
+# Import your transaction models - adjust these based on what you have
+try:
+    from sales.models import Sale, SaleReturn
+except ImportError:
+    Sale = None
+    SaleReturn = None
+
+try:
+    from purchases.models import Purchase, PurchaseReturn
+except ImportError:
+    Purchase = None
+    PurchaseReturn = None
+
+try:
+    from money_receipts.models import MoneyReceipt
+    # from supplier.models import SupplierPayment
+    from expenses.models import Expense
+    # from moner.models import MoneyReceipt, SupplierPayment, Expense
+except ImportError:
+    MoneyReceipt = None
+    SupplierPayment = None
+    Expense = None
 class Account(models.Model):
     TYPE_BANK = 'Bank'
     TYPE_MOBILE = 'Mobile banking'
@@ -29,25 +59,21 @@ class Account(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
-
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
         ordering = ['-id']
         constraints = [
-            # Unique constraint for Bank and Mobile banking accounts
             models.UniqueConstraint(
                 fields=['company', 'ac_type', 'number'], 
                 name='unique_company_ac_type_number',
                 condition=Q(ac_type__in=['Bank', 'Mobile banking']) & Q(number__isnull=False)
             ),
-            # Only one Cash account per company
             models.UniqueConstraint(
                 fields=['company', 'ac_type'],
                 name='unique_company_cash_account',
                 condition=Q(ac_type='Cash')
             ),
-            # Only one Other account per company
             models.UniqueConstraint(
                 fields=['company', 'ac_type'],
                 name='unique_company_other_account',
@@ -65,7 +91,6 @@ class Account(models.Model):
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         
-        # For Cash and Other accounts, ensure number is None
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
             self.number = None
             self.bank_name = None
@@ -76,17 +101,14 @@ class Account(models.Model):
         super().save(*args, **kwargs)
 
     def clean(self):
-        """
-        Additional validation
-        """
         from django.core.exceptions import ValidationError
         
-        # Check if Cash account already exists
         if self.ac_type == self.TYPE_CASH and self.pk is None:
             if Account.objects.filter(company=self.company, ac_type=self.TYPE_CASH).exists():
                 raise ValidationError("A Cash account already exists for this company.")
                 
-        # Check if Other account already exists
         if self.ac_type == self.TYPE_OTHER and self.pk is None:
             if Account.objects.filter(company=self.company, ac_type=self.TYPE_OTHER).exists():
                 raise ValidationError("An Other account already exists for this company.")
+
+

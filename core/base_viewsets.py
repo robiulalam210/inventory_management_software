@@ -9,6 +9,12 @@ from rest_framework.pagination import PageNumberPagination
 import logging
 from rest_framework import viewsets, serializers
 
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
+import logging
+
 logger = logging.getLogger(__name__)
 
 class ReportPagination(PageNumberPagination):
@@ -64,6 +70,8 @@ class BaseReportView(APIView):
         logger.error(f"Report error: {str(exc)}", exc_info=True)
         from reports.utils import custom_response
         return custom_response(False, str(exc), None, 400)
+    
+
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     """
     Base viewset that automatically filters by company and handles user authentication
@@ -94,3 +102,49 @@ class BaseCompanyViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("User does not have an associated company")
             
         serializer.save(company=user.company, created_by=user)
+
+
+
+
+class BaseInventoryViewSet(viewsets.ModelViewSet):
+    """
+    Base ViewSet for all inventory models with common functionality
+    """
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    ordering = ['-created_at']  # Default ordering
+    
+    def get_queryset(self):
+        """
+        Base queryset that filters by company and handles active/inactive
+        Override in child classes for specific needs
+        """
+        queryset = super().get_queryset()
+        
+        # Filter by user's company if user has company
+        if hasattr(self.request.user, 'company') and self.request.user.company:
+            queryset = queryset.filter(company=self.request.user.company)
+        
+        # Handle active/inactive filtering from URL parameters
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            if is_active.lower() in ['true', '1', 'yes']:
+                queryset = queryset.filter(is_active=True)
+            elif is_active.lower() in ['false', '0', 'no']:
+                queryset = queryset.filter(is_active=False)
+        
+        return queryset
+
+    def perform_create(self, serializer):
+        """
+        Automatically set company and created_by for new objects
+        """
+        if hasattr(self.request.user, 'company') and self.request.user.company:
+            serializer.save(company=self.request.user.company, created_by=self.request.user)
+        else:
+            serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        """
+        Automatically set updated_by for modified objects
+        """
+        serializer.save(updated_by=self.request.user)

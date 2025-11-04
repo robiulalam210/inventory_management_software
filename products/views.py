@@ -76,12 +76,41 @@ class BaseInventoryViewSet(BaseCompanyViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
 
 # Category ViewSet
-class CategoryViewSet(BaseInventoryViewSet):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
-    search_fields = ['name', 'description']
+class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
+    """
+    Base ViewSet for all inventory models with common CRUD operations
+    """
+    search_fields = ['name']
     ordering_fields = ['name', 'created_at']
-    filterset_fields = ['name']
+    filterset_fields = ['name', 'is_active']
+    
+    # These should be defined in subclasses
+    model_class = None
+    serializer_class = None
+    
+    # Customize these in subclasses if needed
+    name_field = 'name'
+    item_name = "Item"  # For messages - e.g., "Category", "Unit", etc.
+    
+    def get_queryset(self):
+        """
+        Override get_queryset to filter by company and handle active/inactive filtering
+        """
+        queryset = super().get_queryset()
+        
+        # Filter by user's company
+        if hasattr(self.request.user, 'company') and self.request.user.company:
+            queryset = queryset.filter(company=self.request.user.company)
+        
+        # Handle active/inactive filtering from URL parameters
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            if is_active.lower() in ['true', '1', 'yes']:
+                queryset = queryset.filter(is_active=True)
+            elif is_active.lower() in ['false', '0', 'no']:
+                queryset = queryset.filter(is_active=False)
+        
+        return queryset
 
     def list(self, request, *args, **kwargs):
         try:
@@ -95,7 +124,7 @@ class CategoryViewSet(BaseInventoryViewSet):
             serializer = self.get_serializer(queryset, many=True)
             return custom_response(
                 success=True,
-                message="Category list fetched successfully.",
+                message=f"{self.item_name} list fetched successfully.",
                 data=serializer.data,
                 status_code=status.HTTP_200_OK
             )
@@ -112,7 +141,6 @@ class CategoryViewSet(BaseInventoryViewSet):
         try:
             serializer.is_valid(raise_exception=True)
             
-            # Check if user has company
             if not hasattr(request.user, 'company') or not request.user.company:
                 return custom_response(
                     success=False,
@@ -122,12 +150,12 @@ class CategoryViewSet(BaseInventoryViewSet):
                 )
             
             company = request.user.company
-            name = serializer.validated_data.get('name')
+            name = serializer.validated_data.get(self.name_field)
             
-            if Category.objects.filter(company=company, name=name).exists():
+            if self.model_class.objects.filter(company=company, **{self.name_field: name}).exists():
                 return custom_response(
                     success=False,
-                    message="A category with this name already exists for this company.",
+                    message=f"A {self.item_name.lower()} with this {self.name_field} already exists.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
@@ -135,12 +163,12 @@ class CategoryViewSet(BaseInventoryViewSet):
             serializer.save(company=company, created_by=request.user)
             return custom_response(
                 success=True,
-                message="Category created successfully.",
+                message=f"{self.item_name} created successfully.",
                 data=serializer.data,
                 status_code=status.HTTP_201_CREATED
             )
         except serializers.ValidationError as e:
-            logger.error("Validation error creating category: %s", e)
+            logger.error(f"Validation error creating {self.item_name.lower()}: {e}")
             logger.error(traceback.format_exc())
             return custom_response(
                 success=False,
@@ -149,7 +177,7 @@ class CategoryViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.error("Unhandled error creating product: %s", e)
+            logger.error(f"Unhandled error creating {self.item_name.lower()}: {e}")
             logger.error(traceback.format_exc())
             return custom_response(
                 success=False,
@@ -158,317 +186,171 @@ class CategoryViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-# Unit ViewSet
-class UnitViewSet(BaseInventoryViewSet):
-    queryset = Unit.objects.all()
-    serializer_class = UnitSerializer
-    search_fields = ['name', 'code']
-    ordering_fields = ['name', 'code']
-
-    def list(self, request, *args, **kwargs):
+    def destroy(self, request, *args, **kwargs):
+        """
+        Custom delete method that prevents deletion if item has products
+        and instead marks it as inactive
+        """
         try:
-            queryset = self.filter_queryset(self.get_queryset())
+            instance = self.get_object()
             
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
+            # Check if item has any products using common relationship patterns
+            has_products = False
             
-            serializer = self.get_serializer(queryset, many=True)
+            # Try different possible relationship names
+            relationship_patterns = ['products', 'product_set', f'{self.item_name.lower()}_products']
+            
+            for pattern in relationship_patterns:
+                if hasattr(instance, pattern) and getattr(instance, pattern).exists():
+                    has_products = True
+                    break
+            
+            # If no specific relationship found, try a more generic approach
+            if not has_products:
+                # Check if there are any products referencing this instance
+                try:
+                    from .models import Product
+                    if self.model_class == Category:
+                        has_products = Product.objects.filter(category=instance).exists()
+                    elif self.model_class == Unit:
+                        has_products = Product.objects.filter(unit=instance).exists()
+                    elif self.model_class == Brand:
+                        has_products = Product.objects.filter(brand=instance).exists()
+                    elif self.model_class == Group:
+                        has_products = Product.objects.filter(group=instance).exists()
+                    elif self.model_class == Source:
+                        has_products = Product.objects.filter(source=instance).exists()
+                except Exception:
+                    pass
+            
+            if has_products:
+                # Instead of deleting, mark as inactive
+                instance.is_active = False
+                instance.save()
+                
+                return custom_response(
+                    success=True,
+                    message=f"{self.item_name} has associated products. It has been marked as inactive instead of deleted.",
+                    data=None,
+                    status_code=status.HTTP_200_OK
+                )
+            
+            # If no products, proceed with actual deletion
+            instance.delete()
             return custom_response(
                 success=True,
-                message="Unit list fetched successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
+                message=f"{self.item_name} deleted successfully.",
+                data=None,
+                status_code=status.HTTP_204_NO_CONTENT
             )
+            
         except Exception as e:
+            logger.error(f"Error deleting {self.item_name.lower()}: {e}")
+            logger.error(traceback.format_exc())
             return custom_response(
                 success=False,
                 message=str(e),
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            
-            if not hasattr(request.user, 'company') or not request.user.company:
-                return custom_response(
-                    success=False,
-                    message="User does not have an associated company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            company = request.user.company
-            name = serializer.validated_data.get('name')
-            
-            if Unit.objects.filter(company=company, name=name).exists():
-                return custom_response(
-                    success=False,
-                    message="A unit with this name already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            serializer.save(company=company, created_by=request.user)
-            return custom_response(
-                success=True,
-                message="Unit created successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-# Brand ViewSet
-class BrandViewSet(BaseInventoryViewSet):
-    queryset = Brand.objects.all()
-    serializer_class = BrandSerializer
-    search_fields = ['name']
-    ordering_fields = ['name']
-
-    def list(self, request, *args, **kwargs):
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-            
-            serializer = self.get_serializer(queryset, many=True)
-            return custom_response(
-                success=True,
-                message="Brand list fetched successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            
-            if not hasattr(request.user, 'company') or not request.user.company:
-                return custom_response(
-                    success=False,
-                    message="User does not have an associated company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            company = request.user.company
-            name = serializer.validated_data.get('name')
-            
-            if Brand.objects.filter(company=company, name=name).exists():
-                return custom_response(
-                    success=False,
-                    message="A brand with this name already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            serializer.save(company=company, created_by=request.user)
-            return custom_response(
-                success=True,
-                message="Brand created successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-# Group ViewSet
-class GroupViewSet(BaseInventoryViewSet):
-    queryset = Group.objects.all()
-    serializer_class = GroupSerializer
-    search_fields = ['name']
-    ordering_fields = ['name']
-
-    def list(self, request, *args, **kwargs):
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-            
-            serializer = self.get_serializer(queryset, many=True)
-            return custom_response(
-                success=True,
-                message="Group list fetched successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            
-            if not hasattr(request.user, 'company') or not request.user.company:
-                return custom_response(
-                    success=False,
-                    message="User does not have an associated company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            company = request.user.company
-            name = serializer.validated_data.get('name')
-            
-            if Group.objects.filter(company=company, name=name).exists():
-                return custom_response(
-                    success=False,
-                    message="A group with this name already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            serializer.save(company=company, created_by=request.user)
-            return custom_response(
-                success=True,
-                message="Group created successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-# Source ViewSet
-class SourceViewSet(BaseInventoryViewSet):
-    queryset = Source.objects.all()
-    serializer_class = SourceSerializer
-    search_fields = ['name']
-    ordering_fields = ['name']
-
-    def list(self, request, *args, **kwargs):
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-            
-            serializer = self.get_serializer(queryset, many=True)
-            return custom_response(
-                success=True,
-                message="Source list fetched successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            
-            if not hasattr(request.user, 'company') or not request.user.company:
-                return custom_response(
-                    success=False,
-                    message="User does not have an associated company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            company = request.user.company
-            name = serializer.validated_data.get('name')
-            
-            if Source.objects.filter(company=company, name=name).exists():
-                return custom_response(
-                    success=False,
-                    message="A source with this name already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            serializer.save(company=company, created_by=request.user)
-            return custom_response(
-                success=True,
-                message="Source created successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                
         
 
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        """
+        Custom endpoint to get only active items
+        """
+        try:
+            queryset = self.get_queryset().filter(is_active=True)
+            queryset = self.filter_queryset(queryset)
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message=f"Active {self.item_name.lower()}s fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+    @action(detail=False, methods=['get'])
+    def inactive(self, request):
+        """
+        Custom endpoint to get only inactive items
+        """
+        try:
+            queryset = self.get_queryset().filter(is_active=False)
+            queryset = self.filter_queryset(queryset)
+            
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message=f"Inactive {self.item_name.lower()}s fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+# Category ViewSet
+class CategoryViewSet(BaseInventoryCRUDViewSet):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+    search_fields = ['name', 'description']  # Override if needed
+    model_class = Category
+    item_name = "Category"
+
+# Unit ViewSet
+class UnitViewSet(BaseInventoryCRUDViewSet):
+    queryset = Unit.objects.all()
+    serializer_class = UnitSerializer
+    search_fields = ['name', 'code']  # Override if needed
+    ordering_fields = ['name', 'code']  # Override if needed
+    model_class = Unit
+    item_name = "Unit"
+
+# Brand ViewSet
+class BrandViewSet(BaseInventoryCRUDViewSet):
+    queryset = Brand.objects.all()
+    serializer_class = BrandSerializer
+    model_class = Brand
+    item_name = "Brand"
+
+# Group ViewSet
+class GroupViewSet(BaseInventoryCRUDViewSet):
+    queryset = Group.objects.all()
+    serializer_class = GroupSerializer
+    model_class = Group
+    item_name = "Group"
+
+# Source ViewSet
+class SourceViewSet(BaseInventoryCRUDViewSet):
+    queryset = Source.objects.all()
+    serializer_class = SourceSerializer
+    model_class = Source
+    item_name = "Source"
 class ProductViewSet(BaseInventoryViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
@@ -481,7 +363,7 @@ class ProductViewSet(BaseInventoryViewSet):
     ]
     ordering_fields = [
         'name', 'sku', 'selling_price', 'purchase_price',
-        'stock_qty', 'created_at', 'updated_at'
+        'stock_qty', 'created_at', 'updated_at', 'is_active'
     ]
     ordering = ['name']
     pagination_class = StandardResultsSetPagination
@@ -621,29 +503,47 @@ class ProductViewSet(BaseInventoryViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Delete a product
+        Delete a product - Only allow if no sales or purchases
         """
         try:
             instance = self.get_object()
             product_name = instance.name
-            product_id = instance.id
             
-            # Check if product can be deleted (no related transactions)
-            if instance.can_be_deleted():
-                instance.delete()
+            # Check if product has any sales transactions
+            has_sales = hasattr(instance, 'sale_items') and instance.sale_items.exists()
+            
+            # Check if product has any purchase transactions
+            has_purchases = hasattr(instance, 'purchase_items') and instance.purchase_items.exists()
+            
+            # Check if product has any stock movements
+            has_stock_movements = hasattr(instance, 'stock_movements') and instance.stock_movements.exists()
+            
+            if has_sales or has_purchases or has_stock_movements:
+                # Instead of deleting, mark as inactive
+                instance.is_active = False
+                instance.save(update_fields=['is_active'])
+                
+                message = "Product cannot be deleted as it has transaction history. It has been marked as inactive instead."
+                if has_sales:
+                    message = "Product cannot be deleted as it has sales history. It has been marked as inactive instead."
+                elif has_purchases:
+                    message = "Product cannot be deleted as it has purchase history. It has been marked as inactive instead."
+                
                 return custom_response(
                     success=True,
-                    message=f"Product '{product_name}' deleted successfully.",
-                    data=None,
+                    message=message,
+                    data={'is_active': instance.is_active},
                     status_code=status.HTTP_200_OK
                 )
-            else:
-                return custom_response(
-                    success=False,
-                    message="Cannot delete product. It has related transactions or stock records.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
+            
+            # If no transactions, proceed with actual deletion
+            instance.delete()
+            return custom_response(
+                success=True,
+                message=f"Product '{product_name}' deleted successfully.",
+                data=None,
+                status_code=status.HTTP_200_OK
+            )
                 
         except Product.DoesNotExist:
             return custom_response(
@@ -802,14 +702,34 @@ class ProductViewSet(BaseInventoryViewSet):
     def list(self, request, *args, **kwargs):
         """
         Use DRF pagination and attach filters_applied to the paginated response.
+        Supports both paginated and non-paginated responses based on query parameter.
         """
         try:
+            # Check if pagination should be disabled
+            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
+            
             queryset = self.filter_queryset(self.get_queryset())
 
             # apply filters
             queryset, filters_applied = self._collect_filters(request, queryset)
 
-            # Let DRF pagination handle paging and slicing
+            # Handle non-paginated response
+            if no_pagination:
+                serializer = self.get_serializer(queryset, many=True)
+                response_data = {
+                    'results': serializer.data,
+                    'count': len(serializer.data),
+                    'filters_applied': filters_applied,
+                    'pagination': 'disabled'
+                }
+                return custom_response(
+                    success=True,
+                    # message=f"Product list fetched successfully (no pagination). {len(filters_applied)} filter(s) applied.",
+                    data= serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+
+            # Use DRF pagination for paginated response
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
@@ -857,14 +777,28 @@ class ProductViewSet(BaseInventoryViewSet):
             )
 
     @action(detail=False, methods=['get'])
-    def active_products(self, request):
+    def active(self, request):
         """
-        Get only active products
+        Get only active products with pagination control
         """
         try:
+            # Check if pagination should be disabled
+            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
+            
             queryset = self.get_queryset().filter(is_active=True)
             queryset = self.filter_queryset(queryset)
             
+            # Handle non-paginated response
+            if no_pagination:
+                serializer = self.get_serializer(queryset, many=True)
+                return custom_response(
+                    success=True,
+                    message=f"Active products fetched successfully (no pagination). Total: {queryset.count()}",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+            
+            # Paginated response
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
@@ -885,69 +819,38 @@ class ProductViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    # ... keep your existing search and advanced_search methods as they are
-
-class ProductNonPaginationViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all()
-    serializer_class = ProductSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_class = ProductFilter
-    search_fields = [
-        'name', 'sku', 'description',
-        'category__name', 'brand__name', 'unit__name',
-        'group__name', 'source__name'
-    ]
-    ordering_fields = [
-        'name', 'sku', 'selling_price', 'purchase_price',
-        'stock_qty', 'created_at', 'updated_at'
-    ]
-    ordering = ['name']
-
-    # Remove pagination completely
-    pagination_class = None
-
-    def get_queryset(self):
-        """Filter products by user's company, only active products with stock > 0"""
-        user = self.request.user
-        if hasattr(user, 'company') and user.company:
-            return Product.objects.filter(
-                company=user.company,
-                is_active=True,
-                stock_qty__gt=0
-            ).select_related(
-                'category', 'unit', 'brand', 'group', 'source', 'created_by'
-            ).prefetch_related('category__products')
-        return Product.objects.none()
-
-    def _get_filters_applied(self, request):
-        """Extract applied filters from request parameters"""
-        filters_applied = []
-        filter_params = [
-            'category_id', 'brand_id', 'unit_id', 'group_id', 'source_id',
-            'product_name', 'sku', 'min_price', 'max_price', 'min_stock', 'max_stock',
-            'q', 'categories', 'brands', 'stock_status', 'ordering'
-        ]
-        
-        for param in filter_params:
-            value = request.query_params.get(param)
-            if value:
-                filters_applied.append(f"{param}={value}")
-        
-        return filters_applied
-
-    def list(self, request, *args, **kwargs):
+    @action(detail=False, methods=['get'])
+    def inactive(self, request):
         """
-        Get all active products with stock > 0 without pagination
+        Get only inactive products with pagination control
         """
         try:
-            queryset = self.filter_queryset(self.get_queryset())
-            filters_applied = self._get_filters_applied(request)
+            # Check if pagination should be disabled
+            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
             
+            queryset = self.get_queryset().filter(is_active=False)
+            queryset = self.filter_queryset(queryset)
+            
+            # Handle non-paginated response
+            if no_pagination:
+                serializer = self.get_serializer(queryset, many=True)
+                return custom_response(
+                    success=True,
+                    message=f"Inactive products fetched successfully (no pagination). Total: {queryset.count()}",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+            
+            # Paginated response
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+                
             serializer = self.get_serializer(queryset, many=True)
-            
             return custom_response(
                 success=True,
-                message=f"Active products with stock fetched successfully. {len(filters_applied)} filter(s) applied. Total: {len(serializer.data)} products.",
+                message="Inactive products fetched successfully.",
                 data=serializer.data,
                 status_code=status.HTTP_200_OK
             )
@@ -959,115 +862,5 @@ class ProductNonPaginationViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['get'])
-    def advanced_search(self, request):
-        """
-        Advanced search with multiple criteria without pagination
-        Only returns active products with stock > 0
-        """
-        try:
-            queryset = self.get_queryset()
+ 
 
-            # Text search
-            search_term = request.query_params.get('q', '')
-            if search_term:
-                queryset = queryset.filter(
-                    models.Q(name__icontains=search_term) |
-                    models.Q(sku__icontains=search_term) |
-                    models.Q(description__icontains=search_term)
-                )
-
-            # Multiple category filter (comma separated)
-            categories = request.query_params.get('categories')
-            if categories:
-                category_list = [cat.strip() for cat in categories.split(',') if cat.strip()]
-                if category_list:
-                    queryset = queryset.filter(category__id__in=category_list)
-
-            # Multiple brand filter
-            brands = request.query_params.get('brands')
-            if brands:
-                brand_list = [brand.strip() for brand in brands.split(',') if brand.strip()]
-                if brand_list:
-                    queryset = queryset.filter(brand__id__in=brand_list)
-
-            # Stock status filter
-            stock_status = request.query_params.get('stock_status')
-            if stock_status:
-                try:
-                    status_value = int(stock_status)
-                    if status_value == 1:  # Low stock
-                        queryset = queryset.filter(
-                            stock_qty__gt=0,
-                            stock_qty__lte=models.F('alert_quantity')
-                        )
-                    elif status_value == 2:  # In stock
-                        queryset = queryset.filter(stock_qty__gt=models.F('alert_quantity'))
-                except (ValueError, TypeError):
-                    pass
-
-            # Apply ordering
-            ordering = request.query_params.get('ordering', 'name')
-            if ordering.lstrip('-') in self.ordering_fields:
-                queryset = queryset.order_by(ordering)
-
-            filters_applied = self._get_filters_applied(request)
-            serializer = self.get_serializer(queryset, many=True)
-            
-            return custom_response(
-                success=True,
-                message="Advanced search completed successfully.",
-                data={
-                    'products': serializer.data,
-                    'total_count': len(serializer.data),
-                    'search_term': search_term if search_term else None,
-                    'filters_applied': filters_applied
-                },
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @action(detail=False, methods=['get'])
-    def active_stock_products(self, request):
-        """
-        Special endpoint specifically for active products with stock > 0
-        Simplified version without complex filtering
-        """
-        try:
-            queryset = self.get_queryset()
-            
-            # Apply basic filters
-            category_id = request.query_params.get('category_id')
-            if category_id:
-                queryset = queryset.filter(category__id=category_id)
-                
-            brand_id = request.query_params.get('brand_id')
-            if brand_id:
-                queryset = queryset.filter(brand__id=brand_id)
-            
-            # Apply ordering
-            ordering = request.query_params.get('ordering', 'name')
-            if ordering.lstrip('-') in self.ordering_fields:
-                queryset = queryset.order_by(ordering)
-
-            serializer = self.get_serializer(queryset, many=True)
-            
-            return custom_response(
-                success=True,
-                message=f"Active products with available stock fetched successfully. Total: {len(serializer.data)} products.",
-                data=sserializer.data,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
