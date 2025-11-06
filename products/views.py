@@ -351,6 +351,9 @@ class SourceViewSet(BaseInventoryCRUDViewSet):
     serializer_class = SourceSerializer
     model_class = Source
     item_name = "Source"
+
+
+    
 class ProductViewSet(BaseInventoryViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer

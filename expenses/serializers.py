@@ -3,20 +3,23 @@ from .models import Expense, ExpenseHead, ExpenseSubHead
 from accounts.models import Account
 
 class ExpenseHeadSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source='company.name', read_only=True)
+
+
     class Meta:
         model = ExpenseHead
-        fields = ['id', 'name', 'company']  # ✅ include it!
+        fields = ['id', 'name', 'company', 'company_name','is_active']
         extra_kwargs = {
-            'company': {'required': True}  # so we can set it manually in the view
+            'company': {'required': True}
         }
-
 class ExpenseSubHeadSerializer(serializers.ModelSerializer):
     head_name = serializers.StringRelatedField(source='head.name', read_only=True)
     head = serializers.PrimaryKeyRelatedField(queryset=ExpenseHead.objects.all())
+    company_name = serializers.CharField(source='company.name', read_only=True)
 
     class Meta:
         model = ExpenseSubHead
-        fields = ['id', 'name', 'head', 'head_name', 'company']
+        fields = ['id', 'name', 'head', 'head_name', 'company','is_active', 'company_name']  # ✅ include is_active
 
 class ExpenseSerializer(serializers.ModelSerializer):
     head = serializers.PrimaryKeyRelatedField(queryset=ExpenseHead.objects.all())

@@ -10,7 +10,7 @@ User = get_user_model()
 class MoneyReceiptSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     customer_phone = serializers.CharField(source='customer.phone', read_only=True)
-    seller_name = serializers.CharField(source='seller.get_full_name', read_only=True)
+    seller_name = serializers.CharField(source='seller.username', read_only=True)
     sale_invoice_no = serializers.CharField(source='sale.invoice_no', read_only=True, allow_null=True)
     payment_summary = serializers.SerializerMethodField()
     

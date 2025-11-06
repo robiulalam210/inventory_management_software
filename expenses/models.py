@@ -12,6 +12,11 @@ class ExpenseHead(models.Model):
     is_active = models.BooleanField(default=True)
     def __str__(self):
         return self.name
+    
+    @property
+    def status(self):
+            return "Active" if self.is_active else "Inactive"
+
 
 
 class ExpenseSubHead(models.Model):
@@ -24,6 +29,11 @@ class ExpenseSubHead(models.Model):
 
     def __str__(self):
         return f"{self.head.name} - {self.name}"
+    
+    @property
+    def status(self):
+            return "Active" if self.is_active else "Inactive"
+
 
 
 

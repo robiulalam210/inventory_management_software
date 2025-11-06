@@ -9,7 +9,8 @@ from core.pagination import CustomPageNumberPagination
 from .models import Purchase, PurchaseItem
 from .serializers import PurchaseSerializer, PurchaseItemSerializer
 from suppliers.models import Supplier
-
+from django.db import models  # Add this import
+from django.db.models import Q  # Add this import
 logger = logging.getLogger(__name__)
 
 
@@ -117,6 +118,7 @@ class PurchaseViewSet(BaseCompanyViewSet):
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         invoice_no = self.request.query_params.get('invoice_no')
+        search = self.request.query_params.get('search')
         
         # Apply filters
         if payment_status:
@@ -134,6 +136,15 @@ class PurchaseViewSet(BaseCompanyViewSet):
             
         if invoice_no:
             queryset = queryset.filter(invoice_no__icontains=invoice_no)
+        
+        # Handle search parameter - Use 'remark' instead of 'notes'
+        if search:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(invoice_no__icontains=search) |
+                Q(supplier__name__icontains=search) |
+                Q(remark__icontains=search)  # Changed from 'notes' to 'remark'
+            )
             
         return queryset.order_by('-purchase_date', '-id')
 
