@@ -211,6 +211,12 @@ class ProductSerializer(serializers.ModelSerializer):
     stock_status = serializers.ReadOnlyField()
     stock_status_display = serializers.SerializerMethodField(read_only=True)
 
+    # Discount fields
+    discount_applied = serializers.BooleanField(source='discount_applied_on', read_only=True)
+    discount_type = serializers.CharField(read_only=True)
+    discount_value = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    final_price = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Product
         fields = [
@@ -220,7 +226,8 @@ class ProductSerializer(serializers.ModelSerializer):
             'stock_qty', 'alert_quantity', 'description', 'image',
             'is_active', 'created_at', 'updated_at',
             'category_info', 'unit_info', 'brand_info', 'group_info', 
-            'source_info', 'created_by_info', 'stock_status', 'stock_status_display'
+            'source_info', 'created_by_info', 'stock_status', 'stock_status_display',
+            'discount_applied', 'discount_type', 'discount_value', 'final_price'
         ]
         read_only_fields = [
             'id', 'company', 'created_by', 'created_at', 'updated_at', 
@@ -269,3 +276,13 @@ class ProductSerializer(serializers.ModelSerializer):
             2: 'In Stock'
         }
         return status_map.get(obj.stock_status, 'Unknown')
+    
+    def get_final_price(self, obj):
+        """Calculate selling price after discount if applied"""
+        price = obj.selling_price
+        if obj.discount_applied_on and obj.discount_value:
+            if obj.discount_type == 'fixed':
+                price -= obj.discount_value
+            elif obj.discount_type == 'percent':
+                price -= (price * obj.discount_value / 100)
+        return max(price, 0)
