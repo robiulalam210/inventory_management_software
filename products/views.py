@@ -379,6 +379,44 @@ class ProductViewSet(BaseInventoryViewSet):
             return ProductUpdateSerializer
         return ProductSerializer
 
+    @action(detail=False, methods=['get'], url_path='barcode-search')
+    def barcode_search(self, request):
+        """
+        Search a product by barcode/SKU for the logged-in user's company
+        Example: GET /api/products/barcode-search/?sku=PDT-1-00001
+        """
+        sku = request.query_params.get('sku') or request.query_params.get('barcode')
+        if not sku:
+            return Response({'detail': 'SKU or barcode is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = getattr(request.user, 'company', None)
+            queryset = self.get_queryset()
+            if company:
+                queryset = queryset.filter(company=company)
+
+            product = queryset.filter(sku__iexact=sku).first()
+            if not product:
+                return Response({'detail': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = self.get_serializer(product)
+            return   custom_response(
+                success=True,
+                message="Product details fetched successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def get_queryset(self):
         """Filter products by user's company with optimized queries"""
         user = self.request.user

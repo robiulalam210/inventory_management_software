@@ -85,6 +85,7 @@ urlpatterns = [
     path('api/products/low-stock/', ProductViewSet.as_view({'get': 'low_stock'}), name='product-low-stock'),
     path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
     path('api/products/filters/', ProductViewSet.as_view({'get': 'filters'}), name='product-filters'),
+    
 # GET /api/products/stock-info/?status=0  # Out of stock
 # GET /api/products/stock-info/?status=1  # Low stock  
 # GET /api/products/stock-info/?status=2  # In stock

@@ -43,7 +43,7 @@ LOGIN_REDIRECT_URL = '/admin/dashboard/'   # Optional, for post-login redirect
 # INSTALLED APPS
 # -----------------------------
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    'django.contrib.admin',   
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',

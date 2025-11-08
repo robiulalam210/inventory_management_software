@@ -7,6 +7,7 @@ urlpatterns = [
 
     # Core API
     path('api/', include('core.urls')),  # core handles all apps
+    path('products/barcode-search/', views.search_product_by_barcode, name='barcode-search'),
 
 
     #  path('categories/', views.category_list, name='category_list'),
