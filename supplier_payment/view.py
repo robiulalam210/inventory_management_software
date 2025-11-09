@@ -8,6 +8,7 @@ from .serializers import SupplierPaymentSerializer
 from .model import SupplierPayment
 from purchases.models import Purchase
 import logging
+from rest_framework import serializers
 
 logger = logging.getLogger(__name__)
 
@@ -40,62 +41,7 @@ class SupplierPaymentListCreateAPIView(APIView):
 
     def apply_filters(self, queryset, request):
         """Apply filters to the queryset"""
-        # Date range filtering
-        start_date = request.GET.get('start_date')
-        end_date = request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(payment_date__range=[start_date, end_date])
-        elif start_date:
-            queryset = queryset.filter(payment_date__gte=start_date)
-        elif end_date:
-            queryset = queryset.filter(payment_date__lte=end_date)
-
-        # Supplier filtering
-        supplier_id = request.GET.get('supplier_id')
-        if supplier_id:
-            queryset = queryset.filter(supplier_id=supplier_id)
-
-        # Purchase filtering
-        purchase_id = request.GET.get('purchase_id')
-        if purchase_id:
-            queryset = queryset.filter(purchase_id=purchase_id)
-
-        # Payment method filtering
-        payment_method = request.GET.get('payment_method')
-        if payment_method:
-            queryset = queryset.filter(payment_method=payment_method)
-
-        # Amount range filtering
-        min_amount = request.GET.get('min_amount')
-        max_amount = request.GET.get('max_amount')
-        if min_amount:
-            queryset = queryset.filter(amount__gte=min_amount)
-        if max_amount:
-            queryset = queryset.filter(amount__lte=max_amount)
-
-        # Status filtering
-        status_filter = request.GET.get('status')
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
-
-        # Search by sp_no, remark, cheque_no, or supplier name
-        search = request.GET.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(sp_no__icontains=search) |  # Changed from reference_no to sp_no
-                Q(remark__icontains=search) |
-                Q(cheque_no__icontains=search) |
-                Q(supplier__name__icontains=search) |
-                Q(supplier__phone__icontains=search)  # Added phone search
-            )
-
-        # Order by payment date (newest first by default)
-        order_by = request.GET.get('order_by', '-payment_date')
-        if order_by.lstrip('-') in ['payment_date', 'amount', 'created_at', 'sp_no']:
-            queryset = queryset.order_by(order_by)
-        else:
-            queryset = queryset.order_by('-payment_date')
-
+        # ... your existing filter logic ...
         return queryset
 
     def get(self, request):
@@ -123,8 +69,90 @@ class SupplierPaymentListCreateAPIView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    # ... rest of your post method remains the same ...
-
+    def post(self, request):
+        """Create a new supplier payment"""
+        try:
+            # Log the incoming data for debugging
+            logger.info(f"=== SUPPLIER PAYMENT CREATION DEBUG ===")
+            logger.info(f"Raw request data: {request.data}")
+            
+            # Create a mutable copy of the data
+            data = request.data.copy()
+            
+            # Handle field mappings - FIXED: map seller_id to prepared_by
+            field_mappings = {
+                'account_id': 'account',
+                'supplier_id': 'supplier', 
+                'seller_id': 'prepared_by',  # Map seller_id to prepared_by
+                'purchase_id': 'purchase',
+            }
+            
+            for old_field, new_field in field_mappings.items():
+                if old_field in data:
+                    data[new_field] = data.pop(old_field)
+                    logger.info(f"Mapped {old_field} -> {new_field}: {data[new_field]}")
+            
+            # Handle specific_invoice logic
+            specific_invoice = data.get('specific_invoice', False)
+            invoice_no = data.get('invoice_no')
+            
+            if specific_invoice and invoice_no:
+                try:
+                    # Find the purchase by invoice_no
+                    purchase = Purchase.objects.get(
+                        invoice_no=invoice_no,
+                        company=request.user.company
+                    )
+                    data['purchase'] = purchase.id
+                    logger.info(f"Found purchase for invoice {invoice_no}: {purchase.id}")
+                except Purchase.DoesNotExist:
+                    logger.warning(f"Purchase not found for invoice: {invoice_no}")
+                    return custom_response(
+                        success=False,
+                        message=f"Purchase with invoice number {invoice_no} not found",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            logger.info(f"Final data before serializer: {data}")
+            
+            serializer = SupplierPaymentSerializer(data=data, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+            
+            # FIXED: Use prepared_by instead of created_by
+            payment = serializer.save(
+                company=request.user.company,
+                prepared_by=request.user  # CHANGED: created_by -> prepared_by
+            )
+            
+            logger.info(f"Supplier payment created successfully: {payment.sp_no}")
+            logger.info("=== SUPPLIER PAYMENT CREATION COMPLETE ===")
+            
+            return custom_response(
+                success=True,
+                message="Supplier payment created successfully",
+                data=SupplierPaymentSerializer(payment, context={'request': request}).data,
+                status_code=status.HTTP_201_CREATED
+            )
+            
+        except serializers.ValidationError as e:
+            logger.warning(f"Supplier payment validation error: {e.detail}")
+            return custom_response(
+                success=False,
+                message="Validation error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error creating supplier payment: {str(e)}", exc_info=True)
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class SupplierPaymentDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]

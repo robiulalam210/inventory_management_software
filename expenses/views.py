@@ -7,8 +7,11 @@ from core.utils import custom_response
 from .models import Expense, ExpenseHead, ExpenseSubHead
 from .serializers import ExpenseSerializer, ExpenseHeadSerializer, ExpenseSubHeadSerializer
 from core.pagination import CustomPageNumberPagination
+from django.db.models import Q 
 
+ # Add this import
 
+import logging
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     """Filters queryset by logged-in user's company"""
     company_field = 'company'
@@ -209,6 +212,8 @@ class ExpenseSubHeadDetailView(APIView):
 # ------------------------------
 # Expense
 # ------------------------------
+
+
 class ExpenseListView(APIView):
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPageNumberPagination
@@ -234,17 +239,25 @@ class ExpenseListView(APIView):
             # Base queryset
             expenses = Expense.objects.filter(company=company).select_related('head', 'subhead', 'account')
 
-            # Apply search filter
+            # Apply search filter - FIXED: use correct field names
             if search:
                 expenses = expenses.filter(
-                    Q(description__icontains=search) |
+                    Q(note__icontains=search) |  # ✅ Changed from description to note
                     Q(invoice_number__icontains=search) |
                     Q(head__name__icontains=search) |
                     Q(subhead__name__icontains=search) |
-                    Q(amount__icontains=search) |
-                    Q(payment_method__icontains=search) |
-                    Q(note__icontains=search)
+                    Q(payment_method__icontains=search)
+                    # Removed duplicate note__icontains
                 )
+                
+                # Handle numeric search for amount separately
+                try:
+                    # Try to convert search to float for amount search
+                    amount_value = float(search)
+                    expenses = expenses.filter(amount=amount_value)
+                except (ValueError, TypeError):
+                    # If search is not a valid number, ignore amount filtering
+                    pass
 
             # Date range filter
             if start_date and end_date:
@@ -264,7 +277,7 @@ class ExpenseListView(APIView):
             if payment_method:
                 expenses = expenses.filter(payment_method__iexact=payment_method)
 
-            # Handle sorting - FIXED
+            # Handle sorting
             valid_sort_fields = [
                 'id', 'created_at', 'expense_date', 'amount', 'invoice_number',
                 'head__name', 'subhead__name', 'payment_method'
@@ -306,6 +319,8 @@ class ExpenseListView(APIView):
             return paginator.get_paginated_response(serializer.data, "Expenses fetched successfully.")
             
         except Exception as e:
+            # Add better error logging
+            logger.error(f"Error in ExpenseListView: {str(e)}", exc_info=True)
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):

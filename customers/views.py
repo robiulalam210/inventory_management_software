@@ -1,5 +1,5 @@
-# customers/views.py
-from rest_framework import viewsets, status, serializers, filters
+import logging
+from rest_framework import viewsets, status, filters
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Count, Sum
@@ -7,6 +7,8 @@ from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
 from .models import Customer
 from .serializers import CustomerSerializer
+
+logger = logging.getLogger(__name__)
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
@@ -91,13 +93,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
             )
             
         except Exception as e:
+            logger.error(f"Error in CustomerViewSet list: {str(e)}")
             return custom_response(
                 success=False,
                 message=f"Error fetching customers: {str(e)}",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
@@ -131,9 +133,22 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_201_CREATED
             )
         except serializers.ValidationError as e:
+    # Safely get the first error message
+            if isinstance(e.detail, list) and e.detail:
+                message = str(e.detail[0])
+            elif isinstance(e.detail, dict) and e.detail:
+                # Get first field error
+                first_field = next(iter(e.detail.values()))
+                if isinstance(first_field, list) and first_field:
+                    message = str(first_field[0])
+                else:
+                    message = str(first_field)
+            else:
+                message = str(e.detail)
+            
             return custom_response(
                 success=False,
-                message="Validation error occurred",
+                message=message,
                 data=e.detail,
                 status_code=status.HTTP_400_BAD_REQUEST
             )

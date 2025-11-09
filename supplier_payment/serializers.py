@@ -7,45 +7,24 @@ from accounts.models import Account
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
-
 class SupplierPaymentSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     supplier_phone = serializers.CharField(source='supplier.phone', read_only=True)
     prepared_by_name = serializers.CharField(source='prepared_by.get_full_name', read_only=True)
-    purchase_invoice_no = serializers.CharField(source='purchase.invoice_no', read_only=True, allow_null=True)  # ✅ Changed to invoice_no
+    purchase_invoice_no = serializers.CharField(source='purchase.invoice_no', read_only=True, allow_null=True)
     payment_summary = serializers.SerializerMethodField()
     
-    # Make supplier field optional for writing, handle both supplier and supplier_id
+    # Make fields more flexible for input
     supplier = serializers.PrimaryKeyRelatedField(
         queryset=Supplier.objects.all(), 
-        required=False,
-        allow_null=True
+        required=True
     )
-    supplier_id = serializers.PrimaryKeyRelatedField(
-        queryset=Supplier.objects.all(), 
-        source='supplier',
-        write_only=True,
-        required=False,
-        allow_null=True
-    )
-    account_id = serializers.PrimaryKeyRelatedField(
+    account = serializers.PrimaryKeyRelatedField(
         queryset=Account.objects.all(),
-        source='account', 
-        write_only=True,
-        required=False,
-        allow_null=True
+        required=True
     )
-    purchase_id = serializers.PrimaryKeyRelatedField(
+    purchase = serializers.PrimaryKeyRelatedField(
         queryset=Purchase.objects.all(),
-        source='purchase',
-        write_only=True,
-        required=False,
-        allow_null=True
-    )
-    prepared_by_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        source='prepared_by',
-        write_only=True,
         required=False,
         allow_null=True
     )
@@ -53,24 +32,32 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = SupplierPayment
         fields = [
-            'id', 'sp_no', 'company', 'supplier', 'supplier_id', 'supplier_name', 'supplier_phone',
-            'payment_type', 'specific_bill', 'purchase', 'purchase_id', 'purchase_invoice_no',  # ✅ Changed field name
+            'id', 'sp_no', 'company', 'supplier', 'supplier_name', 'supplier_phone',
+            'payment_type', 'specific_bill', 'purchase', 'purchase_invoice_no',
             'amount', 'payment_method', 'payment_date', 'remark', 
-            'account', 'account_id', 'prepared_by', 'prepared_by_name', 'prepared_by_id',
-            'cheque_status', 'cheque_no', 'cheque_date', 'bank_name', 'created_at', 'payment_summary'
+            'account', 'prepared_by', 'prepared_by_name',
+            'cheque_status', 'cheque_no', 'cheque_date', 'bank_name', 
+            'created_at', 'payment_summary'
         ]
         read_only_fields = [
-            'id', 'sp_no', 'supplier_name', 'supplier_phone', 'purchase_invoice_no',  # ✅ Changed field name
+            'id', 'sp_no', 'supplier_name', 'supplier_phone', 'purchase_invoice_no',
             'prepared_by_name', 'company', 'prepared_by', 'created_at', 'payment_type',
             'specific_bill', 'payment_summary'
         ]
 
     def validate(self, attrs):
-        # Check that either supplier or supplier_id is provided
-        supplier = attrs.get('supplier')
-        if not supplier:
+        request = self.context.get('request')
+        
+        # Ensure supplier is provided
+        if 'supplier' not in attrs:
             raise serializers.ValidationError({
-                "supplier": "This field is required."
+                "supplier": "Supplier is required."
+            })
+            
+        # Ensure account is provided
+        if 'account' not in attrs:
+            raise serializers.ValidationError({
+                "account": "Account is required."
             })
         
         # Validate payment amount
@@ -105,27 +92,15 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         return obj.get_payment_summary()
 
     def create(self, validated_data):
-        # Get request from context
         request = self.context.get('request')
         
-        # Set company and prepared_by if not provided
+        # Set company from request user
         if request and request.user:
-            if 'company' not in validated_data:
-                validated_data['company'] = getattr(request.user, 'company', None)
-            if 'prepared_by' not in validated_data:
-                validated_data['prepared_by'] = request.user
+            validated_data['company'] = getattr(request.user, 'company', None)
+            
+        # Set prepared_by from request user if not provided
+        if 'prepared_by' not in validated_data and request and request.user:
+            validated_data['prepared_by'] = request.user
         
         # Create the supplier payment
-        payment = SupplierPayment.objects.create(**validated_data)
-        return payment
-
-    def update(self, instance, validated_data):
-        # Get request from context
-        request = self.context.get('request')
-        
-        # Update fields
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        
-        instance.save()
-        return instance
+        return super().create(validated_data)

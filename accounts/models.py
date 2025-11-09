@@ -12,29 +12,7 @@ from django.db import transaction as db_transaction
 import random
 import string
 
-# Add these imports at the top of accounts/views.py
-# Import your transaction models - adjust these based on what you have
-try:
-    from sales.models import Sale, SaleReturn
-except ImportError:
-    Sale = None
-    SaleReturn = None
-
-try:
-    from purchases.models import Purchase, PurchaseReturn
-except ImportError:
-    Purchase = None
-    PurchaseReturn = None
-
-try:
-    from money_receipts.models import MoneyReceipt
-    # from supplier.models import SupplierPayment
-    from expenses.models import Expense
-    # from moner.models import MoneyReceipt, SupplierPayment, Expense
-except ImportError:
-    MoneyReceipt = None
-    SupplierPayment = None
-    Expense = None
+#
 class Account(models.Model):
     TYPE_BANK = 'Bank'
     TYPE_MOBILE = 'Mobile banking'
