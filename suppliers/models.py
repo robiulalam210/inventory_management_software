@@ -12,7 +12,7 @@ class Supplier(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="suppliers")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
-    supplier_no = models.CharField(max_length=50, unique=True, blank=True, null=True)
+    supplier_no = models.CharField(max_length=50,  blank=True, null=True)
     name = models.CharField(max_length=255)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
@@ -67,38 +67,53 @@ class Supplier(models.Model):
             return f"SUP-1001"
 
     def update_purchase_totals(self):
-        """Update purchase statistics for this supplier"""
+        """Update purchase statistics for this supplier - FIXED VERSION"""
         from purchases.models import Purchase
         from decimal import Decimal
-        from django.db import transaction
         
         try:
-            purchase_stats = Purchase.objects.filter(
-                supplier=self
-            ).aggregate(
-                total_purchases=Coalesce(Sum('grand_total'), Decimal('0.00')),
-                total_paid=Coalesce(Sum('paid_amount'), Decimal('0.00')),
-                purchase_count=Count('id')
-            )
+            # Get the supplier ID
+            supplier_id = self.id
             
-            with transaction.atomic():
-                # Refresh the instance to avoid race conditions
-                supplier = Supplier.objects.select_for_update().get(pk=self.pk)
-                supplier.total_purchases = purchase_stats['total_purchases']
-                supplier.total_paid = purchase_stats['total_paid']
-                supplier.total_due = purchase_stats['total_purchases'] - purchase_stats['total_paid']
-                supplier.purchase_count = purchase_stats['purchase_count']
-                supplier.save(update_fields=[
-                    'total_purchases', 'total_paid', 'total_due', 'purchase_count'
-                ])
-            
-            logger.info(f"Updated purchase totals for supplier {self.supplier_no}")
-            return True
+            # Use direct SQL to avoid any ORM issues
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        COALESCE(SUM(grand_total), 0) as total_purchases,
+                        COALESCE(SUM(paid_amount), 0) as total_paid,
+                        COUNT(*) as purchase_count
+                    FROM purchases_purchase 
+                    WHERE supplier_id = %s
+                """, [supplier_id])
                 
+                result = cursor.fetchone()
+                total_purchases = result[0] if result[0] else Decimal('0.00')
+                total_paid = result[1] if result[1] else Decimal('0.00')
+                purchase_count = result[2] if result[2] else 0
+            
+            total_due = total_purchases - total_paid
+            
+            # Update using direct SQL
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE suppliers_supplier 
+                    SET total_purchases = %s,
+                        total_paid = %s, 
+                        total_due = %s,
+                        purchase_count = %s
+                    WHERE id = %s
+                """, [total_purchases, total_paid, total_due, purchase_count, supplier_id])
+            
+            # Refresh this instance
+            self.refresh_from_db()
+            
+            print(f"✅ Supplier {self.name} updated: Due = {self.total_due}")
+            return True
+            
         except Exception as e:
-            logger.error(f"Error updating supplier totals for {self.supplier_no}: {str(e)}")
+            print(f"❌ Error updating supplier {self.name}: {e}")
             return False
-
     @property
     def status(self):
         return "Active" if self.is_active else "Inactive"

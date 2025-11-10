@@ -12,6 +12,8 @@ from django.db.models import Q
  # Add this import
 
 import logging
+
+logger = logging.getLogger(__name__)
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     """Filters queryset by logged-in user's company"""
     company_field = 'company'
@@ -213,7 +215,6 @@ class ExpenseSubHeadDetailView(APIView):
 # Expense
 # ------------------------------
 
-
 class ExpenseListView(APIView):
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPageNumberPagination
@@ -233,30 +234,27 @@ class ExpenseListView(APIView):
             head_id = request.GET.get('head_id')
             subhead_id = request.GET.get('subhead_id')
             payment_method = request.GET.get('payment_method')
-            sort_by = request.GET.get('sort_by', 'created_at')
+            sort_by = request.GET.get('sort_by', 'date_created')
             sort_order = request.GET.get('sort_order', 'desc')
 
             # Base queryset
             expenses = Expense.objects.filter(company=company).select_related('head', 'subhead', 'account')
 
-            # Apply search filter - FIXED: use correct field names
+            # Apply search filter
             if search:
                 expenses = expenses.filter(
-                    Q(note__icontains=search) |  # ✅ Changed from description to note
+                    Q(note__icontains=search) |
                     Q(invoice_number__icontains=search) |
                     Q(head__name__icontains=search) |
                     Q(subhead__name__icontains=search) |
                     Q(payment_method__icontains=search)
-                    # Removed duplicate note__icontains
                 )
                 
                 # Handle numeric search for amount separately
                 try:
-                    # Try to convert search to float for amount search
                     amount_value = float(search)
                     expenses = expenses.filter(amount=amount_value)
                 except (ValueError, TypeError):
-                    # If search is not a valid number, ignore amount filtering
                     pass
 
             # Date range filter
@@ -279,12 +277,12 @@ class ExpenseListView(APIView):
 
             # Handle sorting
             valid_sort_fields = [
-                'id', 'created_at', 'expense_date', 'amount', 'invoice_number',
+                'id', 'date_created', 'expense_date', 'amount', 'invoice_number',
                 'head__name', 'subhead__name', 'payment_method'
             ]
             
             # Default sorting
-            order_by_field = '-created_at'  # Default to newest first
+            order_by_field = '-date_created'
             
             if sort_by:
                 # Remove any prefix dashes and validate the field
@@ -296,7 +294,7 @@ class ExpenseListView(APIView):
                         order_by_field = clean_sort_by
                 else:
                     # If invalid field provided, use default
-                    order_by_field = '-created_at'
+                    order_by_field = '-date_created'
 
             expenses = expenses.order_by(order_by_field)
 
@@ -319,11 +317,11 @@ class ExpenseListView(APIView):
             return paginator.get_paginated_response(serializer.data, "Expenses fetched successfully.")
             
         except Exception as e:
-            # Add better error logging
-            logger.error(f"Error in ExpenseListView: {str(e)}", exc_info=True)
+            logger.error(f"Error in ExpenseListView GET: {str(e)}", exc_info=True)
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
+        """Handle expense creation"""
         try:
             company = getattr(request.user, 'company', None)
             if not company:
@@ -345,14 +343,25 @@ class ExpenseListView(APIView):
                 if not subhead_exists:
                     return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
             
+            # Validate account if provided
+            account_id = data.get('account')
+            if account_id:
+                from accounts.models import Account
+                account_exists = Account.objects.filter(id=account_id, company=company).exists()
+                if not account_exists:
+                    return custom_response(False, "Account not found.", None, status.HTTP_400_BAD_REQUEST)
+            
             serializer = ExpenseSerializer(data=data)
             if serializer.is_valid():
-                serializer.save(created_by=request.user)  # ✅ Set created_by
-                return custom_response(True, "Expense created successfully.", serializer.data, status.HTTP_201_CREATED)
+                expense = serializer.save(created_by=request.user)
+                return custom_response(True, "Expense created successfully.", ExpenseSerializer(expense).data, status.HTTP_201_CREATED)
+            
             return custom_response(False, "Validation Error.", serializer.errors, status.HTTP_400_BAD_REQUEST)
+            
         except serializers.ValidationError as e:
             return custom_response(False, "Validation Error.", e.detail, status.HTTP_400_BAD_REQUEST)
         except Exception as e:
+            logger.error(f"Error in ExpenseListView POST: {str(e)}", exc_info=True)
             return custom_response(False, f"Unexpected error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

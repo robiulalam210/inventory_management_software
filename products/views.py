@@ -478,10 +478,27 @@ class ProductViewSet(BaseInventoryViewSet):
             )
             
         except serializers.ValidationError as e:
+            # SIMPLIFIED ERROR EXTRACTION - Return clean message
+            error_message = "Validation error"
+            
+            if isinstance(e.detail, dict):
+                # Extract the first error message from any field
+                for field, errors in e.detail.items():
+                    if isinstance(errors, list) and errors:
+                        error_message = str(errors[0])  # Get first error
+                        break
+                    elif errors:
+                        error_message = str(errors)
+                        break
+            elif isinstance(e.detail, list) and e.detail:
+                error_message = str(e.detail[0])
+            else:
+                error_message = str(e.detail)
+            
             return custom_response(
                 success=False,
-                message="Validation error",
-                data=e.detail,
+                message=error_message,  # Clean, simple message
+                data=None,  # Don't send complex error data to frontend
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:

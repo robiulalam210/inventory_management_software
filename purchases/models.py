@@ -56,7 +56,7 @@ class Purchase(models.Model):
     # Payment Information
     payment_method = models.CharField(max_length=100, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
     account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='purchases')
-    invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
+    invoice_no = models.CharField(max_length=20)
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     remark = models.TextField(blank=True, null=True)
@@ -129,6 +129,7 @@ class Purchase(models.Model):
             ])
 
     def save(self, *args, **kwargs):
+        """Custom save method to handle invoice generation and supplier updates"""
         is_new = self.pk is None
         
         # Calculate due amount before saving
@@ -138,29 +139,53 @@ class Purchase(models.Model):
         # Update payment status
         self._update_payment_status()
         
+        # Generate invoice number for new purchases
+        if is_new and not self.invoice_no:
+            if self.company:
+                company_purchase_count = Purchase.objects.filter(company=self.company).count()
+                self.invoice_no = f"PO-{self.company.id}-{1000 + company_purchase_count + 1}"
+            else:
+                total_count = Purchase.objects.count()
+                self.invoice_no = f"PO-{1000 + total_count + 1}"
+        
+        # SAVE ONLY ONCE
         super().save(*args, **kwargs)
         
-        # Auto-generate invoice number after saving for new purchases
-        if is_new and not self.invoice_no:
-            self.invoice_no = f"PO-{1000 + self.id}"
-            super().save(update_fields=['invoice_no'])
-        
-        # Update supplier totals after saving - with transaction safety
+        # Update supplier totals - ONLY ONCE
         if self.supplier:
-            print(f"🔄 Purchase.save: Calling supplier update for supplier ID {self.supplier_id}")
+            print(f"🔄 Purchase.save: Updating supplier totals for '{self.supplier.name}'")
             try:
-                # Import inside to avoid circular imports
-                from suppliers.models import Supplier
+                # Use direct SQL update to avoid any ORM issues
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE suppliers_supplier 
+                        SET 
+                            total_purchases = (
+                                SELECT COALESCE(SUM(grand_total), 0) 
+                                FROM purchases_purchase 
+                                WHERE supplier_id = %s
+                            ),
+                            total_paid = (
+                                SELECT COALESCE(SUM(paid_amount), 0) 
+                                FROM purchases_purchase 
+                                WHERE supplier_id = %s
+                            ),
+                            total_due = (
+                                SELECT COALESCE(SUM(grand_total - paid_amount), 0) 
+                                FROM purchases_purchase 
+                                WHERE supplier_id = %s
+                            ),
+                            purchase_count = (
+                                SELECT COUNT(*) 
+                                FROM purchases_purchase 
+                                WHERE supplier_id = %s
+                            )
+                        WHERE id = %s
+                    """, [self.supplier_id, self.supplier_id, self.supplier_id, self.supplier_id, self.supplier_id])
                 
-                # Get fresh supplier instance to ensure we have latest data
-                supplier = Supplier.objects.get(id=self.supplier_id)
+                print(f"✅ Supplier '{self.supplier.name}' totals updated via direct SQL")
                 
-                if hasattr(supplier, 'update_purchase_totals'):
-                    print(f"   ✅ Calling update_purchase_totals for '{supplier.name}'")
-                    supplier.update_purchase_totals()
-                else:
-                    print(f"❌ WARNING: Supplier has no update_purchase_totals method")
-                    
             except Exception as e:
                 print(f"❌ ERROR updating supplier totals: {e}")
 

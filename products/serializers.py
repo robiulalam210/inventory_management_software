@@ -170,21 +170,23 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """
-        Custom validation for product update data
-        """
-        purchase_price = data.get('purchase_price', self.instance.purchase_price)
-        selling_price = data.get('selling_price', self.instance.selling_price)
+        """Custom validation with better error messages"""
+        errors = {}
         
-        if selling_price < purchase_price:
-            raise serializers.ValidationError({
-                "selling_price": "Selling price cannot be less than purchase price"
-            })
+        # Your existing validation logic
+        purchase_price = data.get('purchase_price')
+        selling_price = data.get('selling_price')
         
-        alert_quantity = data.get('alert_quantity', self.instance.alert_quantity)
-        if alert_quantity < 0:
+        if selling_price and purchase_price and selling_price < purchase_price:
+            errors['selling_price'] = "Selling price cannot be less than purchase price"
+        
+        # Add other validations...
+        
+        if errors:
+            # Convert to the format your Flutter app expects
             raise serializers.ValidationError({
-                "alert_quantity": "Alert quantity cannot be negative"
+                'message': list(errors.values())[0],  # First error as main message
+                'errors': errors  # All errors in structured format
             })
         
         return data

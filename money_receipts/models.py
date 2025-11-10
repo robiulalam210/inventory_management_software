@@ -14,7 +14,7 @@ class MoneyReceipt(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    mr_no = models.CharField(max_length=20, unique=True)
+    mr_no = models.CharField(max_length=20, )
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)  # Allow null
     sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True)
 

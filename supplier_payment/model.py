@@ -29,7 +29,7 @@ class SupplierPayment(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    sp_no = models.CharField(max_length=20, unique=True)
+    sp_no = models.CharField(max_length=20, )
     supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
     purchase = models.ForeignKey(Purchase, on_delete=models.SET_NULL, null=True, blank=True)  # ✅ Fixed: removed quotes
 

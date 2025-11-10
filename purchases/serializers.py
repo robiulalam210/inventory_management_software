@@ -1,7 +1,8 @@
+# purchases/serializers.py
 import logging
 import traceback
 from rest_framework import serializers
-from .models import Purchase, PurchaseItem
+from .models import Purchase, PurchaseItem  # ← Import from models, don't redefine
 from products.models import Product
 from accounts.models import Account
 from django.db import transaction
@@ -50,7 +51,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
     overall_delivery_type = serializers.CharField(write_only=True, required=False, default='fixed')
 
     class Meta:
-        model = Purchase
+        model = Purchase  # ← This should reference the model from models.py
         fields = [
             'id', 'company', 'supplier', 'supplier_name', 'purchase_date', 'total', 'grand_total',
             'paid_amount', 'due_amount', 'change_amount', 'instant_pay',
