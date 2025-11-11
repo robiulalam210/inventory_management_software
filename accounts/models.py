@@ -25,7 +25,7 @@ class Account(models.Model):
         (TYPE_CASH, 'Cash'),
         (TYPE_OTHER, 'Other'),
     ]
-    
+    ac_no = models.CharField(max_length=20, null=True, blank=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=150)
     ac_type = models.CharField(max_length=30, choices=AC_TYPE_CHOICES, default=TYPE_OTHER)
@@ -68,6 +68,10 @@ class Account(models.Model):
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
+        if is_new and not self.ac_no:
+            last_receipt = Account.objects.filter(company=self.company).order_by("-id").first()
+            new_id = (last_receipt.id + 1) if last_receipt else 1
+            self.ac_no = f"ACC-{1000 + new_id}"
         
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
             self.number = None

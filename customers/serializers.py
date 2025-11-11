@@ -1,4 +1,3 @@
-# customers/serializers.py
 from rest_framework import serializers
 from django.db.models import Sum, F
 from .models import Customer
@@ -21,9 +20,18 @@ class CustomerSerializer(serializers.ModelSerializer):
         read_only_fields = ['date_created', 'created_by']
 
     def get_client_no(self, obj):
-        return f"CL-{1000 + obj.id}"
+        """Get client number - use existing or generate if missing"""
+        if obj.client_no:
+            return obj.client_no
+        
+        # Generate client number if missing
+        try:
+            last_customer = Customer.objects.filter(company=obj.company).order_by("-id").first()
+            new_id = (last_customer.id + 1) if last_customer else 1
+            return f"CU-{1000 + new_id}"
+        except:
+            return f"CU-{1000 + obj.id}" if obj.id else "CU-1000"
 
-   
     def get_total_sales(self, obj):
         if hasattr(obj, 'sales_count'):
             return obj.sales_count
@@ -43,7 +51,7 @@ class CustomerSerializer(serializers.ModelSerializer):
                 
                 total_due = float(total_due) if total_due is not None else 0.0
             
-            return total_due  # Return float instead of string
+            return total_due
         except (TypeError, ValueError):
             return 0.00
 
@@ -61,7 +69,7 @@ class CustomerSerializer(serializers.ModelSerializer):
                 
                 total_paid = float(total_paid) if total_paid is not None else 0.0
             
-            return total_paid  # Return float instead of string
+            return total_paid
         except (TypeError, ValueError):
             return 0.00
 

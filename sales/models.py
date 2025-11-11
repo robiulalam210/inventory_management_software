@@ -27,7 +27,7 @@ class Sale(models.Model):
     customer_name = models.CharField(max_length=100, blank=True, null=True)
 
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
-    invoice_no = models.CharField(max_length=20, blank=True, null=True, unique=True)
+    invoice_no = models.CharField(max_length=20, blank=True, null=True,)
     sale_date = models.DateTimeField(auto_now_add=True)
     
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, default='walk_in')
@@ -84,14 +84,15 @@ class Sale(models.Model):
         if self.customer_type == 'saved_customer' and not self.customer:
             raise ValueError("Saved customer must have a customer record.")
         
-        # ✅ FIXED: Remove payment validation from save method to avoid circular issues
-        # Validation will be handled in the serializer
-        
-        super().save(*args, **kwargs)
-
+        # ✅ FIXED: Generate invoice number for new sales
         if is_new and not self.invoice_no:
-            self.invoice_no = f"PS-{1000 + self.id}"
-            super().save(update_fields=["invoice_no"])
+            last_receipt = Sale.objects.filter(company=self.company).order_by("-id").first()
+            new_id = (last_receipt.id + 1) if last_receipt else 1
+            self.invoice_no = f"SL-{1000 + new_id}"
+        
+        # ✅ FIXED: Remove the problematic super().save(update_fields=["invoice_no"])
+        # Just call super().save() once at the end
+        super().save(*args, **kwargs)
         
         # Check if payment was made and create receipt
         if (not is_new and 

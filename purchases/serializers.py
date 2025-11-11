@@ -2,11 +2,13 @@
 import logging
 import traceback
 from rest_framework import serializers
-from .models import Purchase, PurchaseItem  # ← Import from models, don't redefine
+from .models import Purchase, PurchaseItem
 from products.models import Product
 from accounts.models import Account
 from django.db import transaction
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 class PurchaseItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
@@ -19,6 +21,18 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
         model = PurchaseItem
         fields = ['id', 'product_id', 'product_name', 'qty', 'price', 'discount', 'discount_type', 'product_total']
         read_only_fields = ['id', 'product_name', 'product_total']
+
+    def validate_price(self, value):
+        """Ensure price is not negative"""
+        if value < 0:
+            raise serializers.ValidationError("Price cannot be negative")
+        return value
+
+    def validate_qty(self, value):
+        """Ensure quantity is positive"""
+        if value <= 0:
+            raise serializers.ValidationError("Quantity must be greater than 0")
+        return value
 
 class PurchaseSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
@@ -51,7 +65,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
     overall_delivery_type = serializers.CharField(write_only=True, required=False, default='fixed')
 
     class Meta:
-        model = Purchase  # ← This should reference the model from models.py
+        model = Purchase
         fields = [
             'id', 'company', 'supplier', 'supplier_name', 'purchase_date', 'total', 'grand_total',
             'paid_amount', 'due_amount', 'change_amount', 'instant_pay',
@@ -98,10 +112,16 @@ class PurchaseSerializer(serializers.ModelSerializer):
                     "account": "Account is required for instant payment."
                 })
         
+        # Validate discount doesn't create negative totals
+        overall_discount = attrs.get('overall_discount', 0)
+        if overall_discount < 0:
+            raise serializers.ValidationError({
+                "overall_discount": "Discount cannot be negative."
+            })
+        
         return attrs
 
     def create(self, validated_data):
-        logger = logging.getLogger(__name__)
         try:
             request = self.context.get('request')
             if not request or not hasattr(request.user, 'company') or not request.user.company:
@@ -129,24 +149,21 @@ class PurchaseSerializer(serializers.ModelSerializer):
             with transaction.atomic():
                 # Create purchase first (without items)
                 purchase = Purchase.objects.create(**validated_data)
-                print(f"✅ Created purchase ID: {purchase.id} for supplier ID: {purchase.supplier_id}")
+                logger.info(f"✅ Created purchase ID: {purchase.id} for supplier ID: {purchase.supplier_id}")
 
-                # Create purchase items - let PurchaseItem.save() handle stock updates
+                # Create purchase items
                 for item_data in items_data:
                     PurchaseItem.objects.create(purchase=purchase, **item_data)
-
-                # Calculate totals - this will trigger supplier update
-                purchase.update_totals()
 
                 # Handle instant payment
                 if instant_pay and account and payment_method:
                     purchase.instant_pay(payment_method, account)
 
                 # Debug: Check supplier after creation
-                print(f"🔄 Purchase created. Checking supplier totals...")
+                logger.info(f"🔄 Purchase created. Checking supplier totals...")
                 if purchase.supplier:
                     purchase.supplier.refresh_from_db()
-                    print(f"📊 Supplier '{purchase.supplier.name}' (ID: {purchase.supplier.id}) - "
+                    logger.info(f"📊 Supplier '{purchase.supplier.name}' (ID: {purchase.supplier.id}) - "
                           f"Purchases: {purchase.supplier.total_purchases}, Due: {purchase.supplier.total_due}")
 
             return purchase
@@ -175,8 +192,6 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 # Create new items
                 for item_data in items_data:
                     PurchaseItem.objects.create(purchase=instance, **item_data)
-            
-            instance.update_totals()
             
             # Handle instant payment
             if instant_pay and account and payment_method:

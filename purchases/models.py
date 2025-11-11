@@ -1,13 +1,9 @@
 # purchases/models.py
 from django.db import models
 from django.db.models import Sum, F
-from products.models import Product
-from accounts.models import Account
-from core.models import Company
-from suppliers.models import Supplier
 from django.conf import settings
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 class Purchase(models.Model):
     PAYMENT_STATUS_CHOICES = [
@@ -24,8 +20,8 @@ class Purchase(models.Model):
         ('digital', 'Digital Payment'),
     ]
     
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
-    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
+    company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
+    supplier = models.ForeignKey('suppliers.Supplier', on_delete=models.CASCADE)
     
     # ✅ AUTO User & Date Fields
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchases_created')
@@ -55,7 +51,7 @@ class Purchase(models.Model):
     
     # Payment Information
     payment_method = models.CharField(max_length=100, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
-    account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='purchases')
+    account = models.ForeignKey('accounts.Account', on_delete=models.SET_NULL, blank=True, null=True, related_name='purchases')
     invoice_no = models.CharField(max_length=20)
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -75,52 +71,64 @@ class Purchase(models.Model):
         else:
             self.payment_status = 'pending'
 
+    def _round_decimal(self, value):
+        """Helper method to round decimals consistently"""
+        if value is None:
+            return Decimal('0.00')
+        return Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
     def update_totals(self):
-        """Update purchase totals from items"""
+        """Update purchase totals from items - FIXED VERSION"""
         print(f"🔄 Purchase.update_totals called for purchase ID: {self.id}")
         
         items = self.items.all()
         subtotal = sum([item.subtotal() for item in items])
+        subtotal = self._round_decimal(subtotal)
 
-        # Calculate overall discount
-        discount_amount = 0
+        # Calculate overall discount - FIXED: Don't allow discount to exceed subtotal
+        discount_amount = Decimal('0.00')
         if self.overall_discount_type == 'percentage':
-            discount_amount = subtotal * (self.overall_discount / 100)
+            discount_amount = subtotal * (self.overall_discount / Decimal('100.00'))
         elif self.overall_discount_type == 'fixed':
-            discount_amount = self.overall_discount
+            discount_amount = min(self.overall_discount, subtotal)  # Don't allow negative totals
+        
+        discount_amount = self._round_decimal(discount_amount)
 
         # Calculate charges on SUBTOTAL amount
-        vat_amount = 0
+        vat_amount = Decimal('0.00')
         if self.vat_type == 'percentage':
-            vat_amount = subtotal * (self.vat / 100)
+            vat_amount = subtotal * (self.vat / Decimal('100.00'))
         elif self.vat_type == 'fixed':
             vat_amount = self.vat
+        vat_amount = self._round_decimal(vat_amount)
 
-        service_amount = 0
+        service_amount = Decimal('0.00')
         if self.overall_service_charge_type == 'percentage':
-            service_amount = subtotal * (self.overall_service_charge / 100)
+            service_amount = subtotal * (self.overall_service_charge / Decimal('100.00'))
         elif self.overall_service_charge_type == 'fixed':
             service_amount = self.overall_service_charge
+        service_amount = self._round_decimal(service_amount)
 
-        delivery_amount = 0
+        delivery_amount = Decimal('0.00')
         if self.overall_delivery_charge_type == 'percentage':
-            delivery_amount = subtotal * (self.overall_delivery_charge / 100)
+            delivery_amount = subtotal * (self.overall_delivery_charge / Decimal('100.00'))
         elif self.overall_delivery_charge_type == 'fixed':
             delivery_amount = self.overall_delivery_charge
+        delivery_amount = self._round_decimal(delivery_amount)
 
-        # Calculate totals
-        total_after_discount = subtotal - discount_amount
-        grand_total = total_after_discount + vat_amount + service_amount + delivery_amount
+        # Calculate totals - FIXED: Ensure no negative totals
+        total_after_discount = max(Decimal('0.00'), subtotal - discount_amount)
+        grand_total = max(Decimal('0.00'), total_after_discount + vat_amount + service_amount + delivery_amount)
 
-        self.total = round(subtotal, 2)
-        self.grand_total = round(grand_total, 2)
+        self.total = subtotal
+        self.grand_total = grand_total
         
         # Recalculate due amount
-        self.due_amount = max(0, self.grand_total - self.paid_amount)
-        self.change_amount = max(0, self.paid_amount - self.grand_total)
+        self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
+        self.change_amount = max(Decimal('0.00'), self.paid_amount - self.grand_total)
         self._update_payment_status()
 
-        print(f"📊 Purchase totals updated: Total={self.total}, Grand Total={self.grand_total}, Due={self.due_amount}")
+        print(f"📊 Purchase totals updated: Subtotal={subtotal}, Discount={discount_amount}, Grand Total={grand_total}, Due={self.due_amount}")
         
         # Save only if instance already exists
         if self.pk:
@@ -129,68 +137,32 @@ class Purchase(models.Model):
             ])
 
     def save(self, *args, **kwargs):
-        """Custom save method to handle invoice generation and supplier updates"""
+        """Custom save method to handle invoice generation"""
         is_new = self.pk is None
-        
-        # Calculate due amount before saving
-        self.due_amount = max(0, self.grand_total - self.paid_amount)
-        self.change_amount = max(0, self.paid_amount - self.grand_total)
-        
-        # Update payment status
-        self._update_payment_status()
         
         # Generate invoice number for new purchases
         if is_new and not self.invoice_no:
-            if self.company:
-                company_purchase_count = Purchase.objects.filter(company=self.company).count()
-                self.invoice_no = f"PO-{self.company.id}-{1000 + company_purchase_count + 1}"
-            else:
-                total_count = Purchase.objects.count()
-                self.invoice_no = f"PO-{1000 + total_count + 1}"
+            last_receipt = Purchase.objects.filter(company=self.company).order_by("-id").first()
+            new_id = (last_receipt.id + 1) if last_receipt else 1
+            self.invoice_no = f"PO-{1000 + new_id}"
         
-        # SAVE ONLY ONCE
+        # SAVE FIRST to get PK
         super().save(*args, **kwargs)
         
-        # Update supplier totals - ONLY ONCE
+        # Update totals after save (this will save again with update_fields)
+        self.update_totals()
+        
+        # Update supplier totals
         if self.supplier:
-            print(f"🔄 Purchase.save: Updating supplier totals for '{self.supplier.name}'")
+            print(f"🔄 Purchase.save: Triggering supplier update for '{self.supplier.name}'")
             try:
-                # Use direct SQL update to avoid any ORM issues
-                from django.db import connection
-                with connection.cursor() as cursor:
-                    cursor.execute("""
-                        UPDATE suppliers_supplier 
-                        SET 
-                            total_purchases = (
-                                SELECT COALESCE(SUM(grand_total), 0) 
-                                FROM purchases_purchase 
-                                WHERE supplier_id = %s
-                            ),
-                            total_paid = (
-                                SELECT COALESCE(SUM(paid_amount), 0) 
-                                FROM purchases_purchase 
-                                WHERE supplier_id = %s
-                            ),
-                            total_due = (
-                                SELECT COALESCE(SUM(grand_total - paid_amount), 0) 
-                                FROM purchases_purchase 
-                                WHERE supplier_id = %s
-                            ),
-                            purchase_count = (
-                                SELECT COUNT(*) 
-                                FROM purchases_purchase 
-                                WHERE supplier_id = %s
-                            )
-                        WHERE id = %s
-                    """, [self.supplier_id, self.supplier_id, self.supplier_id, self.supplier_id, self.supplier_id])
-                
-                print(f"✅ Supplier '{self.supplier.name}' totals updated via direct SQL")
-                
+                self.supplier.update_purchase_totals()
             except Exception as e:
                 print(f"❌ ERROR updating supplier totals: {e}")
 
     def make_payment(self, amount, payment_method=None, account=None):
         """Make a payment towards this purchase"""
+        amount = self._round_decimal(amount)
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         
@@ -218,6 +190,7 @@ class Purchase(models.Model):
         Apply payment from SupplierPayment model
         This is called when a SupplierPayment is created for this purchase
         """
+        amount = self._round_decimal(amount)
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         
@@ -282,7 +255,7 @@ class Purchase(models.Model):
 
 class PurchaseItem(models.Model):
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='items')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
     qty = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=12, decimal_places=2)
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -296,12 +269,19 @@ class PurchaseItem(models.Model):
         ordering = ['-date_created']
 
     def subtotal(self):
+        """Calculate item subtotal with proper rounding"""
         total = self.qty * self.price
+        
         if self.discount_type == 'percentage':
-            total -= total * (self.discount / 100)
+            discount_amount = total * (self.discount / Decimal('100.00'))
         elif self.discount_type == 'fixed':
-            total -= self.discount
-        return round(total, 2)
+            discount_amount = self.discount
+        else:
+            discount_amount = Decimal('0.00')
+            
+        # Don't allow negative subtotals
+        final_total = max(Decimal('0.00'), total - discount_amount)
+        return final_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -314,6 +294,12 @@ class PurchaseItem(models.Model):
                 old_qty = old_item.qty
             except PurchaseItem.DoesNotExist:
                 pass
+        
+        # Validate price and quantity
+        if self.price < 0:
+            raise ValueError("Price cannot be negative")
+        if self.qty <= 0:
+            raise ValueError("Quantity must be greater than 0")
         
         super().save(*args, **kwargs)
         

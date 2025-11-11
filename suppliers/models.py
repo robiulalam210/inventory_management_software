@@ -4,6 +4,7 @@ from django.db.models import Sum, Count
 from django.db.models.functions import Coalesce
 from core.models import Company
 from django.conf import settings
+from decimal import Decimal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,13 +13,14 @@ class Supplier(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="suppliers")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
-    supplier_no = models.CharField(max_length=50,  blank=True, null=True)
+    supplier_no = models.CharField(max_length=50, blank=True, null=True)
     name = models.CharField(max_length=255)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
+    # ✅ ADD THESE FIELDS
     total_purchases = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total_paid = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total_due = models.DecimalField(max_digits=15, decimal_places=2, default=0)
@@ -26,7 +28,6 @@ class Supplier(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
 
     class Meta:
         ordering = ['-created_at']
@@ -67,53 +68,51 @@ class Supplier(models.Model):
             return f"SUP-1001"
 
     def update_purchase_totals(self):
-        """Update purchase statistics for this supplier - FIXED VERSION"""
-        from purchases.models import Purchase
-        from decimal import Decimal
-        
+        """Update purchase statistics for this supplier"""
         try:
-            # Get the supplier ID
-            supplier_id = self.id
+            # LAZY IMPORT to avoid circular dependency
+            from purchases.models import Purchase
             
-            # Use direct SQL to avoid any ORM issues
-            from django.db import connection
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT 
-                        COALESCE(SUM(grand_total), 0) as total_purchases,
-                        COALESCE(SUM(paid_amount), 0) as total_paid,
-                        COUNT(*) as purchase_count
-                    FROM purchases_purchase 
-                    WHERE supplier_id = %s
-                """, [supplier_id])
-                
-                result = cursor.fetchone()
-                total_purchases = result[0] if result[0] else Decimal('0.00')
-                total_paid = result[1] if result[1] else Decimal('0.00')
-                purchase_count = result[2] if result[2] else 0
+            logger.info(f"🔄 Supplier.update_purchase_totals called for: {self.name}")
             
+            # Use Django ORM with proper filtering
+            aggregates = Purchase.objects.filter(
+                supplier=self,
+                company=self.company
+            ).aggregate(
+                total_purchases=Sum('grand_total'),
+                total_paid=Sum('paid_amount'),
+                purchase_count=Count('id')
+            )
+            
+            # Handle None values
+            total_purchases = aggregates['total_purchases'] or Decimal('0.00')
+            total_paid = aggregates['total_paid'] or Decimal('0.00')
+            purchase_count = aggregates['purchase_count'] or 0
             total_due = total_purchases - total_paid
             
-            # Update using direct SQL
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    UPDATE suppliers_supplier 
-                    SET total_purchases = %s,
-                        total_paid = %s, 
-                        total_due = %s,
-                        purchase_count = %s
-                    WHERE id = %s
-                """, [total_purchases, total_paid, total_due, purchase_count, supplier_id])
+            logger.info(f"📊 Supplier {self.name}: Purchases={total_purchases}, Paid={total_paid}, Due={total_due}, Count={purchase_count}")
             
-            # Refresh this instance
-            self.refresh_from_db()
+            # Update fields
+            self.total_purchases = total_purchases
+            self.total_paid = total_paid
+            self.total_due = total_due
+            self.purchase_count = purchase_count
             
-            print(f"✅ Supplier {self.name} updated: Due = {self.total_due}")
+            # Save without triggering signals
+            super(Supplier, self).save(update_fields=[
+                'total_purchases', 'total_paid', 'total_due', 'purchase_count'
+            ])
+            
+            logger.info(f"✅ Supplier {self.name} updated successfully")
             return True
             
         except Exception as e:
-            print(f"❌ Error updating supplier {self.name}: {e}")
+            logger.error(f"❌ Error updating supplier {self.name}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
+
     @property
     def status(self):
         return "Active" if self.is_active else "Inactive"

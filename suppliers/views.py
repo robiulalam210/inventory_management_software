@@ -19,7 +19,12 @@ class SupplierViewSet(BaseCompanyViewSet):
     def get_queryset(self):
         """Apply filters and search to the queryset"""
         queryset = super().get_queryset()
-        
+          # Filter by company
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        else:
+            return Customer.objects.none()
         # Get filter parameters
         search = self.request.query_params.get('search')
         status_filter = self.request.query_params.get('status')
@@ -223,7 +228,11 @@ class SupplierNonPaginationViewSet(BaseCompanyViewSet):  # Correct spelling
     def get_queryset(self):
         """Apply filters and search to the queryset"""
         queryset = super().get_queryset()
-        
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        else:
+            return Customer.objects.none()
         # Get filter parameters
         search = self.request.query_params.get('search')
         status_filter = self.request.query_params.get('status')

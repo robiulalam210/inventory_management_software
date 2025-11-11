@@ -132,7 +132,7 @@ class Product(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
 
     name = models.CharField(max_length=255)
-    sku = models.CharField(max_length=120, blank=True, null=True, unique=True)
+    sku = models.CharField(max_length=120, blank=True, null=True, )
 
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, related_name="products")
     unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True)

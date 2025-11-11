@@ -18,7 +18,7 @@ class AccountSerializer(serializers.ModelSerializer):
         model = Account
         fields = [
             'ac_id', 'ac_name', 'ac_type', 'ac_number', 'balance',
-            'bank_name', 'branch', 'opening_balance', 'company', 'status',
+            'bank_name', 'branch', 'opening_balance', 'company', 'status','ac_no',
         ]
 
     def validate(self, data):

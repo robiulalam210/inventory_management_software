@@ -374,14 +374,18 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
     def get_queryset(self):
         """Apply filters to queryset"""
         queryset = super().get_queryset()
-        
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        else:
+            return Customer.objects.none()
         # Get filter parameters
         payment_status = self.request.query_params.get('payment_status')
         supplier_id = self.request.query_params.get('supplier_id')
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         invoice_no = self.request.query_params.get('invoice_no')
-        
+       
         # Apply filters
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
