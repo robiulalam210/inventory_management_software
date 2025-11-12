@@ -68,10 +68,6 @@ class Account(models.Model):
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
-        if is_new and not self.ac_no:
-            last_receipt = Account.objects.filter(company=self.company).order_by("-id").first()
-            new_id = (last_receipt.id + 1) if last_receipt else 1
-            self.ac_no = f"ACC-{1000 + new_id}"
         
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
             self.number = None
@@ -80,6 +76,30 @@ class Account(models.Model):
             
         if is_new and (self.balance is None or self.balance == 0):
             self.balance = self.opening_balance
+        
+        # Generate company-specific AC_NO
+        if is_new and not self.ac_no:
+            # Get the last AC_NO for this company and increment
+            last_account = Account.objects.filter(
+                company=self.company, 
+                ac_no__isnull=False,
+                ac_no__startswith='ACC-'
+            ).order_by('-ac_no').first()
+            
+            if last_account and last_account.ac_no:
+                try:
+                    # Extract the number from AC_NO (e.g., "ACC-1005" -> 1005)
+                    last_number = int(last_account.ac_no.split('-')[1])
+                    new_number = last_number + 1
+                except (ValueError, IndexError):
+                    # If parsing fails, start from 1001
+                    new_number = 1001
+            else:
+                # First account for this company
+                new_number = 1001
+                
+            self.ac_no = f"ACC-{new_number}"
+        
         super().save(*args, **kwargs)
 
     def clean(self):

@@ -20,12 +20,13 @@ class Customer(models.Model):
         
         # Generate client number for new customers if not provided
         if is_new and not self.client_no:
-            last_customer = Customer.objects.filter(company=self.company).order_by("-id").first()
-            if last_customer:
-                new_id = last_customer.id + 1
-            else:
-                new_id = 1
-            self.client_no = f"CU-{1000 + new_id}"
+            # Count existing customers for this company to determine next number
+            existing_count = Customer.objects.filter(
+                company=self.company,
+                client_no__isnull=False
+            ).count()
+            new_number = 1001 + existing_count
+            self.client_no = f"CU-{new_number}"
         
         super().save(*args, **kwargs)
 

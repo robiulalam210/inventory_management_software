@@ -127,13 +127,12 @@ class SaleSerializer(serializers.ModelSerializer):
         with_money_receipt = attrs.get('with_money_receipt', 'No')
         paid_amount = attrs.get('paid_amount', 0)
         
-        # ✅ FIXED: Remove customer requirement for walk-in with money receipt
+        # Remove customer requirement for walk-in with money receipt
         if customer_type == 'walk_in' and with_money_receipt == 'Yes':
             if not paid_amount or paid_amount <= 0:
                 raise serializers.ValidationError({
                     'paid_amount': 'Walk-in customers with money receipt must provide payment amount.'
                 })
-            # REMOVED: Customer requirement since model allows null
         
         # Saved customers always need customer record
         if customer_type == 'saved_customer' and not attrs.get('customer'):
@@ -163,26 +162,18 @@ class SaleSerializer(serializers.ModelSerializer):
                 validated_data['sale_by'] = request.user
                 validated_data['company'] = getattr(request.user, 'company', None)
 
-            # ✅ FIXED: No customer creation - use existing customer or None
+            # Handle customer
             customer = validated_data.get('customer')
             if not customer and customer_type == 'walk_in':
                 customer = self.get_walk_in_customer(
                     validated_data['company'],
                     validated_data.get('customer_name')
                 )
-                # If no customer found, keep it as None
                 validated_data['customer'] = customer
 
-            # Validate payment requirements ONLY (no customer requirement)
-            if customer_type == 'walk_in' and with_money_receipt == 'Yes':
-                if original_paid_amount <= 0:
-                    raise serializers.ValidationError(
-                        "Walk-in customers with money receipt must pay the full amount immediately."
-                    )
-                # ✅ REMOVED: Customer requirement check
-
             with transaction.atomic():
-                validated_data['paid_amount'] = 0
+                # ✅ FIXED: Use the actual paid_amount from request
+                # Don't set it to 0 initially
                 sale = Sale.objects.create(**validated_data)
 
                 # Create SaleItems
@@ -196,18 +187,12 @@ class SaleSerializer(serializers.ModelSerializer):
                         discount_type=item.get('discount_type', 'fixed')
                     )
 
+                # Update totals - this will calculate payable_amount and set payment_status
                 sale.update_totals()
                 
-                if original_paid_amount > 0:
-                    if customer_type == 'walk_in' and original_paid_amount < sale.payable_amount:
-                        raise serializers.ValidationError(
-                            f"Walk-in customers must pay at least the full amount. "
-                            f"Payable: {sale.payable_amount}, Paid: {original_paid_amount}"
-                        )
-                    
-                    sale.paid_amount = original_paid_amount
-                    sale.save(update_fields=['paid_amount'])
-                    sale.update_totals()
+                # ✅ FIXED: REMOVED the strict validation for walk-in customers
+                # Allow partial payments for both walk-in and saved customers
+                # The payment_status will be automatically set to 'partial' in update_totals()
 
                 # Handle account balance and money receipt
                 account = validated_data.get('account')
@@ -217,7 +202,6 @@ class SaleSerializer(serializers.ModelSerializer):
                     
                     if with_money_receipt == 'Yes' and sale.paid_amount > 0:
                         try:
-                            # Money receipt will work even with null customer
                             sale.create_money_receipt()
                         except Exception as e:
                             print(f"Error creating money receipt: {e}")

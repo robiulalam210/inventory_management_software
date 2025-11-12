@@ -6,6 +6,7 @@ from core.models import Company
 from customers.models import Customer
 from django.utils import timezone
 from django.conf import settings
+from decimal import Decimal
 
 class Sale(models.Model):
     SALE_TYPE_CHOICES = [('retail', 'Retail'), ('wholesale', 'Wholesale')]
@@ -22,12 +23,12 @@ class Sale(models.Model):
     sale_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_made')
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)  # ✅ This allows null
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
 
     customer_name = models.CharField(max_length=100, blank=True, null=True)
 
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
-    invoice_no = models.CharField(max_length=20, blank=True, null=True,)
+    invoice_no = models.CharField(max_length=20, blank=True, null=True)
     sale_date = models.DateTimeField(auto_now_add=True)
     
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, default='walk_in')
@@ -84,20 +85,21 @@ class Sale(models.Model):
         if self.customer_type == 'saved_customer' and not self.customer:
             raise ValueError("Saved customer must have a customer record.")
         
-        # ✅ FIXED: Generate invoice number for new sales
+        # Generate invoice number for new sales
         if is_new and not self.invoice_no:
             last_receipt = Sale.objects.filter(company=self.company).order_by("-id").first()
             new_id = (last_receipt.id + 1) if last_receipt else 1
             self.invoice_no = f"SL-{1000 + new_id}"
         
-        # ✅ FIXED: Remove the problematic super().save(update_fields=["invoice_no"])
-        # Just call super().save() once at the end
+        # Save first
         super().save(*args, **kwargs)
         
+        # Update totals after saving
+        self.update_totals()
+        
         # Check if payment was made and create receipt
-        if (not is_new and 
-            self.paid_amount > old_paid_amount and 
-            self.with_money_receipt == 'Yes'):
+        payment_increased = not is_new and self.paid_amount > old_paid_amount
+        if payment_increased and self.with_money_receipt == 'Yes':
             self.create_money_receipt()
 
     def update_totals(self):
@@ -105,28 +107,28 @@ class Sale(models.Model):
         gross = sum([item.subtotal() for item in items])
 
         # Calculate overall discount
-        discount_amount = 0
+        discount_amount = Decimal('0.00')
         if self.overall_discount_type == 'percent':
-            discount_amount = gross * (self.overall_discount / 100)
+            discount_amount = gross * (self.overall_discount / Decimal('100.00'))
         elif self.overall_discount_type == 'fixed':
             discount_amount = self.overall_discount
 
         # Calculate charges on GROSS amount
-        vat_amount = 0
+        vat_amount = Decimal('0.00')
         if self.overall_vat_type == 'percent':
-            vat_amount = gross * (self.overall_vat_amount / 100)
+            vat_amount = gross * (self.overall_vat_amount / Decimal('100.00'))
         elif self.overall_vat_type == 'fixed':
             vat_amount = self.overall_vat_amount
 
-        service_amount = 0
+        service_amount = Decimal('0.00')
         if self.overall_service_type == 'percent':
-            service_amount = gross * (self.overall_service_charge / 100)
+            service_amount = gross * (self.overall_service_charge / Decimal('100.00'))
         elif self.overall_service_type == 'fixed':
             service_amount = self.overall_service_charge
 
-        delivery_amount = 0
+        delivery_amount = Decimal('0.00')
         if self.overall_delivery_type == 'percent':
-            delivery_amount = gross * (self.overall_delivery_charge / 100)
+            delivery_amount = gross * (self.overall_delivery_charge / Decimal('100.00'))
         elif self.overall_delivery_type == 'fixed':
             delivery_amount = self.overall_delivery_charge
 
@@ -141,31 +143,31 @@ class Sale(models.Model):
         self.grand_total = round(grand_total, 2)
         self.payable_amount = round(grand_total, 2)
         
-        # ✅ CALCULATE CHANGE AMOUNT (overpayment)
-        self.change_amount = max(0, self.paid_amount - self.payable_amount)
+        # CALCULATE CHANGE AMOUNT (overpayment)
+        self.change_amount = max(Decimal('0.00'), self.paid_amount - self.payable_amount)
         
         # Calculate due amount (0 if overpaid)
-        self.due_amount = max(0, self.payable_amount - self.paid_amount)
+        self.due_amount = max(Decimal('0.00'), self.payable_amount - self.paid_amount)
         
-        # Update payment status
+        # ✅ FIXED: Update payment status - ALLOW PARTIAL PAYMENTS FOR ALL CUSTOMERS
         if self.paid_amount >= self.payable_amount:
-            self.due_amount = 0
+            self.due_amount = Decimal('0.00')
             self.payment_status = 'paid'
             if self.change_amount > 0:
                 print(f"💵 Change to return: {self.change_amount}")
-        elif self.paid_amount > 0 and self.paid_amount < self.payable_amount:
-            self.payment_status = 'partial'
+        elif self.paid_amount > Decimal('0.00') and self.paid_amount < self.payable_amount:
+            self.payment_status = 'partial'  # This is now allowed for ALL customers
         else:
             self.payment_status = 'pending'
 
         super().save(update_fields=[
             "gross_total", "net_total", "grand_total", 
-            "payable_amount", "paid_amount", "due_amount", 
-            "payment_status", "change_amount"
+            "payable_amount", "due_amount", "change_amount",
+            "payment_status"
         ])
         
         # Auto-create money receipt when payment is made
-        if (self.paid_amount > 0 and 
+        if (self.paid_amount > Decimal('0.00') and 
             self.with_money_receipt == 'Yes' and
             self.payment_status in ['paid', 'partial']):
             self.create_money_receipt()
@@ -190,10 +192,10 @@ class Sale(models.Model):
                     existing_receipt.save()
                 return existing_receipt
             
-            # ✅ FIXED: Allow creation even without customer
+            # Allow creation even without customer
             money_receipt = MoneyReceipt(
                 company=self.company,
-                customer=self.customer,  # This can be None now
+                customer=self.customer,
                 sale=self,
                 amount=self.paid_amount,
                 payment_method=self.payment_method or 'Cash',
@@ -210,19 +212,26 @@ class Sale(models.Model):
         except Exception as e:
             print(f"Error creating money receipt: {e}")
             return None
+
     def clean(self):
+        """Model validation - REMOVED strict walk-in validation"""
         super().clean()
         
-        # Additional validation for walk-in customers
+        # ✅ FIXED: Remove the strict validation for walk-in customers
+        # Allow partial payments for walk-in customers
         if self.customer_type == 'walk_in':
-            if self.due_amount > 0:
+            # Only validate that due_amount is not negative
+            if self.due_amount < 0:
                 raise ValidationError({
-                    'due_amount': 'Walk-in customers cannot have due amount.'
+                    'due_amount': 'Due amount cannot be negative.'
                 })
-            if self.paid_amount < self.payable_amount:
-                raise ValidationError({
-                    'paid_amount': 'Walk-in customers must pay at least the full amount immediately.'
-                })
+            # REMOVED: The strict paid_amount >= payable_amount validation
+        
+        # Keep saved customer validation
+        if self.customer_type == 'saved_customer' and not self.customer:
+            raise ValidationError({
+                'customer': 'Saved customer must have a customer record.'
+            })
 
     def __str__(self):
         return f"{self.invoice_no} - {self.get_customer_display()} - {self.get_customer_type_display()}"
@@ -235,6 +244,29 @@ class Sale(models.Model):
         if self.customer_type == 'walk_in':
             return self.customer_name or "Walk-in Customer"
         return self.customer.name if self.customer else "Unknown Customer"
+
+    def add_payment(self, amount, payment_method=None, account=None):
+        """
+        Add additional payment to existing sale
+        """
+        if amount <= 0:
+            raise ValueError("Payment amount must be greater than 0")
+        
+        self.paid_amount += amount
+        
+        if payment_method:
+            self.payment_method = payment_method
+        if account:
+            self.account = account
+            
+        self.save()
+        
+        # Update account balance
+        if account and amount > 0:
+            account.balance += amount
+            account.save(update_fields=['balance'])
+            
+        return self.paid_amount
 
 
 class SaleItem(models.Model):
