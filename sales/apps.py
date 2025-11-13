@@ -1,3 +1,4 @@
+# sales/apps.py
 from django.apps import AppConfig
 
 class SalesConfig(AppConfig):
@@ -5,5 +6,4 @@ class SalesConfig(AppConfig):
     name = 'sales'
 
     def ready(self):
-        import sales.signals  # Import signals to ensure they are registered    
-        # import sale.signals  # Import signals to ensure they are registered
+        import sales.signals  # Import signals to ensure they are registered

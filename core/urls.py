@@ -22,6 +22,7 @@ from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
 # Remove this import since we're importing functions directly above
 # from . import views
+from transactions.views import TransactionViewSet
 
 router = DefaultRouter()
 
@@ -56,6 +57,8 @@ router.register(r'sales-returns', SalesReturnViewSet, basename='sales-return')
 router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-return')
 router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
 router.register(r'accounts', AccountViewSet, basename='account')
+router.register(r'transactions', TransactionViewSet, basename='transaction')
+
 
 
 urlpatterns = [

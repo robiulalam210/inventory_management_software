@@ -1,18 +1,15 @@
+# accounts/models.py - ONLY Account model should be here
 from django.db import models
 from django.db.models import Q, Max
 from decimal import Decimal
 from core.models import Company
 from django.conf import settings
-from products.models import Product
-from customers.models import Customer
-from suppliers.models import Supplier
 from django.utils import timezone   
 from django.contrib.auth import get_user_model
-from django.db import transaction as db_transaction
+from django.core.exceptions import ValidationError
 import random
 import string
 
-#
 class Account(models.Model):
     TYPE_BANK = 'Bank'
     TYPE_MOBILE = 'Mobile banking'
@@ -112,5 +109,3 @@ class Account(models.Model):
         if self.ac_type == self.TYPE_OTHER and self.pk is None:
             if Account.objects.filter(company=self.company, ac_type=self.TYPE_OTHER).exists():
                 raise ValidationError("An Other account already exists for this company.")
-
-

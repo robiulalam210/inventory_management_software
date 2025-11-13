@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from core.utils import custom_response
 from .models import Expense, ExpenseHead, ExpenseSubHead
-from .serializers import ExpenseSerializer, ExpenseHeadSerializer, ExpenseSubHeadSerializer
+from .serializers import ExpenseSerializer, ExpenseHeadSerializer, ExpenseSubHeadSerializer, ExpenseCreateSerializer, ExpenseUpdateSerializer   
 from core.pagination import CustomPageNumberPagination
 from django.db.models import Q 
 
@@ -215,6 +215,7 @@ class ExpenseSubHeadDetailView(APIView):
 # Expense
 # ------------------------------
 
+
 class ExpenseListView(APIView):
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPageNumberPagination
@@ -285,7 +286,6 @@ class ExpenseListView(APIView):
             order_by_field = '-date_created'
             
             if sort_by:
-                # Remove any prefix dashes and validate the field
                 clean_sort_by = sort_by.lstrip('-')
                 if clean_sort_by in valid_sort_fields:
                     if sort_order.lower() == 'desc':
@@ -293,7 +293,6 @@ class ExpenseListView(APIView):
                     else:
                         order_by_field = clean_sort_by
                 else:
-                    # If invalid field provided, use default
                     order_by_field = '-date_created'
 
             expenses = expenses.order_by(order_by_field)
@@ -302,7 +301,6 @@ class ExpenseListView(APIView):
             paginator = self.pagination_class()
             paginator.page_size = page_size
             
-            # Ensure page is within valid range
             try:
                 page_number = int(page)
                 if page_number < 1:
@@ -321,7 +319,7 @@ class ExpenseListView(APIView):
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
-        """Handle expense creation"""
+        """Handle expense creation - FIXED: Use ExpenseCreateSerializer"""
         try:
             company = getattr(request.user, 'company', None)
             if not company:
@@ -351,10 +349,13 @@ class ExpenseListView(APIView):
                 if not account_exists:
                     return custom_response(False, "Account not found.", None, status.HTTP_400_BAD_REQUEST)
             
-            serializer = ExpenseSerializer(data=data)
+            # Use ExpenseCreateSerializer for POST
+            serializer = ExpenseCreateSerializer(data=data, context={'request': request})
             if serializer.is_valid():
-                expense = serializer.save(created_by=request.user)
-                return custom_response(True, "Expense created successfully.", ExpenseSerializer(expense).data, status.HTTP_201_CREATED)
+                expense = serializer.save()
+                # Return the full expense data using ExpenseSerializer
+                response_serializer = ExpenseSerializer(expense)
+                return custom_response(True, "Expense created successfully.", response_serializer.data, status.HTTP_201_CREATED)
             
             return custom_response(False, "Validation Error.", serializer.errors, status.HTTP_400_BAD_REQUEST)
             
@@ -400,12 +401,16 @@ class ExpenseDetailView(APIView):
                 if not subhead_exists:
                     return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
 
-            serializer = ExpenseSerializer(expense, data=request.data, partial=True)
+            # Use ExpenseUpdateSerializer for PATCH
+            serializer = ExpenseUpdateSerializer(expense, data=request.data, partial=True, context={'request': request})
             if serializer.is_valid():
-                serializer.save()
-                return custom_response(True, "Expense updated successfully.", serializer.data, status.HTTP_200_OK)
+                updated_expense = serializer.save()
+                # Return the full updated expense data
+                response_serializer = ExpenseSerializer(updated_expense)
+                return custom_response(True, "Expense updated successfully.", response_serializer.data, status.HTTP_200_OK)
             return custom_response(False, "Validation Error.", serializer.errors, status.HTTP_400_BAD_REQUEST)
         except Exception as e:
+            logger.error(f"Error in ExpenseDetailView PATCH: {str(e)}", exc_info=True)
             return custom_response(False, f"Update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk):
@@ -414,7 +419,13 @@ class ExpenseDetailView(APIView):
             expense = Expense.objects.filter(pk=pk, company=company).first()
             if not expense:
                 return custom_response(False, "Expense not found.", None, status.HTTP_404_NOT_FOUND)
+            
+            # Store expense info for logging before deletion
+            expense_info = f"{expense.invoice_number} - {expense.amount}"
             expense.delete()
+            
+            logger.info(f"Expense deleted: {expense_info}")
             return custom_response(True, "Expense deleted successfully.", None, status.HTTP_204_NO_CONTENT)
         except Exception as e:
+            logger.error(f"Error in ExpenseDetailView DELETE: {str(e)}", exc_info=True)
             return custom_response(False, f"Delete failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)

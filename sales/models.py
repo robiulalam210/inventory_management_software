@@ -7,6 +7,9 @@ from customers.models import Customer
 from django.utils import timezone
 from django.conf import settings
 from decimal import Decimal
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Sale(models.Model):
     SALE_TYPE_CHOICES = [('retail', 'Retail'), ('wholesale', 'Wholesale')]
@@ -59,6 +62,14 @@ class Sale(models.Model):
     payment_method = models.CharField(max_length=100, blank=True, null=True)
     account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='sales')
 
+    class Meta:
+        ordering = ['-sale_date', '-id']
+        indexes = [
+            models.Index(fields=['company', 'sale_date']),
+            models.Index(fields=['customer', 'sale_date']),
+            models.Index(fields=['invoice_no']),
+        ]
+
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         old_paid_amount = 0
@@ -67,6 +78,8 @@ class Sale(models.Model):
             try:
                 old_instance = Sale.objects.get(pk=self.pk)
                 old_paid_amount = old_instance.paid_amount
+                # Store old values for signal processing
+                self._old_paid_amount = old_paid_amount
             except Sale.DoesNotExist:
                 pass
         
@@ -83,15 +96,13 @@ class Sale(models.Model):
         
         # For saved customers, ensure customer is set
         if self.customer_type == 'saved_customer' and not self.customer:
-            raise ValueError("Saved customer must have a customer record.")
+            raise ValidationError("Saved customer must have a customer record.")
         
         # Generate invoice number for new sales
         if is_new and not self.invoice_no:
-            last_receipt = Sale.objects.filter(company=self.company).order_by("-id").first()
-            new_id = (last_receipt.id + 1) if last_receipt else 1
-            self.invoice_no = f"SL-{1000 + new_id}"
+            self.invoice_no = self._generate_invoice_no()
         
-        # Save first
+        # Save first to get PK for related objects
         super().save(*args, **kwargs)
         
         # Update totals after saving
@@ -102,81 +113,94 @@ class Sale(models.Model):
         if payment_increased and self.with_money_receipt == 'Yes':
             self.create_money_receipt()
 
+    def _generate_invoice_no(self):
+        """Generate unique invoice number"""
+        if not self.company:
+            return None
+            
+        last_sale = Sale.objects.filter(company=self.company).order_by("-id").first()
+        new_id = (last_sale.id + 1) if last_sale else 1
+        return f"SL-{1000 + new_id}"
+
     def update_totals(self):
-        items = self.items.all()
-        gross = sum([item.subtotal() for item in items])
+        """Update all calculated totals for the sale"""
+        try:
+            items = self.items.all()
+            gross = sum([item.subtotal() for item in items]) if items.exists() else Decimal('0.00')
 
-        # Calculate overall discount
-        discount_amount = Decimal('0.00')
-        if self.overall_discount_type == 'percent':
-            discount_amount = gross * (self.overall_discount / Decimal('100.00'))
-        elif self.overall_discount_type == 'fixed':
-            discount_amount = self.overall_discount
+            # Calculate overall discount
+            discount_amount = Decimal('0.00')
+            if self.overall_discount_type == 'percent' and self.overall_discount:
+                discount_amount = gross * (self.overall_discount / Decimal('100.00'))
+            elif self.overall_discount_type == 'fixed' and self.overall_discount:
+                discount_amount = self.overall_discount
 
-        # Calculate charges on GROSS amount
-        vat_amount = Decimal('0.00')
-        if self.overall_vat_type == 'percent':
-            vat_amount = gross * (self.overall_vat_amount / Decimal('100.00'))
-        elif self.overall_vat_type == 'fixed':
-            vat_amount = self.overall_vat_amount
+            # Calculate charges on GROSS amount
+            vat_amount = Decimal('0.00')
+            if self.overall_vat_type == 'percent' and self.overall_vat_amount:
+                vat_amount = gross * (self.overall_vat_amount / Decimal('100.00'))
+            elif self.overall_vat_type == 'fixed' and self.overall_vat_amount:
+                vat_amount = self.overall_vat_amount
 
-        service_amount = Decimal('0.00')
-        if self.overall_service_type == 'percent':
-            service_amount = gross * (self.overall_service_charge / Decimal('100.00'))
-        elif self.overall_service_type == 'fixed':
-            service_amount = self.overall_service_charge
+            service_amount = Decimal('0.00')
+            if self.overall_service_type == 'percent' and self.overall_service_charge:
+                service_amount = gross * (self.overall_service_charge / Decimal('100.00'))
+            elif self.overall_service_type == 'fixed' and self.overall_service_charge:
+                service_amount = self.overall_service_charge
 
-        delivery_amount = Decimal('0.00')
-        if self.overall_delivery_type == 'percent':
-            delivery_amount = gross * (self.overall_delivery_charge / Decimal('100.00'))
-        elif self.overall_delivery_type == 'fixed':
-            delivery_amount = self.overall_delivery_charge
+            delivery_amount = Decimal('0.00')
+            if self.overall_delivery_type == 'percent' and self.overall_delivery_charge:
+                delivery_amount = gross * (self.overall_delivery_charge / Decimal('100.00'))
+            elif self.overall_delivery_type == 'fixed' and self.overall_delivery_charge:
+                delivery_amount = self.overall_delivery_charge
 
-        # Calculate NET TOTAL (without delivery charge)
-        net_total = gross - discount_amount + vat_amount + service_amount
-        
-        # Calculate GRAND TOTAL (net total + delivery charge)
-        grand_total = net_total + delivery_amount
+            # Calculate NET TOTAL (without delivery charge)
+            net_total = gross - discount_amount + vat_amount + service_amount
+            
+            # Calculate GRAND TOTAL (net total + delivery charge)
+            grand_total = net_total + delivery_amount
 
-        self.gross_total = round(gross, 2)
-        self.net_total = round(net_total, 2)
-        self.grand_total = round(grand_total, 2)
-        self.payable_amount = round(grand_total, 2)
-        
-        # CALCULATE CHANGE AMOUNT (overpayment)
-        self.change_amount = max(Decimal('0.00'), self.paid_amount - self.payable_amount)
-        
-        # Calculate due amount (0 if overpaid)
-        self.due_amount = max(Decimal('0.00'), self.payable_amount - self.paid_amount)
-        
-        # ✅ FIXED: Update payment status - ALLOW PARTIAL PAYMENTS FOR ALL CUSTOMERS
+            # Update fields
+            self.gross_total = round(gross, 2)
+            self.net_total = round(net_total, 2)
+            self.grand_total = round(grand_total, 2)
+            self.payable_amount = round(grand_total, 2)
+            
+            # CALCULATE CHANGE AMOUNT (overpayment)
+            self.change_amount = max(Decimal('0.00'), self.paid_amount - self.payable_amount)
+            
+            # Calculate due amount (0 if overpaid)
+            self.due_amount = max(Decimal('0.00'), self.payable_amount - self.paid_amount)
+            
+            # Update payment status
+            self._update_payment_status()
+
+            # Save the updated totals
+            super().save(update_fields=[
+                "gross_total", "net_total", "grand_total", 
+                "payable_amount", "due_amount", "change_amount",
+                "payment_status"
+            ])
+            
+        except Exception as e:
+            logger.error(f"Error updating totals for sale {self.invoice_no}: {str(e)}")
+
+    def _update_payment_status(self):
+        """Update payment status based on current amounts"""
         if self.paid_amount >= self.payable_amount:
             self.due_amount = Decimal('0.00')
             self.payment_status = 'paid'
             if self.change_amount > 0:
-                print(f"💵 Change to return: {self.change_amount}")
+                logger.info(f"Change to return: {self.change_amount} for sale {self.invoice_no}")
         elif self.paid_amount > Decimal('0.00') and self.paid_amount < self.payable_amount:
-            self.payment_status = 'partial'  # This is now allowed for ALL customers
+            self.payment_status = 'partial'
         else:
             self.payment_status = 'pending'
-
-        super().save(update_fields=[
-            "gross_total", "net_total", "grand_total", 
-            "payable_amount", "due_amount", "change_amount",
-            "payment_status"
-        ])
-        
-        # Auto-create money receipt when payment is made
-        if (self.paid_amount > Decimal('0.00') and 
-            self.with_money_receipt == 'Yes' and
-            self.payment_status in ['paid', 'partial']):
-            self.create_money_receipt()
 
     def create_money_receipt(self):
         """
         Automatically create money receipt when payment is made
         """
-        # Don't create receipt if no payment
         if self.paid_amount <= 0:
             return None
         
@@ -192,7 +216,7 @@ class Sale(models.Model):
                     existing_receipt.save()
                 return existing_receipt
             
-            # Allow creation even without customer
+            # Create new money receipt
             money_receipt = MoneyReceipt(
                 company=self.company,
                 customer=self.customer,
@@ -205,32 +229,37 @@ class Sale(models.Model):
                 account=self.account
             )
             
+            # Mark as auto-created to avoid recursion
+            setattr(money_receipt, '_auto_created', True)
             money_receipt.save()
-            print(f"Money receipt created automatically: {money_receipt.mr_no} for {self.invoice_no}")
+            
+            logger.info(f"Money receipt created automatically: {money_receipt.mr_no} for {self.invoice_no}")
             return money_receipt
             
         except Exception as e:
-            print(f"Error creating money receipt: {e}")
+            logger.error(f"Error creating money receipt for sale {self.invoice_no}: {e}")
             return None
 
     def clean(self):
-        """Model validation - REMOVED strict walk-in validation"""
+        """Model validation"""
         super().clean()
         
-        # ✅ FIXED: Remove the strict validation for walk-in customers
-        # Allow partial payments for walk-in customers
-        if self.customer_type == 'walk_in':
-            # Only validate that due_amount is not negative
-            if self.due_amount < 0:
-                raise ValidationError({
-                    'due_amount': 'Due amount cannot be negative.'
-                })
-            # REMOVED: The strict paid_amount >= payable_amount validation
+        # Validate that due_amount is not negative
+        if self.due_amount < 0:
+            raise ValidationError({
+                'due_amount': 'Due amount cannot be negative.'
+            })
         
-        # Keep saved customer validation
+        # Validate saved customer has customer record
         if self.customer_type == 'saved_customer' and not self.customer:
             raise ValidationError({
                 'customer': 'Saved customer must have a customer record.'
+            })
+        
+        # Validate payment method when payment is made
+        if self.paid_amount > 0 and not self.payment_method:
+            raise ValidationError({
+                'payment_method': 'Payment method is required when payment is made.'
             })
 
     def __str__(self):
@@ -252,21 +281,48 @@ class Sale(models.Model):
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         
-        self.paid_amount += amount
-        
         if payment_method:
             self.payment_method = payment_method
         if account:
             self.account = account
             
+        self.paid_amount += amount
         self.save()
         
-        # Update account balance
-        if account and amount > 0:
-            account.balance += amount
-            account.save(update_fields=['balance'])
-            
         return self.paid_amount
+
+    def get_payment_summary(self):
+        """Get payment summary for the sale"""
+        return {
+            'invoice_no': self.invoice_no,
+            'grand_total': float(self.grand_total),
+            'paid_amount': float(self.paid_amount),
+            'due_amount': float(self.due_amount),
+            'change_amount': float(self.change_amount),
+            'payment_status': self.payment_status,
+            'payment_method': self.payment_method,
+        }
+
+    def can_add_payment(self):
+        """Check if additional payment can be added"""
+        return self.due_amount > 0 and self.payment_status in ['pending', 'partial']
+
+    @classmethod
+    def get_sales_summary(cls, company, start_date=None, end_date=None):
+        """Get sales summary for a company"""
+        queryset = cls.objects.filter(company=company)
+        
+        if start_date:
+            queryset = queryset.filter(sale_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(sale_date__lte=end_date)
+            
+        return queryset.aggregate(
+            total_sales=models.Count('id'),
+            total_amount=models.Sum('grand_total'),
+            total_paid=models.Sum('paid_amount'),
+            total_due=models.Sum('due_amount')
+        )
 
 
 class SaleItem(models.Model):
@@ -277,38 +333,61 @@ class SaleItem(models.Model):
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percent','Percent')), null=True, blank=True)
 
+    class Meta:
+        ordering = ['id']
+
     def subtotal(self):
+        """Calculate subtotal for this item"""
         total = self.unit_price * self.quantity
         
         if self.discount_type == 'percent' and self.discount:
-            total -= total * (self.discount / 100)
+            total -= total * (self.discount / Decimal('100.00'))
         elif self.discount_type == 'fixed' and self.discount:
             total -= self.discount
             
-        return round(total, 2)
+        return round(max(total, Decimal('0.00')), 2)
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         
+        # Validate stock for new items
         if is_new:
             if self.quantity > self.product.stock_qty:
-                raise ValueError(f"Not enough stock for {self.product.name}. Available: {self.product.stock_qty}")
+                raise ValidationError(
+                    f"Not enough stock for {self.product.name}. Available: {self.product.stock_qty}, Requested: {self.quantity}"
+                )
         
         super().save(*args, **kwargs)
 
+        # Update product stock for new items
         if is_new:
             self.product.stock_qty -= self.quantity
             self.product.save(update_fields=['stock_qty'])
         
+        # Update sale totals
         self.sale.update_totals()
 
     def delete(self, *args, **kwargs):
+        # Restore product stock
         self.product.stock_qty += self.quantity
         self.product.save(update_fields=['stock_qty'])
         
         sale = self.sale
         super().delete(*args, **kwargs)
+        
+        # Update sale totals after deletion
         sale.update_totals()
 
     def __str__(self):
-        return f"{self.product.name} x {self.quantity}"
+        return f"{self.product.name} x {self.quantity} - {self.subtotal()}"
+
+    def get_item_summary(self):
+        """Get item summary"""
+        return {
+            'product': self.product.name,
+            'quantity': self.quantity,
+            'unit_price': float(self.unit_price),
+            'discount': float(self.discount),
+            'discount_type': self.discount_type,
+            'subtotal': float(self.subtotal())
+        }
