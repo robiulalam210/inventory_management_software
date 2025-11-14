@@ -1,5 +1,6 @@
 # transactions/models.py
-from django.db import models
+
+from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
@@ -8,6 +9,7 @@ from accounts.models import Account
 from django.conf import settings
 import random
 import string
+
 
 class Transaction(models.Model):
     TRANSACTION_TYPES = [
@@ -30,44 +32,42 @@ class Transaction(models.Model):
         ('cancelled', 'Cancelled'),
     ]
 
-    # Basic Information
+    # Basic Info
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
     transaction_no = models.CharField(max_length=50, unique=True, blank=True)
     transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
-    
-    # Account Information
+
+    # Account
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='transactions')
-    
-    # Payment Information
+
+    # Payment
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS, default='cash')
     cheque_no = models.CharField(max_length=100, blank=True, null=True)
     reference_no = models.CharField(max_length=100, blank=True, null=True)
-    
+
     # Dates
     transaction_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    # Status
+
+    # Flags
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='completed')
+
+    # Links
     money_receipt = models.ForeignKey(
-        'money_receipts.MoneyReceipt', 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True, 
-        related_name='transactions'  # This creates Transaction.objects.filter(money_receipt=...)
+        'money_receipts.MoneyReceipt', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='transactions'
     )
-    # Relationships - Use string references
     sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
     expense = models.ForeignKey('expenses.Expense', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
     purchase = models.ForeignKey('purchases.Purchase', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
-    supplier_payment = models.ForeignKey('supplier_payment.SupplierPayment', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
-    
-    # Additional Info
+    supplier_payment = models.ForeignKey('supplier_payment.SupplierPayment', null=True, blank=True, on_delete=models.SET_NULL, related_name='transactions')
+
+    # Extra
     description = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
-    
+
     class Meta:
         ordering = ['-transaction_date', '-id']
         indexes = [
@@ -75,119 +75,133 @@ class Transaction(models.Model):
             models.Index(fields=['account', 'transaction_date']),
             models.Index(fields=['transaction_no']),
         ]
-    
+
     def __str__(self):
         return f"{self.transaction_no} - {self.transaction_type} - {self.amount}"
-    
+
+    # ------------------------------------------------------------------------------
+    # SAVE WITH FULL ATOMIC SAFETY
+    # ------------------------------------------------------------------------------
     def save(self, *args, **kwargs):
         is_new = self.pk is None
-        
-        # Generate transaction number
+
+        # Generate code
         if is_new and not self.transaction_no:
             self.transaction_no = self.generate_transaction_no()
-        
+
         # Validate amount
         if self.amount <= 0:
             raise ValidationError("Transaction amount must be greater than 0")
-        
-        # Save transaction first
-        super().save(*args, **kwargs)
-        
-        # Update account balance only for completed transactions
-        if self.status == 'completed' and is_new:
-            self.update_account_balance()
-    
-    def generate_transaction_no(self):
-        """Generate unique transaction number: TXN-YYYYMMDD-XXXXXX"""
-        date_str = timezone.now().strftime('%Y%m%d')
-        random_str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        
-        base_no = f"TXN-{date_str}-{random_str}"
-        transaction_no = base_no
-        
-        # Ensure uniqueness
-        counter = 1
-        while Transaction.objects.filter(transaction_no=transaction_no).exists():
-            transaction_no = f"{base_no}-{counter}"
-            counter += 1
-        
-        return transaction_no
-    
-    def update_account_balance(self):
-        """Update account balance based on transaction type"""
+
+        # FULL ATOMIC BLOCK
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+
+            # Update balance ONLY for NEW + completed
+            if is_new and self.status == 'completed':
+                self.apply_balance_effect()
+
+    # ------------------------------------------------------------------------------
+    # UPDATE ACCOUNT BALANCE
+    # ------------------------------------------------------------------------------
+    def apply_balance_effect(self):
+        account = self.account
+
         if self.transaction_type == 'debit':
-            self.account.balance -= self.amount
+            if self.amount > account.balance:
+                raise ValidationError("Insufficient balance for debit transaction")
+            account.balance -= self.amount
+
         elif self.transaction_type == 'credit':
-            self.account.balance += self.amount
-        
-        self.account.save(update_fields=['balance'])
-    
+            account.balance += self.amount
+
+        account.save(update_fields=['balance'])
+
+    # ------------------------------------------------------------------------------
+    # UNIQUE TRANSACTION NO
+    # ------------------------------------------------------------------------------
+    def generate_transaction_no(self):
+        date = timezone.now().strftime('%Y%m%d')
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        base = f"TXN-{date}-{random_part}"
+        tx_no = base
+        count = 1
+
+        while Transaction.objects.filter(transaction_no=tx_no).exists():
+            tx_no = f"{base}-{count}"
+            count += 1
+
+        return tx_no
+
+    # ------------------------------------------------------------------------------
+    # REVERSE TRANSACTION (Atomic + Safe)
+    # ------------------------------------------------------------------------------
     def reverse_transaction(self):
-        """Reverse this transaction and create a reversal transaction"""
         if self.status != 'completed':
             raise ValidationError("Only completed transactions can be reversed")
-        
-        # Create reversal transaction
-        reversal = Transaction(
-            company=self.company,
-            transaction_type='credit' if self.transaction_type == 'debit' else 'debit',
-            amount=self.amount,
-            account=self.account,
-            payment_method=self.payment_method,
-            description=f"Reversal of {self.transaction_no}",
-            created_by=self.created_by,
-            status='completed'
-        )
-        reversal.save()
-        
-        # Mark original as cancelled
-        self.status = 'cancelled'
-        self.save(update_fields=['status'])
-        
-        return reversal
-    
+
+        with transaction.atomic():
+
+            reverse_type = 'credit' if self.transaction_type == 'debit' else 'debit'
+
+            reversal = Transaction.objects.create(
+                company=self.company,
+                transaction_type=reverse_type,
+                amount=self.amount,
+                account=self.account,
+                payment_method=self.payment_method,
+                description=f"Reversal of {self.transaction_no}",
+                created_by=self.created_by,
+                status='completed'
+            )
+
+            self.status = 'cancelled'
+            self.save(update_fields=['status'])
+
+            return reversal
+
+    # ------------------------------------------------------------------------------
+    # VALIDATION
+    # ------------------------------------------------------------------------------
     def clean(self):
-        """Additional validation"""
-        if self.transaction_type not in ['debit', 'credit']:
-            raise ValidationError("Transaction type must be either debit or credit")
-        
-        # Ensure account belongs to the same company
         if self.account.company != self.company:
             raise ValidationError("Account must belong to the same company")
-        
-        # Check for sufficient balance for debit transactions
-        if (self.transaction_type == 'debit' and 
-            self.status == 'completed' and 
-            self.amount > self.account.balance):
-            raise ValidationError("Insufficient account balance for debit transaction")
+
+        if self.transaction_type == 'debit' and self.status == 'completed':
+            if self.amount > self.account.balance:
+                raise ValidationError("Insufficient balance for debit transaction")
 
     @property
-    def is_debit(self):
-        return self.transaction_type == 'debit'
-    
+    def is_debit(self): return self.transaction_type == 'debit'
+
     @property
-    def is_credit(self):
-        return self.transaction_type == 'credit'
-    
+    def is_credit(self): return self.transaction_type == 'credit'
+
+    # ------------------------------------------------------------------------------
+    # HELPER METHOD FOR CREATING TRANSACTIONS
+    # ------------------------------------------------------------------------------
     @classmethod
-    def create_transaction(cls, company, transaction_type, amount, account, 
-                         payment_method='cash', description='', created_by=None,
-                         sale=None, money_receipt=None, expense=None, 
-                         purchase=None, supplier_payment=None):
-        """Helper method to create transactions"""
-        transaction = cls(
-            company=company,
-            transaction_type=transaction_type,
-            amount=amount,
-            account=account,
-            payment_method=payment_method,
-            description=description,
-            created_by=created_by,
-            sale=sale,
-            money_receipt=money_receipt,
-            expense=expense,
-            purchase=purchase,
-            supplier_payment=supplier_payment
-        )
-        transaction.save()
-        return transaction
+    def create_transaction(cls, company, transaction_type, amount, account,
+                           payment_method='cash', description='', created_by=None,
+                           sale=None, money_receipt=None, expense=None,
+                           purchase=None, supplier_payment=None):
+
+        with transaction.atomic():
+            trx = cls(
+                company=company,
+                transaction_type=transaction_type,
+                amount=amount,
+                account=account,
+                payment_method=payment_method,
+                description=description,
+                created_by=created_by,
+                sale=sale,
+                money_receipt=money_receipt,
+                expense=expense,
+                purchase=purchase,
+                supplier_payment=supplier_payment,
+                status='completed'
+            )
+            trx.save()
+
+        return trx
