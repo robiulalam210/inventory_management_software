@@ -256,8 +256,47 @@ class Purchase(models.Model):
             account.balance -= amount  # Decrease balance for purchase payment
             account.save(update_fields=['balance'])
             
+        # Create transaction for the payment
+        self.create_payment_transaction(amount, payment_method, account)
+            
         logger.info(f"✅ Payment of {amount} applied to purchase {self.invoice_no}")
         return True
+
+    def create_payment_transaction(self, amount, payment_method=None, account=None):
+        """
+        Create a transaction record for purchase payment
+        Purchase payments are DEBIT transactions (money going out)
+        """
+        # Don't create transaction if no account
+        if not account:
+            logger.warning("No account specified for purchase payment transaction")
+            return None
+
+        try:
+            from transactions.models import Transaction
+            
+            # Create DEBIT transaction (purchase payment decreases account balance)
+            transaction = Transaction.objects.create(
+                company=self.company,
+                transaction_type='debit',  # FIXED: Changed from 'Debit' to 'debit' for consistency
+                amount=amount,
+                account=account,
+                payment_method=payment_method or self.payment_method,
+                description=f"Purchase Payment - {self.invoice_no} - {self.supplier.name}",
+                purchase=self,  # Link to purchase
+                created_by=self.created_by,
+                status='completed'
+            )
+            
+            logger.info(f"✅ Debit transaction created for purchase payment: {transaction.transaction_no}")
+            return transaction
+            
+        except ImportError as e:
+            logger.error(f"Failed to import Transaction model: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating transaction for purchase payment: {e}")
+            return None
 
     def apply_supplier_payment(self, amount):
         """
@@ -422,8 +461,8 @@ class PurchaseItem(models.Model):
                 stock_change = self.qty - old_qty
                 product.stock_qty += stock_change
             
-            # ✅ FIXED: Use 'updated_at' instead of 'date_updated' for Product model
-            product.save(update_fields=['stock_qty', 'updated_at'])
+            # ✅ FIXED: Save product properly
+            product.save()
             
             # Update purchase totals
             logger.info(f"🔄 PurchaseItem.save: Calling update_totals for purchase ID: {self.purchase.id}")
@@ -431,12 +470,6 @@ class PurchaseItem(models.Model):
             
         except Exception as e:
             logger.error(f"❌ Error in PurchaseItem.save: {str(e)}")
-            # If there's still an error, try saving without update_fields
-            try:
-                self.product.save()
-                logger.info("✅ Product saved without update_fields as fallback")
-            except Exception as final_error:
-                logger.error(f"❌ Final error saving product: {final_error}")
             raise
 
     def delete(self, *args, **kwargs):
@@ -448,8 +481,8 @@ class PurchaseItem(models.Model):
             # Decrease stock when item is deleted
             self.product.stock_qty -= self.qty
             
-            # ✅ FIXED: Use 'updated_at' instead of 'date_updated' for Product model
-            self.product.save(update_fields=['stock_qty', 'updated_at'])
+            # ✅ FIXED: Save product properly
+            self.product.save()
             
             super().delete(*args, **kwargs)
             
@@ -458,12 +491,6 @@ class PurchaseItem(models.Model):
             
         except Exception as e:
             logger.error(f"❌ Error in PurchaseItem.delete: {str(e)}")
-            # If there's still an error, try saving without update_fields
-            try:
-                self.product.save()
-                logger.info("✅ Product saved without update_fields as fallback in delete")
-            except Exception as final_error:
-                logger.error(f"❌ Final error saving product in delete: {final_error}")
             raise
 
     def get_item_summary(self):

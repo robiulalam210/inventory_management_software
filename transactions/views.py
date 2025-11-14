@@ -1,6 +1,4 @@
 from django.shortcuts import render
-
-# Create your views here.
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -30,11 +28,17 @@ class TransactionViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        initial_count = queryset.count()
+        logger.info(f"🔍 Initial transaction count: {initial_count}")
+        
         company_id = self.request.query_params.get('company_id')
         
         # Filter by company if provided
         if company_id:
+            before_company_count = queryset.count()
             queryset = queryset.filter(company_id=company_id)
+            after_company_count = queryset.count()
+            logger.info(f"🔍 After company filter ({company_id}): {before_company_count} -> {after_company_count}")
         
         # Filter by date range
         start_date = self.request.query_params.get('start_date')
@@ -44,41 +48,69 @@ class TransactionViewSet(viewsets.ModelViewSet):
             try:
                 start_date = datetime.strptime(start_date, '%Y-%m-%d')
                 end_date = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+                before_date_count = queryset.count()
                 queryset = queryset.filter(transaction_date__range=[start_date, end_date])
+                after_date_count = queryset.count()
+                logger.info(f"🔍 After date range filter: {before_date_count} -> {after_date_count}")
             except ValueError:
                 pass
         elif start_date:
             try:
                 start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                before_date_count = queryset.count()
                 queryset = queryset.filter(transaction_date__gte=start_date)
+                after_date_count = queryset.count()
+                logger.info(f"🔍 After start date filter: {before_date_count} -> {after_date_count}")
             except ValueError:
                 pass
         elif end_date:
             try:
                 end_date = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+                before_date_count = queryset.count()
                 queryset = queryset.filter(transaction_date__lte=end_date)
+                after_date_count = queryset.count()
+                logger.info(f"🔍 After end date filter: {before_date_count} -> {after_date_count}")
             except ValueError:
                 pass
         
         # Filter by account
         account_id = self.request.query_params.get('account_id')
         if account_id:
+            before_account_count = queryset.count()
             queryset = queryset.filter(account_id=account_id)
+            after_account_count = queryset.count()
+            logger.info(f"🔍 After account filter ({account_id}): {before_account_count} -> {after_account_count}")
         
         # Filter by transaction type
         transaction_type = self.request.query_params.get('transaction_type')
         if transaction_type:
+            before_type_count = queryset.count()
             queryset = queryset.filter(transaction_type=transaction_type)
+            after_type_count = queryset.count()
+            logger.info(f"🔍 After transaction type filter ({transaction_type}): {before_type_count} -> {after_type_count}")
         
         # Filter by status
         status_filter = self.request.query_params.get('status')
         if status_filter:
+            before_status_count = queryset.count()
             queryset = queryset.filter(status=status_filter)
+            after_status_count = queryset.count()
+            logger.info(f"🔍 After status filter ({status_filter}): {before_status_count} -> {after_status_count}")
         
-        return queryset.select_related(
-            'account', 'created_by', 'sale', 'money_receipt', 
-            'expense', 'purchase', 'supplier_payment', 'company'
-        )
+        final_count = queryset.count()
+        logger.info(f"🔍 Final transaction count: {final_count}")
+        logger.info(f"🔍 Missing transactions: {initial_count - final_count}")
+        
+        # Use select_related but don't let it filter out transactions
+        try:
+            queryset = queryset.select_related(
+                'account', 'created_by', 'sale', 'money_receipt', 
+                'expense', 'purchase', 'supplier_payment', 'company'
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Select related failed: {e}, using basic queryset")
+        
+        return queryset
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -106,6 +138,61 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
+    
+    @action(detail=False, methods=['get'])
+    def debug_missing(self, request):
+        """Debug endpoint to find missing transactions"""
+        # Get all transaction IDs from database
+        all_transactions = Transaction.objects.all()
+        all_ids = set(all_transactions.values_list('id', flat=True))
+        
+        # Get filtered transaction IDs
+        filtered_queryset = self.get_queryset()
+        filtered_ids = set(filtered_queryset.values_list('id', flat=True))
+        
+        # Find missing IDs
+        missing_ids = all_ids - filtered_ids
+        
+        # Get details of missing transactions
+        missing_transactions = all_transactions.filter(id__in=missing_ids).values(
+            'id', 'transaction_no', 'company_id', 'status', 
+            'transaction_type', 'transaction_date', 'amount'
+        )
+        
+        # Get query parameters
+        query_params = {
+            'company_id': request.query_params.get('company_id'),
+            'start_date': request.query_params.get('start_date'),
+            'end_date': request.query_params.get('end_date'),
+            'account_id': request.query_params.get('account_id'),
+            'transaction_type': request.query_params.get('transaction_type'),
+            'status': request.query_params.get('status'),
+        }
+        
+        return Response({
+            'database_total': all_transactions.count(),
+            'api_total': filtered_queryset.count(),
+            'missing_count': len(missing_ids),
+            'query_parameters': query_params,
+            'missing_transactions': list(missing_transactions),
+            'breakdown': {
+                'by_company': list(all_transactions.values('company_id').annotate(count=Count('id'))),
+                'by_status': list(all_transactions.values('status').annotate(count=Count('id'))),
+                'by_type': list(all_transactions.values('transaction_type').annotate(count=Count('id'))),
+            }
+        })
+    
+    @action(detail=False, methods=['get'])
+    def unfiltered(self, request):
+        """Get all transactions without any filters"""
+        transactions = Transaction.objects.all().select_related(
+            'account', 'created_by', 'company'
+        )
+        serializer = self.get_serializer(transactions, many=True)
+        return Response({
+            'total_count': transactions.count(),
+            'transactions': serializer.data
+        })
     
     @action(detail=False, methods=['get'])
     def account_balances(self, request):

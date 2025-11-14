@@ -152,9 +152,16 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'name', 'category', 'unit', 'brand', 'group', 'source',
             'purchase_price', 'selling_price', 'alert_quantity', 
-            'description', 'image', 'is_active'
+            'description', 'image', 'is_active',
+            'discount_type', 'discount_value', 'discount_applied_on'
         ]
-        # Don't include opening_stock in update as it should only be set once
+
+        # fields = [
+        #     'name', 'category', 'unit', 'brand', 'group', 'source',
+        #     'purchase_price', 'selling_price', 'alert_quantity', 
+        #     'description', 'image', 'is_active'
+        # ]
+        # # Don't include opening_stock in update as it should only be set once
 
     def validate_name(self, value):
         """Ensure product name is unique within company, excluding current instance"""
@@ -170,26 +177,31 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """Custom validation with better error messages"""
         errors = {}
-        
-        # Your existing validation logic
+
         purchase_price = data.get('purchase_price')
         selling_price = data.get('selling_price')
         
         if selling_price and purchase_price and selling_price < purchase_price:
             errors['selling_price'] = "Selling price cannot be less than purchase price"
         
-        # Add other validations...
+        discount_type = data.get('discount_type')
+        discount_value = data.get('discount_value')
+
+        if discount_value and not discount_type:
+            errors['discount_type'] = "Discount type is required when discount value is set"
         
+        if discount_type and (discount_value is None):
+            errors['discount_value'] = "Discount value is required when discount type is set"
+
         if errors:
-            # Convert to the format your Flutter app expects
             raise serializers.ValidationError({
-                'message': list(errors.values())[0],  # First error as main message
-                'errors': errors  # All errors in structured format
+                'message': list(errors.values())[0],
+                'errors': errors
             })
-        
+
         return data
+
 
 
 class ProductSerializer(serializers.ModelSerializer):

@@ -5,15 +5,27 @@ from django.db.models import Sum, Q
 from django.utils import timezone
 from datetime import datetime, timedelta
 
+# transactions/serializers.py
 class TransactionSerializer(serializers.ModelSerializer):
     account_name = serializers.CharField(source='account.name', read_only=True)
     account_type = serializers.CharField(source='account.ac_type', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
-    sale_invoice_no = serializers.CharField(source='sale.invoice_no', read_only=True)
-    money_receipt_no = serializers.CharField(source='money_receipt.mr_no', read_only=True)
-    expense_no = serializers.CharField(source='expense.expense_no', read_only=True)
-    purchase_no = serializers.CharField(source='purchase.purchase_no', read_only=True)
-    supplier_payment_no = serializers.CharField(source='supplier_payment.payment_no', read_only=True)
+    
+    # Sale related
+    sale_invoice_no = serializers.CharField(source='sale.invoice_no', read_only=True, allow_null=True)
+    
+    # Money receipt related
+    money_receipt_no = serializers.CharField(source='money_receipt.mr_no', read_only=True, allow_null=True)
+    
+    # Expense related - FIXED FIELD NAMES
+    expense_invoice_number = serializers.CharField(source='expense.invoice_number', read_only=True, allow_null=True)
+    expense_head = serializers.CharField(source='expense.head.name', read_only=True, allow_null=True)
+    
+    # Purchase related
+    purchase_invoice_no = serializers.CharField(source='purchase.invoice_no', read_only=True, allow_null=True)
+    
+    # Supplier payment related
+    supplier_payment_reference = serializers.CharField(source='supplier_payment.reference_no', read_only=True, allow_null=True)
     
     class Meta:
         model = Transaction
@@ -22,16 +34,19 @@ class TransactionSerializer(serializers.ModelSerializer):
             'account', 'account_name', 'account_type', 'payment_method',
             'cheque_no', 'reference_no', 'transaction_date', 'status',
             'description', 
-            'sale', 'sale_invoice_no', 
+            
+            # Related objects
+            'sale', 'sale_invoice_no',
             'money_receipt', 'money_receipt_no',
-            'expense', 'expense_no',
-            'purchase', 'purchase_no',
-            'supplier_payment', 'supplier_payment_no',
+            'expense', 'expense_invoice_number', 'expense_head',  # Updated fields
+            'purchase', 'purchase_invoice_no',
+            'supplier_payment', 'supplier_payment_reference',
+            
             'created_by', 'created_by_name',
             'created_at', 'updated_at', 'company'
         ]
         read_only_fields = ['transaction_no', 'created_at', 'updated_at']
-    
+
     def validate(self, data):
         # Ensure account belongs to the same company
         account = data.get('account')
