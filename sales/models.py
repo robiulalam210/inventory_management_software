@@ -166,13 +166,27 @@ class Sale(models.Model):
             self.grand_total = round(grand_total, 2)
             self.payable_amount = round(grand_total, 2)
             
-            # CALCULATE CHANGE AMOUNT (overpayment)
-            self.change_amount = max(Decimal('0.00'), self.paid_amount - self.payable_amount)
+            # FIXED: Calculate due amount first (can be negative)
+            self.due_amount = self.payable_amount - self.paid_amount
             
-            # Calculate due amount (0 if overpaid)
-            self.due_amount = max(Decimal('0.00'), self.payable_amount - self.paid_amount)
+            # FIXED: Calculate change amount (only for immediate return)
+            self.change_amount = Decimal('0.00')  # We'll handle overpayment as advance
             
-            # Update payment status
+            # FIXED: Handle overpayment as customer advance
+            if self.due_amount < 0 and self.customer:
+                # This is an overpayment - convert to customer advance
+                advance_amount = -self.due_amount  # Convert negative to positive
+                
+                # Update customer's advance balance
+                self.customer.advance_balance += advance_amount
+                self.customer.save(update_fields=['advance_balance'])
+                
+                logger.info(f"Overpayment of {advance_amount} converted to advance for customer {self.customer.name}")
+                
+                # Reset due amount since it's now advance
+                self.due_amount = Decimal('0.00')
+            
+            # FIXED: Update payment status
             self._update_payment_status()
 
             # Save the updated totals
@@ -190,13 +204,13 @@ class Sale(models.Model):
         if self.paid_amount >= self.payable_amount:
             self.due_amount = Decimal('0.00')
             self.payment_status = 'paid'
-            if self.change_amount > 0:
-                logger.info(f"Change to return: {self.change_amount} for sale {self.invoice_no}")
-        elif self.paid_amount > Decimal('0.00') and self.paid_amount < self.payable_amount:
+            # No longer logging change amount since it's handled as advance
+        elif self.paid_amount > Decimal('0.00'):
             self.payment_status = 'partial'
         else:
             self.payment_status = 'pending'
 
+  
     def create_money_receipt(self):
         """
         Automatically create money receipt when payment is made

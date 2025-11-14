@@ -17,6 +17,7 @@ class MoneyReceipt(models.Model):
     PAYMENT_TYPE_CHOICES = [
         ('overall', 'Overall Payment'),
         ('specific', 'Specific Invoice Payment'),
+        ('advance', 'Advance Payment'),  # ADDED
     ]
     
     PAYMENT_STATUS_CHOICES = [
@@ -34,6 +35,9 @@ class MoneyReceipt(models.Model):
     # Payment type fields
     payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='overall')
     specific_invoice = models.BooleanField(default=False)
+    
+    # NEW: Advance payment field
+    is_advance_payment = models.BooleanField(default=False)
     
     # Payment status
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='completed')
@@ -66,6 +70,7 @@ class MoneyReceipt(models.Model):
             models.Index(fields=['company', 'payment_date']),
             models.Index(fields=['customer', 'payment_date']),
             models.Index(fields=['mr_no']),
+            models.Index(fields=['is_advance_payment']),  # ADDED
         ]
 
     def __str__(self):
@@ -76,6 +81,10 @@ class MoneyReceipt(models.Model):
         """Model validation"""
         if self.amount <= 0:
             raise ValidationError("Amount must be greater than 0")
+        
+        # Advance payment validation
+        if self.is_advance_payment and not self.customer:
+            raise ValidationError("Customer is required for advance payments")
         
         if self.payment_type == 'specific' and not self.sale:
             raise ValidationError("Specific invoice payment must have a sale reference")
@@ -98,8 +107,11 @@ class MoneyReceipt(models.Model):
         if is_new and not self.mr_no:
             self.mr_no = self.generate_mr_no()
 
-        # Set payment type based on sale existence
-        if self.sale:
+        # Set payment type based on conditions
+        if self.is_advance_payment:
+            self.payment_type = 'advance'
+            self.specific_invoice = False
+        elif self.sale:
             self.payment_type = 'specific'
             self.specific_invoice = True
             # Ensure customer is set from sale
@@ -131,7 +143,9 @@ class MoneyReceipt(models.Model):
         Process payment based on type and update related sales
         """
         try:
-            if self.payment_type == 'specific' and self.sale:
+            if self.is_advance_payment:
+                return self._process_advance_payment()
+            elif self.payment_type == 'specific' and self.sale:
                 return self._process_specific_invoice_payment()
             else:
                 return self._process_overall_payment()
@@ -140,6 +154,20 @@ class MoneyReceipt(models.Model):
             self.payment_status = 'failed'
             self.save(update_fields=['payment_status'])
             raise ValidationError(f"Payment processing failed: {str(e)}")
+
+    def _process_advance_payment(self):
+        """
+        Process advance payment - add to customer balance
+        """
+        if not self.customer:
+            return False
+
+        # Update customer's advance balance
+        self.customer.advance_balance += self.amount
+        self.customer.save(update_fields=['advance_balance'])
+
+        logger.info(f"Advance payment processed for customer {self.customer.name}: {self.amount} Taka")
+        return True
 
     def _process_specific_invoice_payment(self):
         """
@@ -199,6 +227,18 @@ class MoneyReceipt(models.Model):
             })
             remaining -= applied
 
+        # If there's remaining amount after paying all dues, treat it as advance
+        if remaining > 0:
+            self.customer.advance_balance += remaining
+            self.customer.save(update_fields=['advance_balance'])
+            
+            # Update this receipt to track advance
+            self.is_advance_payment = True
+            self.amount = self.amount - remaining  # Adjust amount to actual payment
+            self.save(update_fields=['is_advance_payment', 'amount'])
+            
+            logger.info(f"Remaining amount {remaining} Taka added as advance for customer {self.customer.name}")
+
         return True
 
     def create_transaction(self):
@@ -255,6 +295,7 @@ class MoneyReceipt(models.Model):
         except Exception as e:
             logger.error(f"Error creating transaction for money receipt: {e}")
             return None
+
     def get_payment_summary(self):
         """
         Returns a dictionary summary of the payment
@@ -266,9 +307,16 @@ class MoneyReceipt(models.Model):
             'payment_method': self.payment_method,
             'payment_date': self.payment_date.isoformat(),
             'status': self.payment_status,
+            'is_advance_payment': self.is_advance_payment,
         }
 
-        if self.payment_type == 'specific' and self.sale:
+        if self.is_advance_payment:
+            summary.update({
+                'customer': self.customer.name if self.customer else 'Unknown',
+                'type': 'advance_payment',
+                'new_balance': float(self.customer.advance_balance) if self.customer else 0
+            })
+        elif self.payment_type == 'specific' and self.sale:
             sale = self.sale
             previous_paid = float(sale.paid_amount - self.amount)
             previous_due = float(sale.due_amount + self.amount)
@@ -287,7 +335,6 @@ class MoneyReceipt(models.Model):
                 },
                 'invoice_status': 'paid' if sale.due_amount == 0 else 'partial'
             })
-
         else:
             from sales.models import Sale
             from django.db.models import Sum
@@ -399,6 +446,31 @@ class MoneyReceipt(models.Model):
         return receipt
 
     @classmethod
+    def create_advance_receipt(cls, customer, amount, payment_method, account, company, created_by=None, seller=None):
+        """
+        Create an advance payment receipt
+        """
+        receipt = cls(
+            company=company,
+            customer=customer,
+            sale=None,
+            payment_type='advance',
+            specific_invoice=False,
+            is_advance_payment=True,
+            amount=amount,
+            payment_method=payment_method,
+            payment_date=timezone.now(),
+            remark="Advance payment received",
+            seller=seller,
+            account=account,
+            created_by=created_by,
+            payment_status='completed'
+        )
+
+        receipt.save()
+        return receipt
+
+    @classmethod
     def get_customer_payment_summary(cls, customer, company):
         """
         Get payment summary for a customer
@@ -415,9 +487,14 @@ class MoneyReceipt(models.Model):
             total=Sum('amount')
         )['total'] or 0
         
+        advance_receipts = receipts.filter(is_advance_payment=True)
+        total_advance = advance_receipts.aggregate(total=Sum('amount'))['total'] or 0
+        
         return {
             'customer': customer.name,
             'total_receipts': receipts.count(),
             'total_amount_received': float(total_received),
-            'receipts': list(receipts.values('mr_no', 'amount', 'payment_date'))
+            'total_advance_payments': float(total_advance),
+            'current_advance_balance': float(customer.advance_balance),
+            'receipts': list(receipts.values('mr_no', 'amount', 'payment_date', 'payment_type', 'is_advance_payment'))
         }

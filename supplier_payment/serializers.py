@@ -1,12 +1,13 @@
 # supplier_payment/serializers.py
 from rest_framework import serializers
-from .model import SupplierPayment  # ✅ Fixed: changed 'model' to 'models'
+from .model import SupplierPayment
 from purchases.models import Purchase
 from suppliers.models import Supplier
 from accounts.models import Account
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+
 class SupplierPaymentSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     supplier_phone = serializers.CharField(source='supplier.phone', read_only=True)
@@ -33,7 +34,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         model = SupplierPayment
         fields = [
             'id', 'sp_no', 'company', 'supplier', 'supplier_name', 'supplier_phone',
-            'payment_type', 'specific_bill', 'purchase', 'purchase_invoice_no',
+            'payment_type', 'use_advance', 'advance_amount_used', 'purchase', 'purchase_invoice_no',  # ✅ Removed specific_bill
             'amount', 'payment_method', 'payment_date', 'remark', 
             'account', 'prepared_by', 'prepared_by_name',
             'cheque_status', 'cheque_no', 'cheque_date', 'bank_name', 
@@ -41,8 +42,8 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'sp_no', 'supplier_name', 'supplier_phone', 'purchase_invoice_no',
-            'prepared_by_name', 'company', 'prepared_by', 'created_at', 'payment_type',
-            'specific_bill', 'payment_summary'
+            'prepared_by_name', 'company', 'prepared_by', 'created_at', 'payment_type',  # ✅ Removed specific_bill
+            'payment_summary'
         ]
 
     def validate(self, attrs):
