@@ -594,36 +594,130 @@ class ProductViewSet(BaseInventoryViewSet):
         try:
             instance = self.get_object()
             product_name = instance.name
+            product_id = instance.id
             
-            # Check if product has any sales transactions
-            has_sales = hasattr(instance, 'sale_items') and instance.sale_items.exists()
+            logger.info(f"Attempting to delete product: {product_name} (ID: {product_id})")
             
-            # Check if product has any purchase transactions
-            has_purchases = hasattr(instance, 'purchase_items') and instance.purchase_items.exists()
+            # PROPER relationship checking - only check reverse relationships
+            has_sales = False
+            has_purchases = False
+            has_stock_movements = False
             
-            # Check if product has any stock movements
-            has_stock_movements = hasattr(instance, 'stock_movements') and instance.stock_movements.exists()
+            sales_count = 0
+            purchases_count = 0
+            stock_movements_count = 0
             
+            # Check only reverse relationships (related_name accessors)
+            logger.info("Checking reverse relationships...")
+            
+            # Method 1: Check common relationship names
+            common_relationships = {
+                'sale_items': ('sales', has_sales, sales_count),
+                'saleitem_set': ('sales', has_sales, sales_count),
+                'purchase_items': ('purchases', has_purchases, purchases_count),
+                'purchaseitem_set': ('purchases', has_purchases, purchases_count),
+                'stock_movements': ('stock movements', has_stock_movements, stock_movements_count),
+                'stockmovement_set': ('stock movements', has_stock_movements, stock_movements_count),
+            }
+            
+            for rel_name, (rel_type, has_flag, count_var) in common_relationships.items():
+                if hasattr(instance, rel_name):
+                    try:
+                        related_manager = getattr(instance, rel_name)
+                        current_count = related_manager.count()
+                        logger.info(f"Relationship '{rel_name}': {current_count} records")
+                        
+                        if current_count > 0:
+                            if rel_type == 'sales':
+                                has_sales = True
+                                sales_count = current_count
+                            elif rel_type == 'purchases':
+                                has_purchases = True
+                                purchases_count = current_count
+                            elif rel_type == 'stock movements':
+                                has_stock_movements = True
+                                stock_movements_count = current_count
+                    except Exception as e:
+                        logger.warning(f"Error checking relationship '{rel_name}': {e}")
+            
+            # Method 2: Direct database queries (most reliable)
+            logger.info("Performing direct database queries...")
+            
+            # Check sales
+            try:
+                from sales.models import SaleItem
+                direct_sales_count = SaleItem.objects.filter(product=instance).count()
+                logger.info(f"Direct SaleItem query: {direct_sales_count} records")
+                if direct_sales_count > 0:
+                    has_sales = True
+                    sales_count = direct_sales_count
+            except ImportError:
+                logger.warning("SaleItem model not found in sales app")
+            except Exception as e:
+                logger.warning(f"Error querying SaleItem: {e}")
+            
+            # Check purchases
+            try:
+                from purchases.models import PurchaseItem
+                direct_purchases_count = PurchaseItem.objects.filter(product=instance).count()
+                logger.info(f"Direct PurchaseItem query: {direct_purchases_count} records")
+                if direct_purchases_count > 0:
+                    has_purchases = True
+                    purchases_count = direct_purchases_count
+            except ImportError:
+                logger.warning("PurchaseItem model not found in purchases app")
+            except Exception as e:
+                logger.warning(f"Error querying PurchaseItem: {e}")
+            
+            # Check stock movements
+            try:
+                from inventory.models import StockMovement
+                direct_stock_count = StockMovement.objects.filter(product=instance).count()
+                logger.info(f"Direct StockMovement query: {direct_stock_count} records")
+                if direct_stock_count > 0:
+                    has_stock_movements = True
+                    stock_movements_count = direct_stock_count
+            except ImportError:
+                logger.warning("StockMovement model not found")
+            except Exception as e:
+                logger.warning(f"Error querying StockMovement: {e}")
+            
+            logger.info(f"Final check - Sales: {has_sales} ({sales_count}), Purchases: {has_purchases} ({purchases_count}), Stock: {has_stock_movements} ({stock_movements_count})")
+            
+            # Decision: Delete or deactivate
             if has_sales or has_purchases or has_stock_movements:
                 # Instead of deleting, mark as inactive
                 instance.is_active = False
                 instance.save(update_fields=['is_active'])
                 
-                message = "Product cannot be deleted as it has transaction history. It has been marked as inactive instead."
+                # Build detailed message
+                reasons = []
                 if has_sales:
-                    message = "Product cannot be deleted as it has sales history. It has been marked as inactive instead."
-                elif has_purchases:
-                    message = "Product cannot be deleted as it has purchase history. It has been marked as inactive instead."
+                    reasons.append(f"{sales_count} sales")
+                if has_purchases:
+                    reasons.append(f"{purchases_count} purchases")
+                if has_stock_movements:
+                    reasons.append(f"{stock_movements_count} stock movements")
+                
+                message = f"Product cannot be deleted as it has {', '.join(reasons)}. It has been marked as inactive instead."
+                
+                logger.info(f"Product {product_name} marked as inactive. Reason: {message}")
                 
                 return custom_response(
                     success=True,
                     message=message,
-                    data={'is_active': instance.is_active},
+                    data={
+                        'is_active': instance.is_active,
+                        'deletion_blocked': True,
+                        'blocking_reasons': reasons
+                    },
                     status_code=status.HTTP_200_OK
                 )
             
             # If no transactions, proceed with actual deletion
             instance.delete()
+            logger.info(f"Product {product_name} (ID: {product_id}) successfully deleted")
+            
             return custom_response(
                 success=True,
                 message=f"Product '{product_name}' deleted successfully.",
@@ -631,21 +725,16 @@ class ProductViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_200_OK
             )
                 
-        except Product.DoesNotExist:
-            return custom_response(
-                success=False,
-                message="Product not found.",
-                data=None,
-                status_code=status.HTTP_404_NOT_FOUND
-            )
         except Exception as e:
+            logger.error(f"Error deleting product: {str(e)}")
+            logger.error(traceback.format_exc())
             return custom_response(
                 success=False,
                 message=str(e),
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
     @action(detail=True, methods=['post'])
     def toggle_active(self, request, pk=None):
         """

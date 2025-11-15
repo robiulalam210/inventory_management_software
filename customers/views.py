@@ -192,19 +192,169 @@ class CustomerViewSet(viewsets.ModelViewSet):
             )
 
     def destroy(self, request, *args, **kwargs):
+        """
+        Delete a customer - Only allow if no related records exist
+        """
         try:
             instance = self.get_object()
+            customer_name = instance.name
+            
+            # Check all possible relationships that might prevent deletion
+            blocking_relationships = []
+            
+            def check_relationship(relationship_name, check_function):
+                """Helper function to check relationships safely"""
+                try:
+                    count = check_function()
+                    if count > 0:
+                        blocking_relationships.append(f"{count} {relationship_name}")
+                    return count
+                except Exception as e:
+                    logger.debug(f"Could not check {relationship_name}: {e}")
+                    return 0
+            
+            # 1. Check sales
+            sales_count = check_relationship("sales", lambda: 
+                getattr(instance, 'sales').count() if hasattr(instance, 'sales') else
+                getattr(instance, 'sale_set').count() if hasattr(instance, 'sale_set') else 0
+            )
+            
+            # 2. Check money receipts
+            money_receipts_count = check_relationship("money receipts", lambda: 
+                getattr(instance, 'money_receipts').count() if hasattr(instance, 'money_receipts') else
+                getattr(instance, 'moneyreceipt_set').count() if hasattr(instance, 'moneyreceipt_set') else 0
+            )
+            
+            # 3. Direct database queries for common models
+            # Sales
+            if sales_count == 0:
+                try:
+                    from sales.models import Sale
+                    sales_count = check_relationship("sales", 
+                        lambda: Sale.objects.filter(customer=instance).count()
+                    )
+                except ImportError:
+                    pass
+            
+            # Money Receipts
+            if money_receipts_count == 0:
+                try:
+                    from transactions.models import MoneyReceipt
+                    money_receipts_count = check_relationship("money receipts", 
+                        lambda: MoneyReceipt.objects.filter(customer=instance).count()
+                    )
+                except ImportError:
+                    pass
+            
+            # 4. Check other possible customer relationships
+            # Due Collections
+            try:
+                from due_collections.models import DueCollection
+                check_relationship("due collections",
+                    lambda: DueCollection.objects.filter(customer=instance).count()
+                )
+            except ImportError:
+                pass
+            
+            # Invoices
+            try:
+                from invoices.models import Invoice
+                check_relationship("invoices",
+                    lambda: Invoice.objects.filter(customer=instance).count()
+                )
+            except ImportError:
+                pass
+            
+            # Customer Payments
+            try:
+                from customer_payments.models import CustomerPayment
+                check_relationship("customer payments",
+                    lambda: CustomerPayment.objects.filter(customer=instance).count()
+                )
+            except ImportError:
+                pass
+            
+            # Customer Statements
+            try:
+                from accounting.models import CustomerStatement
+                check_relationship("customer statements",
+                    lambda: CustomerStatement.objects.filter(customer=instance).count()
+                )
+            except ImportError:
+                pass
+            
+            # Customer Ledger
+            try:
+                from ledger.models import CustomerLedger
+                check_relationship("ledger entries",
+                    lambda: CustomerLedger.objects.filter(customer=instance).count()
+                )
+            except ImportError:
+                pass
+            
+            # 5. Generic check using Django's related objects
+            try:
+                for related_object in instance._meta.related_objects:
+                    related_name = related_object.get_accessor_name()
+                    try:
+                        related_manager = getattr(instance, related_name)
+                        if hasattr(related_manager, 'count'):
+                            count = related_manager.count()
+                            if count > 0:
+                                # Only include if not already counted and it's a meaningful relationship
+                                rel_name = related_name.replace('_set', '').replace('_', ' ')
+                                if (not any(rel_name in rel for rel in blocking_relationships) and 
+                                    any(keyword in related_name for keyword in ['sale', 'receipt', 'payment', 'invoice', 'due', 'ledger'])):
+                                    blocking_relationships.append(f"{count} {rel_name}")
+                    except Exception as e:
+                        logger.debug(f"Could not check related object {related_name}: {e}")
+            except Exception as e:
+                logger.debug(f"Error checking generic related objects: {e}")
+            
+            # If any blocking relationships exist, mark as inactive instead of deleting
+            if blocking_relationships:
+                instance.is_active = False
+                instance.save(update_fields=['is_active'])
+                
+                # Create detailed message
+                relationships_text = ", ".join(blocking_relationships)
+                message = f"Customer cannot be deleted as it has transaction history ({relationships_text}). It has been marked as inactive instead."
+                
+                logger.warning(f"Customer deletion blocked for '{customer_name}'. Reasons: {blocking_relationships}")
+                
+                return custom_response(
+                    success=True,
+                    message=message,
+                    data={
+                        'is_active': instance.is_active,
+                        'deletion_blocked': True,
+                        'blocking_relationships': blocking_relationships,
+                        'customer_id': instance.id,
+                        'customer_name': customer_name
+                    },
+                    status_code=status.HTTP_200_OK
+                )
+            
+            # If no blocking relationships, proceed with actual deletion
             self.perform_destroy(instance)
+            
+            logger.info(f"Customer deleted successfully: {customer_name} (ID: {instance.id})")
+            
             return custom_response(
                 success=True,
-                message="Customer deleted successfully.",
-                data=None,
-                status_code=status.HTTP_204_NO_CONTENT
+                message=f"Customer '{customer_name}' deleted successfully.",
+                data={
+                    'deletion_successful': True,
+                    'customer_name': customer_name
+                },
+                status_code=status.HTTP_200_OK
             )
+                
         except Exception as e:
+            logger.error(f"Error deleting customer: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

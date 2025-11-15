@@ -196,10 +196,63 @@ class SupplierViewSet(BaseCompanyViewSet):
             )
 
     def destroy(self, request, *args, **kwargs):
+        """
+        Delete a supplier - Only allow if no purchases or supplier payments exist
+        """
         try:
             instance = self.get_object()
             supplier_id = instance.id
             supplier_name = instance.name
+            
+            # Check for purchases
+            has_purchases = False
+            try:
+                from purchases.models import Purchase
+                has_purchases = Purchase.objects.filter(supplier=instance).exists()
+            except (ImportError, Exception):
+                # Fallback to relationship check
+                if hasattr(instance, 'purchases'):
+                    has_purchases = instance.purchases.exists()
+                elif hasattr(instance, 'purchase_set'):
+                    has_purchases = instance.purchase_set.exists()
+            
+            # Check for supplier payments
+            has_supplier_payments = False
+            try:
+                from transactions.models import SupplierPayment
+                has_supplier_payments = SupplierPayment.objects.filter(supplier=instance).exists()
+            except (ImportError, Exception):
+                # Fallback to relationship check
+                if hasattr(instance, 'supplier_payments'):
+                    has_supplier_payments = instance.supplier_payments.exists()
+                elif hasattr(instance, 'supplierpayment_set'):
+                    has_supplier_payments = instance.supplierpayment_set.exists()
+            
+            # If any transactions exist, mark as inactive instead of deleting
+            if has_purchases or has_supplier_payments:
+                instance.is_active = False
+                instance.save(update_fields=['is_active'])
+                
+                reasons = []
+                if has_purchases:
+                    reasons.append("purchases")
+                if has_supplier_payments:
+                    reasons.append("supplier payments")
+                
+                message = f"Supplier cannot be deleted as it has {', '.join(reasons)} history. It has been marked as inactive instead."
+                
+                return custom_response(
+                    success=True,
+                    message=message,
+                    data={
+                        'is_active': instance.is_active,
+                        'deletion_blocked': True,
+                        'blocking_reasons': reasons
+                    },
+                    status_code=status.HTTP_200_OK
+                )
+            
+            # If no transactions, proceed with actual deletion
             instance.delete()
             
             logger.info(f"Supplier deleted successfully: {supplier_id} - {supplier_name}")
@@ -210,6 +263,7 @@ class SupplierViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_200_OK
             )
+                
         except Exception as e:
             logger.error(f"Error deleting supplier: {str(e)}", exc_info=True)
             return custom_response(

@@ -16,6 +16,8 @@ from django.db.models import Q, Sum, Count, Case, When, F, DecimalField
 from django.db.models.functions import Coalesce
 from decimal import Decimal
 from datetime import datetime
+from django.utils import timezone
+from core.utils import custom_response
 
 
 
@@ -171,7 +173,6 @@ class AccountViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    # ... rest of your existing methods (_process_account_data, retrieve, create, update, destroy, etc.) ...
 
     def _process_account_data(self, data):
         """Process account data to ensure consistent format"""
@@ -220,7 +221,7 @@ class AccountViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+    # accounts/views.py
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
@@ -229,6 +230,7 @@ class AccountViewSet(BaseInventoryViewSet):
             ac_type = serializer.validated_data.get('ac_type')
             number = serializer.validated_data.get('number')
             name = serializer.validated_data.get('name')
+            opening_balance = serializer.validated_data.get('opening_balance', Decimal('0.00'))
 
             # Handle empty string as None for uniqueness check
             if number == '':
@@ -267,14 +269,36 @@ class AccountViewSet(BaseInventoryViewSet):
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
 
-            instance = serializer.save(company=company, created_by=request.user)
+            # Create the account instance but don't save yet
+            account = Account(
+                company=company,
+                created_by=request.user,
+                name=name,
+                ac_type=ac_type,
+                number=number,
+                bank_name=serializer.validated_data.get('bank_name'),
+                branch=serializer.validated_data.get('branch'),
+                opening_balance=opening_balance,
+                balance=opening_balance,  # Set initial balance to opening balance
+                is_active=True
+            )
 
-            logger.info(f"Account created successfully: {instance.id}")
+            # Store the user for the opening balance transaction
+            account._creating_user = request.user
+
+            # Validate and save the account
+            account.full_clean()
+            account.save()
+
+            # Get the complete account data with serialized response
+            serializer = self.get_serializer(account)
+            
+            logger.info(f"Account created successfully: {account.id} with opening balance: {opening_balance}")
             
             return custom_response(
                 success=True,
-                message="Account created successfully.",
-                data=self.get_serializer(instance).data,
+                message="Account created successfully." + (f" Opening balance transaction created." if opening_balance > 0 else ""),
+                data=serializer.data,
                 status_code=status.HTTP_201_CREATED
             )
 
@@ -294,6 +318,81 @@ class AccountViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    # def create(self, request, *args, **kwargs):
+    #     serializer = self.get_serializer(data=request.data)
+    #     try:
+    #         serializer.is_valid(raise_exception=True)
+    #         company = self.request.user.company
+    #         ac_type = serializer.validated_data.get('ac_type')
+    #         number = serializer.validated_data.get('number')
+    #         name = serializer.validated_data.get('name')
+    #         opening_balance = serializer.validated_data.get('opening_balance', Decimal('0.00'))
+
+
+    #         # Handle empty string as None for uniqueness check
+    #         if number == '':
+    #             number = None
+
+    #         # For Cash and Other accounts, number should be None
+    #         if ac_type in [Account.TYPE_CASH, Account.TYPE_OTHER]:
+    #             number = None
+
+    #         # Check for existing accounts based on type
+    #         if ac_type == Account.TYPE_CASH:
+    #             if Account.objects.filter(company=company, ac_type=Account.TYPE_CASH).exists():
+    #                 return custom_response(
+    #                     success=False,
+    #                     message="A Cash account already exists for your company. You can only have one Cash account.",
+    #                     data=None,
+    #                     status_code=status.HTTP_400_BAD_REQUEST
+    #                 )
+            
+    #         elif ac_type == Account.TYPE_OTHER:
+    #             if Account.objects.filter(company=company, ac_type=Account.TYPE_OTHER).exists():
+    #                 return custom_response(
+    #                     success=False,
+    #                     message="An Other account already exists for your company. You can only have one Other account.",
+    #                     data=None,
+    #                     status_code=status.HTTP_400_BAD_REQUEST
+    #                 )
+            
+    #         else:
+    #             # For Bank and Mobile banking, check by number
+    #             if Account.objects.filter(company=company, ac_type=ac_type, number=number).exists():
+    #                 return custom_response(
+    #                     success=False,
+    #                     message="An account with this type and number already exists.",
+    #                     data=None,
+    #                     status_code=status.HTTP_400_BAD_REQUEST
+    #                 )
+
+    #         instance = serializer.save(company=company, created_by=request.user)
+
+    #         logger.info(f"Account created successfully: {instance.id}")
+            
+    #         return custom_response(
+    #             success=True,
+    #             message="Account created successfully.",
+    #             data=self.get_serializer(instance).data,
+    #             status_code=status.HTTP_201_CREATED
+    #         )
+
+    #     except serializers.ValidationError as e:
+    #         logger.warning(f"Account validation error: {e.detail}")
+    #         return custom_response(
+    #             success=False,
+    #             message="Validation Error",
+    #             data=e.detail,
+    #             status_code=status.HTTP_400_BAD_REQUEST
+    #         )
+    #     except Exception as e:
+    #         logger.error(f"Error creating account: {str(e)}", exc_info=True)
+    #         return custom_response(
+    #             success=False,
+    #             message="Internal server error",
+    #             data=None,
+    #             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+    #         )
   
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -353,49 +452,116 @@ class AccountViewSet(BaseInventoryViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Delete an account - Only allow if no transactions exist
+        Delete an account - Only allow if no transactions or related records exist
         """
         try:
             instance = self.get_object()
             account_name = instance.name
             
-            # Check if account has any transactions
-            has_transactions = hasattr(instance, 'transactions') and instance.transactions.exists()
+            # Check all possible relationships that might prevent deletion
+            blocking_relationships = []
             
-            # Check if account has any money receipts
-            has_money_receipts = hasattr(instance, 'money_receipts') and instance.money_receipts.exists()
+            # 1. Check for transactions
+            if hasattr(instance, 'transactions') and instance.transactions.exists():
+                blocking_relationships.append(f"{instance.transactions.count()} transactions")
             
-            # Check if account has any supplier payments
-            has_supplier_payments = hasattr(instance, 'supplier_payments') and instance.supplier_payments.exists()
+            # 2. Check for money receipts
+            if hasattr(instance, 'money_receipts') and instance.money_receipts.exists():
+                blocking_relationships.append(f"{instance.money_receipts.count()} money receipts")
             
-            # Check if account has any sales or purchases
-            has_sales = hasattr(instance, 'sales') and instance.sales.exists()
-            has_purchases = hasattr(instance, 'purchases') and instance.purchases.exists()
+            # 3. Check for supplier payments
+            if hasattr(instance, 'supplier_payments') and instance.supplier_payments.exists():
+                blocking_relationships.append(f"{instance.supplier_payments.count()} supplier payments")
             
-            if has_transactions or has_money_receipts or has_supplier_payments or has_sales or has_purchases:
-                # Instead of deleting, mark as inactive
+            # 4. Check for sales
+            if hasattr(instance, 'sales') and instance.sales.exists():
+                blocking_relationships.append(f"{instance.sales.count()} sales")
+            
+            # 5. Check for purchases
+            if hasattr(instance, 'purchases') and instance.purchases.exists():
+                blocking_relationships.append(f"{instance.purchases.count()} purchases")
+            
+            # 6. Check for expenses
+            if hasattr(instance, 'expenses') and instance.expenses.exists():
+                blocking_relationships.append(f"{instance.expenses.count()} expenses")
+            
+            # 7. Additional checks for other possible relationships
+            # Check if account is used in any sale payments
+            try:
+                from sales.models import SalePayment
+                sale_payments_count = SalePayment.objects.filter(account=instance).count()
+                if sale_payments_count > 0:
+                    blocking_relationships.append(f"{sale_payments_count} sale payments")
+            except (ImportError, Exception):
+                pass
+            
+            # Check if account is used in any purchase payments
+            try:
+                from purchases.models import PurchasePayment
+                purchase_payments_count = PurchasePayment.objects.filter(account=instance).count()
+                if purchase_payments_count > 0:
+                    blocking_relationships.append(f"{purchase_payments_count} purchase payments")
+            except (ImportError, Exception):
+                pass
+            
+            # Check if account is used in any expense payments
+            try:
+                from expenses.models import ExpensePayment
+                expense_payments_count = ExpensePayment.objects.filter(account=instance).count()
+                if expense_payments_count > 0:
+                    blocking_relationships.append(f"{expense_payments_count} expense payments")
+            except (ImportError, Exception):
+                pass
+            
+            # Check if account is used in any journal entries
+            try:
+                from accounting.models import JournalEntry
+                journal_entries_count = JournalEntry.objects.filter(
+                    Q(debit_account=instance) | Q(credit_account=instance)
+                ).count()
+                if journal_entries_count > 0:
+                    blocking_relationships.append(f"{journal_entries_count} journal entries")
+            except (ImportError, Exception):
+                pass
+            
+            # Check if account is used in any fund transfers
+            try:
+                from transfers.models import FundTransfer
+                fund_transfers_count = FundTransfer.objects.filter(
+                    Q(from_account=instance) | Q(to_account=instance)
+                ).count()
+                if fund_transfers_count > 0:
+                    blocking_relationships.append(f"{fund_transfers_count} fund transfers")
+            except (ImportError, Exception):
+                pass
+            
+            # If any blocking relationships exist, mark as inactive instead of deleting
+            if blocking_relationships:
                 instance.is_active = False
                 instance.save(update_fields=['is_active'])
                 
-                message = "Account cannot be deleted as it has transaction history. It has been marked as inactive instead."
-                if has_transactions:
-                    message = "Account cannot be deleted as it has transactions. It has been marked as inactive instead."
-                elif has_money_receipts:
-                    message = "Account cannot be deleted as it has money receipts. It has been marked as inactive instead."
-                elif has_supplier_payments:
-                    message = "Account cannot be deleted as it has supplier payments. It has been marked as inactive instead."
+                # Create detailed message
+                relationships_text = ", ".join(blocking_relationships)
+                message = f"Account cannot be deleted as it has {relationships_text}. It has been marked as inactive instead."
+                
+                logger.warning(f"Account deletion blocked for '{account_name}'. Reasons: {relationships_text}")
                 
                 return custom_response(
                     success=True,
                     message=message,
-                    data={'is_active': instance.is_active},
+                    data={
+                        'is_active': instance.is_active,
+                        'blocking_relationships': blocking_relationships,
+                        'account_id': instance.id,
+                        'account_name': account_name
+                    },
                     status_code=status.HTTP_200_OK
                 )
             
-            # If no transactions, proceed with actual deletion
+            # If no blocking relationships, proceed with actual deletion
             instance.delete()
             
-            logger.info(f"Account deleted successfully: {account_name}")
+            logger.info(f"Account deleted successfully: {account_name} (ID: {instance.id})")
             
             return custom_response(
                 success=True,

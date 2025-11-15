@@ -1,4 +1,4 @@
-# accounts/models.py - ONLY Account model should be here
+# accounts/models.py
 from django.db import models
 from django.db.models import Q, Max
 from decimal import Decimal
@@ -63,8 +63,53 @@ class Account(models.Model):
     def status(self):
         return "Active" if self.is_active else "Inactive"
 
+    def create_opening_balance_transaction(self, user):
+        """
+        Create an opening balance transaction for this account
+        """
+        if self.opening_balance and self.opening_balance > 0:
+            try:
+                from transactions.models import Transaction
+                
+                # Generate transaction number
+                last_transaction = Transaction.objects.filter(
+                    company=self.company
+                ).order_by('-id').first()
+                
+                transaction_no = "TXN-1001"
+                if last_transaction and last_transaction.transaction_no:
+                    try:
+                        last_number = int(last_transaction.transaction_no.split('-')[-1])
+                        new_number = last_number + 1
+                        transaction_no = f"TXN-{new_number}"
+                    except (ValueError, IndexError):
+                        transaction_no = f"TXN-{1001 + (last_transaction.id if last_transaction else 0)}"
+                else:
+                    transaction_no = "TXN-1001"
+
+                # Create opening balance transaction
+                transaction = Transaction.objects.create(
+                    company=self.company,
+                    transaction_no=transaction_no,
+                    account=self,
+                    transaction_type='credit',  # Opening balance increases account balance
+                    amount=self.opening_balance,
+                    description=f"Opening balance for {self.name}",
+                    transaction_date=timezone.now().date(),
+                    status='completed',
+                    created_by=user,
+                    is_opening_balance=True
+                )
+                
+                return transaction
+            except Exception as e:
+                print(f"Error creating opening balance transaction: {e}")
+                return None
+        return None
+
     def save(self, *args, **kwargs):
         is_new = self.pk is None
+        creating_opening_balance = is_new and self.opening_balance and self.opening_balance > 0
         
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
             self.number = None
@@ -97,7 +142,12 @@ class Account(models.Model):
                 
             self.ac_no = f"ACC-{new_number}"
         
+        # Save the account first
         super().save(*args, **kwargs)
+        
+        # Create opening balance transaction after saving
+        if creating_opening_balance and hasattr(self, '_creating_user'):
+            self.create_opening_balance_transaction(self._creating_user)
 
     def clean(self):
         from django.core.exceptions import ValidationError
