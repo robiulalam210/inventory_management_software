@@ -185,7 +185,35 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+    def update(self, request, *args, **kwargs):
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            try:
+                serializer.is_valid(raise_exception=True)
+                self.perform_update(serializer)
+                
+                return custom_response(
+                    success=True,
+                    message=f"{self.item_name} updated successfully.",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK,
+                )
+            except serializers.ValidationError as e:
+                return custom_response(
+                    success=False,
+                    message="Validation Error",
+                    data=e.detail,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                return custom_response(
+                    success=False,
+                    message=str(e),
+                    data=None,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
     def destroy(self, request, *args, **kwargs):
         """
         Custom delete method that prevents deletion if item has products
