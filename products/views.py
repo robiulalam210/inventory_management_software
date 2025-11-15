@@ -396,7 +396,7 @@ class ProductViewSet(BaseInventoryViewSet):
         'name', 'sku', 'selling_price', 'purchase_price',
         'stock_qty', 'created_at', 'updated_at', 'is_active'
     ]
-    ordering = ['name']
+    ordering = ['sku']
     pagination_class = StandardResultsSetPagination
 
     def get_serializer_class(self):

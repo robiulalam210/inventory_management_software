@@ -30,7 +30,7 @@ class AccountViewSet(BaseInventoryViewSet):
     serializer_class = AccountSerializer
     search_fields = ['name', 'number', 'bank_name', 'branch', 'ac_type']
     ordering_fields = ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch']
-    ordering = ['name']
+    ordering = ['ac_no']
     
     def get_queryset(self):
         """Apply filters and search to the queryset"""

@@ -20,7 +20,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'phone', 'email', 'address']
     filterset_fields = ['is_active']
     ordering_fields = ['name', 'date_created']
-    ordering = ['name']
+    ordering = ['client_no']
 
     def get_queryset(self):
         queryset = super().get_queryset()

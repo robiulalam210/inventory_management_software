@@ -76,18 +76,40 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 # -----------------------------
 class CustomLoginView(APIView):
     """
-    Optional: Use this if you prefer /api/login/ POST with username+password
-    and get back refresh/access + user payload.
-    Alternatively use CustomTokenObtainPairView at /api/token/.
+    Login with username OR email + password
     """
     def post(self, request, *args, **kwargs):
         username = request.data.get("username")
+        email = request.data.get("email")
         password = request.data.get("password")
-        user = authenticate(username=username, password=password)
+        
+        # Validate input
+        if not password:
+            return Response({"detail": "Password is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not username and not email:
+            return Response({"detail": "Username or email is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Try to authenticate user
+        user = None
+        
+        # First try with username
+        if username:
+            user = authenticate(username=username, password=password)
+        
+        # If not found with username, try with email
+        if not user and email:
+            try:
+                # Get user by email and then authenticate
+                user_obj = User.objects.get(email=email)
+                user = authenticate(username=user_obj.username, password=password)
+            except User.DoesNotExist:
+                user = None
+        
         if not user:
             return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # check company active
+        # Check company active
         if user.company and not user.company.is_active:
             return Response({"detail": "Company license expired."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -102,7 +124,6 @@ class CustomLoginView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
 
 # -----------------------------
 # Base Company ViewSet (Auto Filter by Company)

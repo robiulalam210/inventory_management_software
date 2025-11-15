@@ -46,11 +46,11 @@ class SupplierViewSet(BaseCompanyViewSet):
                 queryset = queryset.filter(is_active=False)
         
         # Order by name by default
-        order_by = self.request.query_params.get('order_by', 'name')
+        order_by = self.request.query_params.get('order_by', 'supplier_no')
         if order_by.lstrip('-') in ['name', 'email', 'created_at', 'updated_at', 'total_purchases']:
             queryset = queryset.order_by(order_by)
         else:
-            queryset = queryset.order_by('name')
+            queryset = queryset.order_by('supplier_no')
             
         return queryset
 

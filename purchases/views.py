@@ -11,6 +11,8 @@ from .serializers import PurchaseSerializer, PurchaseItemSerializer
 from suppliers.models import Supplier
 from django.db import models  # Add this import
 from django.db.models import Q  # Add this import
+from rest_framework import filters
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +104,10 @@ class PurchaseViewSet(BaseCompanyViewSet):
     serializer_class = PurchaseSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPageNumberPagination
+    filter_backends = [filters.OrderingFilter]  # enable ordering filter
+    ordering_fields = ['purchase_date', 'grand_total', 'due_amount', 'invoice_no']  # allowed fields
+    ordering = ['invoice_no']  # default ordering
+
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -119,6 +125,8 @@ class PurchaseViewSet(BaseCompanyViewSet):
         end_date = self.request.query_params.get('end_date')
         invoice_no = self.request.query_params.get('invoice_no')
         search = self.request.query_params.get('search')
+        ordering = ['invoice_no']  # default ordering
+
         
         # Apply filters
         if payment_status:
