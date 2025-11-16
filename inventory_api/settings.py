@@ -1,10 +1,7 @@
 from pathlib import Path
 import os
-import dj_database_url
 from datetime import timedelta
 
-# -----------------------------
-# BASE DIR
 # -----------------------------
 # BASE DIR
 # -----------------------------
@@ -13,32 +10,55 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
 
 print(f"BASE_DIR is set to: {BASE_DIR}")
 print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
-# -----------------------------
-# SECURITY
-# -----------------------------
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
-DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
 
-# ✅ Render domain এবং localhost অনুমোদিত করো
+# -----------------------------
+# ENVIRONMENT CONFIG
+# -----------------------------
+DEBUG = True  # Force True for local development
+SECRET_KEY = "django-insecure-meherinmart-2024-local-dev-key"
+
+# -----------------------------
+# HOSTS AND CORS
+# -----------------------------
 ALLOWED_HOSTS = [
-    "inventory-management-software-1.onrender.com",
+    "meherinmart.xyz",
+    "www.meherinmart.xyz",
     "localhost",
     "127.0.0.1",
+    "0.0.0.0",
 ]
 
-# ✅ Render এর CSRF সাপোর্টের জন্য অবশ্যই দরকার
 CSRF_TRUSTED_ORIGINS = [
-    "https://inventory-management-software-1.onrender.com",
+    "https://meherinmart.xyz",
+    "https://www.meherinmart.xyz",
 ]
 
-# (যদি ফ্রন্টএন্ড আলাদা হোস্টে থাকে, সেটা এখানে যোগ করো)
 CORS_ALLOWED_ORIGINS = [
-    "https://inventory-management-software-1.onrender.com",
+    "https://meherinmart.xyz",
+    "https://www.meherinmart.xyz",
 ]
 
+CORS_ALLOW_ALL_ORIGINS = True  # Allow all in local development
+
+# -----------------------------
+# LOGIN
+# -----------------------------
 APPEND_SLASH = True
 LOGIN_URL = '/admin/login/'
-LOGIN_REDIRECT_URL = '/admin/dashboard/'   # Optional, for post-login redirect
+LOGIN_REDIRECT_URL = '/admin/'
+
+# -----------------------------
+# DATABASE - SIMPLE SQLITE FOR LOCAL
+# -----------------------------
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+}
+
+print("✅ Using SQLite for local development")
+
 # -----------------------------
 # INSTALLED APPS
 # -----------------------------
@@ -49,11 +69,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    # Dev tools
     'django_extensions',
 
+    # Third-party
     'rest_framework',
     'django_filters',
     'rest_framework_simplejwt',
+    'corsheaders',
 
     # Project apps
     'purchases',
@@ -77,8 +101,9 @@ INSTALLED_APPS = [
 # MIDDLEWARE
 # -----------------------------
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # ✅ whitenoise উপরে রাখো
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -90,6 +115,9 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'inventory_api.urls'
 
+# -----------------------------
+# TEMPLATES
+# -----------------------------
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -97,6 +125,7 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                'django.template.context_processors.debug',
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -106,6 +135,10 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'inventory_api.wsgi.application'
+
+# -----------------------------
+# JWT SETTINGS
+# -----------------------------
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
@@ -114,15 +147,8 @@ SIMPLE_JWT = {
     'ALGORITHM': 'HS256',
     'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
-}
-# -----------------------------
-# DATABASE
-# -----------------------------
-DATABASES = {
-    'default': dj_database_url.config(
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=600,
-    )
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
 }
 
 # -----------------------------
@@ -130,21 +156,29 @@ DATABASES = {
 # -----------------------------
 AUTH_USER_MODEL = 'core.User'
 
-# -----------------------------
-# REST FRAMEWORK
-# -----------------------------
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_FILTER_BACKENDS': (
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
     ),
 }
 
 # -----------------------------
-# PASSWORD VALIDATION
+# PASSWORD VALIDATORS
 # -----------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator', 'OPTIONS': {'min_length': 8}},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
@@ -153,7 +187,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # INTERNATIONALIZATION
 # -----------------------------
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'Asia/Dhaka'  # ✅ তোমার জন্য লোকাল টাইম
+TIME_ZONE = 'Asia/Dhaka'
 USE_I18N = True
 USE_TZ = True
 
@@ -161,10 +195,85 @@ USE_TZ = True
 # STATIC FILES
 # -----------------------------
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 
 # -----------------------------
 # DEFAULT AUTO FIELD
 # -----------------------------
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+# -----------------------------
+# MEDIA FILES
+# -----------------------------
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Ensure media directories exist
+def ensure_media_dirs():
+    media_dirs = [
+        'company/logos',
+        'users/profile_pictures', 
+        'staff/images',
+        'products',
+        'documents'
+    ]
+    for directory in media_dirs:
+        dir_path = os.path.join(MEDIA_ROOT, directory)
+        os.makedirs(dir_path, exist_ok=True)
+        print(f"✅ Ensured directory: {dir_path}")
+
+os.makedirs(MEDIA_ROOT, exist_ok=True)
+ensure_media_dirs()
+
+# -----------------------------
+# SECURITY - DISABLE FOR LOCAL DEV
+# -----------------------------
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+
+# -----------------------------
+# LOGGING
+# -----------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
+# -----------------------------
+# CUSTOM SETTINGS
+# -----------------------------
+COMPANY_COOKIE_NAME = 'company_id'
+DEFAULT_CURRENCY = 'BDT'
+DEFAULT_TIMEZONE = 'Asia/Dhaka'
+LOW_STOCK_ALERT = True
+AUTO_UPDATE_STOCK = True
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760
+
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+SESSION_COOKIE_AGE = 1209600
+
+print("✅ Django settings loaded successfully!")
+print(f"✅ Debug mode: {DEBUG}")
+print(f"✅ Using SQLite database")
