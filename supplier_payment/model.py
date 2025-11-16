@@ -13,58 +13,50 @@ import logging
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+# Create a clean supplier_payment/models.py
+from django.utils.translation import gettext_lazy as _
+
+
 class SupplierPayment(models.Model):
-    PAYMENT_TYPE_CHOICES = [
-        ('overall', 'Overall Payment'),
-        ('specific', 'Specific Bill Payment'),
-        ('advance', 'Advance Payment'),
-    ]
-
-    PAYMENT_METHOD_CHOICES = [
-        ('cash', 'Cash'),
-        ('bank', 'Bank Transfer'),
-        ('cheque', 'Cheque'),
-        ('digital', 'Digital Payment'),
-        ('mobile_banking', 'Mobile Banking'),
-    ]
-
-    CHEQUE_STATUS_CHOICES = [
-        ('pending', 'Pending'),
-        ('cleared', 'Cleared'),
-        ('bounced', 'Bounced'),
-    ]
-
-    company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    sp_no = models.CharField(max_length=20, blank=True)
-    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
-    purchase = models.ForeignKey(Purchase, on_delete=models.SET_NULL, null=True, blank=True)
-
-    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='overall')
-    use_advance = models.BooleanField(default=False, help_text="Use supplier's advance balance for payment")
-    advance_amount_used = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
-
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
-    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash')
-    payment_date = models.DateTimeField(default=timezone.now)
-    remark = models.TextField(null=True, blank=True)
-    prepared_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
-    account = models.ForeignKey(Account, on_delete=models.SET_NULL, null=True, blank=True)
-
-    cheque_status = models.CharField(max_length=20, choices=CHEQUE_STATUS_CHOICES, null=True, blank=True)
-    cheque_no = models.CharField(max_length=64, null=True, blank=True)
-    cheque_date = models.DateField(null=True, blank=True)
-    bank_name = models.CharField(max_length=255, null=True, blank=True)
-
+    class PaymentMethod(models.TextChoices):
+        CASH = 'cash', _('Cash')
+        BANK = 'bank', _('Bank Transfer')
+        CHEQUE = 'cheque', _('Cheque')
+        MOBILE = 'mobile', _('Mobile Banking')
+    
+    class Status(models.TextChoices):
+        PENDING = 'pending', _('Pending')
+        COMPLETED = 'completed', _('Completed')
+        FAILED = 'failed', _('Failed')
+        CANCELLED = 'cancelled', _('Cancelled')
+    
+    # Basic information
+    company = models.ForeignKey('core.Company', on_delete=models.CASCADE)
+    supplier = models.ForeignKey('suppliers.Supplier', on_delete=models.CASCADE)
+    
+    # Payment details
+    payment_date = models.DateField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.CASH)
+    reference_no = models.CharField(max_length=100, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    
+    # Status
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    
+    # Metadata
+    created_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        verbose_name = _('Supplier Payment')
+        verbose_name_plural = _('Supplier Payments')
         ordering = ['-payment_date', '-created_at']
-        verbose_name = 'Supplier Payment'
-        verbose_name_plural = 'Supplier Payments'
 
     def __str__(self):
-        return f"{self.sp_no} - {self.supplier.name}"
+        return f"Supplier Payment #{self.id} - {self.supplier.name} - ৳{self.amount}"
+
 
     def clean(self):
         """Validate payment data"""

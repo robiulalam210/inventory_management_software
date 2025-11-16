@@ -1,5 +1,4 @@
-# transactions/models.py
-
+# Create a fixed transactions/models.py
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -54,15 +53,38 @@ class Transaction(models.Model):
     # Flags
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='completed')
 
-    # Links
+    # Links - FIXED: Use proper string references
     money_receipt = models.ForeignKey(
-        'money_receipts.MoneyReceipt', on_delete=models.SET_NULL,
-        null=True, blank=True, related_name='transactions'
+        'money_receipts.MoneyReceipt', 
+        on_delete=models.SET_NULL,
+        null=True, blank=True, 
+        related_name='transactions'
     )
-    sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
-    expense = models.ForeignKey('expenses.Expense', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
-    purchase = models.ForeignKey('purchases.Purchase', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
-    supplier_payment = models.ForeignKey('supplier_payment.SupplierPayment', null=True, blank=True, on_delete=models.SET_NULL, related_name='transactions')
+    sale = models.ForeignKey(
+        'sales.Sale', 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True, 
+        related_name='transactions'
+    )
+    expense = models.ForeignKey(
+        'expenses.Expense', 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True, 
+        related_name='transactions'
+    )
+    purchase = models.ForeignKey(
+        'purchases.Purchase', 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True, 
+        related_name='transactions'
+    )
+    # FIXED: Use exact model name
+    # supplier_payment = models.ForeignKey(
+    #     'supplier_payment.SupplierPayment', 
+    #     on_delete=models.SET_NULL, 
+    #     null=True, blank=True, 
+    #     related_name='transactions'
+    # )
 
     # Extra
     description = models.TextField(blank=True, null=True)
@@ -79,9 +101,6 @@ class Transaction(models.Model):
     def __str__(self):
         return f"{self.transaction_no} - {self.transaction_type} - {self.amount}"
 
-    # ------------------------------------------------------------------------------
-    # SAVE WITH FULL ATOMIC SAFETY
-    # ------------------------------------------------------------------------------
     def save(self, *args, **kwargs):
         is_new = self.pk is None
 
@@ -101,9 +120,6 @@ class Transaction(models.Model):
             if is_new and self.status == 'completed':
                 self.apply_balance_effect()
 
-    # ------------------------------------------------------------------------------
-    # UPDATE ACCOUNT BALANCE
-    # ------------------------------------------------------------------------------
     def apply_balance_effect(self):
         account = self.account
 
@@ -117,9 +133,6 @@ class Transaction(models.Model):
 
         account.save(update_fields=['balance'])
 
-    # ------------------------------------------------------------------------------
-    # UNIQUE TRANSACTION NO
-    # ------------------------------------------------------------------------------
     def generate_transaction_no(self):
         date = timezone.now().strftime('%Y%m%d')
         random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -133,15 +146,11 @@ class Transaction(models.Model):
 
         return tx_no
 
-    # ------------------------------------------------------------------------------
-    # REVERSE TRANSACTION (Atomic + Safe)
-    # ------------------------------------------------------------------------------
     def reverse_transaction(self):
         if self.status != 'completed':
             raise ValidationError("Only completed transactions can be reversed")
 
         with transaction.atomic():
-
             reverse_type = 'credit' if self.transaction_type == 'debit' else 'debit'
 
             reversal = Transaction.objects.create(
@@ -160,9 +169,6 @@ class Transaction(models.Model):
 
             return reversal
 
-    # ------------------------------------------------------------------------------
-    # VALIDATION
-    # ------------------------------------------------------------------------------
     def clean(self):
         if self.account.company != self.company:
             raise ValidationError("Account must belong to the same company")
@@ -172,14 +178,13 @@ class Transaction(models.Model):
                 raise ValidationError("Insufficient balance for debit transaction")
 
     @property
-    def is_debit(self): return self.transaction_type == 'debit'
+    def is_debit(self): 
+        return self.transaction_type == 'debit'
 
     @property
-    def is_credit(self): return self.transaction_type == 'credit'
+    def is_credit(self): 
+        return self.transaction_type == 'credit'
 
-    # ------------------------------------------------------------------------------
-    # HELPER METHOD FOR CREATING TRANSACTIONS
-    # ------------------------------------------------------------------------------
     @classmethod
     def create_transaction(cls, company, transaction_type, amount, account,
                            payment_method='cash', description='', created_by=None,

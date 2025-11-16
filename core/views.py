@@ -1,8 +1,7 @@
-# apps/your_app/views.py
-from datetime import timezone as _tz  # noqa: F401 - keep if later used
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required, user_passes_test
+from rest_framework.permissions import AllowAny  # Add this import
 
 from rest_framework import viewsets, status
 from rest_framework.response import Response
@@ -10,10 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework import serializers as drf_serializers
 
-# Models & serializers
 from .models import Company, User, StaffRole, Staff
 from .serializers import (
     CompanySerializer,
@@ -21,113 +17,85 @@ from .serializers import (
     StaffRoleSerializer,
     StaffSerializer,
     CustomUserSerializer,
+    CustomTokenObtainPairSerializer
 )
-from rest_framework import viewsets, status, serializers
-from rest_framework.permissions import IsAuthenticated
-from core.utils import custom_response
-from .models import User
-from .serializers import UserSerializer
-from core.base_viewsets import BaseCompanyViewSet
+from .utils import custom_response
 
-# Forms (fix: froms -> forms). Ensure you have these forms implemented.
-from .froms import CompanyAdminSignupForm, UserForm, UserCreationForm
-
-
-# -----------------------------
-# Custom Token Serializer (TokenObtainPair)
-# -----------------------------
-class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-        # embed useful claims
-        token["username"] = user.username
-        token["role"] = user.role
-        token["user_id"] = user.id
-        token["company_id"] = user.company.id if user.company else None
-        token["company_name"] = user.company.name if user.company else None
-        return token
-
-    def validate(self, attrs):
-        data = super().validate(attrs)
-        user = self.user
-
-        # company license check (if you want to block login for expired companies)
-        if user.company and not user.company.is_active:
-            raise drf_serializers.ValidationError("Company license expired. Please contact support.")
-
-        # add user info to response
-        data["user"] = {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "role": user.role,
-            "company_id": user.company.id if user.company else None,
-        }
-        return data
+# Fix: Import forms correctly
+try:
+    from .forms import CompanyAdminSignupForm, UserForm, UserCreationForm
+except ImportError:
+    # Fallback if forms don't exist yet
+    CompanyAdminSignupForm = None
+    UserForm = None
+    UserCreationForm = None
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
-
-# -----------------------------
-# (Optional) Custom Login that returns Refresh + Access + user object
-# -----------------------------
 class CustomLoginView(APIView):
-    """
-    Login with username OR email + password
-    """
+    permission_classes = [AllowAny]
+
     def post(self, request, *args, **kwargs):
         username = request.data.get("username")
-        email = request.data.get("email")
         password = request.data.get("password")
-        
-        # Validate input
-        if not password:
-            return Response({"detail": "Password is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if not username and not email:
-            return Response({"detail": "Username or email is required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Try to authenticate user
-        user = None
-        
-        # First try with username
-        if username:
-            user = authenticate(username=username, password=password)
-        
-        # If not found with username, try with email
-        if not user and email:
-            try:
-                # Get user by email and then authenticate
-                user_obj = User.objects.get(email=email)
-                user = authenticate(username=user_obj.username, password=password)
-            except User.DoesNotExist:
-                user = None
-        
-        if not user:
-            return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Check company active
-        if user.company and not user.company.is_active:
-            return Response({"detail": "Company license expired."}, status=status.HTTP_403_FORBIDDEN)
+        if not username or not password:
+            return Response({"error": "Username and password are required"},
+                            status=status.HTTP_400_BAD_REQUEST)
 
-        refresh = RefreshToken.for_user(user)
-        access = refresh.access_token
-        user_data = CustomUserSerializer(user).data
+        user = authenticate(username=username, password=password)
 
-        return Response(
-            {
-                "user": user_data,
-                "tokens": {"refresh": str(refresh), "access": str(access)},
+        if user is None:
+            return Response({"error": "Invalid credentials"},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        # Use your custom token serializer
+        serializer = CustomTokenObtainPairSerializer()
+
+        refresh = serializer.get_token(user)
+        access_token = refresh.access_token
+
+        # Ensure company info is inside the token
+        refresh["company_id"] = user.company.id if user.company else None
+        refresh["company_name"] = user.company.name if user.company else None
+
+        response_data = {
+            "message": "Login successful",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": getattr(user, 'role', None),
+                "company_id": user.company.id if user.company else None,
+                "company_name": user.company.name if user.company else None,
             },
-            status=status.HTTP_200_OK,
-        )
+            "tokens": {
+                "refresh": str(refresh),
+                "access": str(access_token),
+            }
+        }
 
-# -----------------------------
-# Base Company ViewSet (Auto Filter by Company)
-# -----------------------------
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    
+class TestView(APIView):
+    """
+    Test view to verify URL routing
+    """
+    def get(self, request):
+        return Response({
+            "message": "✅ Test endpoint is working!",
+            "endpoints": {
+                "api_login": "POST /api/auth/login/",
+                "api_test": "GET /api/test/",
+                "admin_login": "GET /admin/login/",
+                "django_admin": "GET /admin/"
+            }
+        })
+
+
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
@@ -135,11 +103,9 @@ class BaseCompanyViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = super().get_queryset()
 
-        # Super Admin sees all
         if user.role == User.Role.SUPER_ADMIN:
             return queryset
 
-        # If model has company FK -> filter by user's company
         model = getattr(queryset, 'model', None)
         if model and hasattr(model, "company") and user.company:
             return queryset.filter(company=user.company)
@@ -150,16 +116,12 @@ class BaseCompanyViewSet(viewsets.ModelViewSet):
         user = self.request.user
         model = getattr(serializer.Meta, "model", None)
 
-        # Only assign company if user has one (not super admin creating company)
         if model and hasattr(model, "company") and user.company:
             serializer.save(company=user.company)
         else:
             serializer.save()
 
 
-
-# -----------------------------
-# Company CRUD
 class CompanyViewSet(viewsets.ModelViewSet):
     queryset = Company.objects.all()
     serializer_class = CompanySerializer
@@ -167,17 +129,13 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # super admin sees all companies
         if user.role == User.Role.SUPER_ADMIN:
             return Company.objects.all()
-        # regular users see only their company
         if user.company:
             return Company.objects.filter(id=user.company.id)
         return Company.objects.none()
 
 
-# -----------------------------
-# User CRUD
 class UserViewSet(BaseCompanyViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -187,18 +145,13 @@ class UserViewSet(BaseCompanyViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Filter users by company
         if hasattr(user, 'company') and user.company:
             queryset = queryset.filter(company=user.company)
         else:
-            # If user has no company, return only themselves
             queryset = queryset.filter(id=user.id)
         
         return queryset
 
-    # -----------------------------
-    # List Users
-    # -----------------------------
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.filter_queryset(self.get_queryset())
@@ -218,9 +171,6 @@ class UserViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    # -----------------------------
-    # Retrieve a single User
-    # -----------------------------
     def retrieve(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -239,15 +189,11 @@ class UserViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    # -----------------------------
-    # Create User
-    # -----------------------------
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
             user = request.user
-            # Assign company only if creator has a company
             if user.company:
                 serializer.save(company=user.company)
             else:
@@ -258,13 +204,6 @@ class UserViewSet(BaseCompanyViewSet):
                 data=serializer.data,
                 status_code=status.HTTP_201_CREATED
             )
-        except serializers.ValidationError as e:
-            return custom_response(
-                success=False,
-                message="Validation Error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
         except Exception as e:
             return custom_response(
                 success=False,
@@ -274,34 +213,25 @@ class UserViewSet(BaseCompanyViewSet):
             )
 
 
-# -----------------------------
-# Staff Role CRUD
 class StaffRoleViewSet(viewsets.ModelViewSet):
     queryset = StaffRole.objects.all()
     serializer_class = StaffRoleSerializer
     permission_classes = [IsAuthenticated]
 
 
-# -----------------------------
-# Staff CRUD
 class StaffViewSet(BaseCompanyViewSet):
     queryset = Staff.objects.all()
     serializer_class = StaffSerializer
 
 
-# -----------------------------
-# Django Admin UI Views (templates)
-# -----------------------------
 def company_admin_signup(request):
+    if CompanyAdminSignupForm is None:
+        return render(request, 'error.html', {'error': 'Forms module not available'})
+        
     if request.method == 'POST':
         form = CompanyAdminSignupForm(request.POST)
         if form.is_valid():
-            # নতুন কোম্পানি শুধু Admin সাইনআপের সময় তৈরি হবে
-            company = Company.objects.create(name=form.cleaned_data['company_name'])
-            user = form.save(commit=False)
-            user.role = User.Role.ADMIN
-            user.company = company
-            user.save()
+            user = form.save()
             login(request, user)
             return redirect('admin_dashboard')
     else:
@@ -314,11 +244,25 @@ def company_admin_login(request):
         username = request.POST.get('username')
         password = request.POST.get('password')
         user = authenticate(request, username=username, password=password)
-        if user and user.role == User.Role.ADMIN:
-            login(request, user)
-            return redirect('admin_dashboard')
+        
+        if user is not None:
+            if user.is_active:
+                if user.is_staff or user.role in [User.Role.ADMIN, User.Role.SUPER_ADMIN]:
+                    login(request, user)
+                    return redirect('admin_dashboard')
+                else:
+                    return render(request, 'admin_login.html', {
+                        'error': 'This account does not have admin privileges.'
+                    })
+            else:
+                return render(request, 'admin_login.html', {
+                    'error': 'Account is inactive.'
+                })
         else:
-            return render(request, 'admin_login.html', {'error': 'Invalid credentials or not an admin.'})
+            return render(request, 'admin_login.html', {
+                'error': 'Invalid username or password.'
+            })
+    
     return render(request, 'admin_login.html')
 
 
@@ -338,11 +282,20 @@ def user_list(request):
 @login_required
 @user_passes_test(lambda u: u.role == User.Role.ADMIN)
 def create_user(request):
+    if UserForm is None:
+        return render(request, 'error.html', {'error': 'Forms module not available'})
+        
     if request.method == 'POST':
         form = UserForm(request.POST)
         if form.is_valid():
             user = form.save(commit=False)
             user.company = request.user.company
+            
+            if user.role in [User.Role.ADMIN, User.Role.MANAGER]:
+                user.is_staff = True
+            else:
+                user.is_staff = False
+                
             user.save()
             return redirect('user_list')
     else:
@@ -351,6 +304,9 @@ def create_user(request):
 
 
 def user_management(request):
+    if UserCreationForm is None:
+        return render(request, 'error.html', {'error': 'Forms module not available'})
+        
     users = User.objects.all()
     form = UserCreationForm()
     if request.method == "POST":
