@@ -1,0 +1,13 @@
+RewriteEngine On
+RewriteBase /
+
+# Static files
+RewriteRule ^static/(.*)$ /static/$1 [L]
+
+# Media files  
+RewriteRule ^media/(.*)$ /media/$1 [L]
+
+# Django routes
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ /passenger_wsgi.py/$1 [L]
