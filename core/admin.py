@@ -3,18 +3,31 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from django.contrib.auth.models import Group
 from .models import User, Company, StaffRole, Staff
-# core/admin.py - Fix the CompanyAdmin
-from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.utils.html import format_html
-from django.urls import reverse
-from django.utils.translation import gettext_lazy as _
-from .models import User, Company, StaffRole, Staff
+
+
+class SuperUserAdmin(admin.ModelAdmin):
+    """Base class for models that should be fully accessible to superusers"""
+    
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+    
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+    
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+    
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+    
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
 
 
 @admin.register(Company)
-class CompanyAdmin(admin.ModelAdmin):
+class CompanyAdmin(SuperUserAdmin):
     list_display = (
         "name", 
         "company_code", 
@@ -25,11 +38,13 @@ class CompanyAdmin(admin.ModelAdmin):
         "expiry_date",
         "days_until_expiry_display",
         "user_count",
+        "product_count",
         "action_buttons"
     )
-    list_filter = ("is_active", "plan_type", "start_date")
-    search_fields = ("name", "company_code", "phone", "email")
-    readonly_fields = ("company_code", "created_at", "updated_at", "user_count", "product_count", "start_date")  # Add start_date to readonly
+    list_filter = ("is_active", "plan_type", "start_date", "created_at")
+    search_fields = ("name", "company_code", "phone", "email", "trade_license")
+    readonly_fields = ("company_code", "created_at", "updated_at", "user_count", "product_count")
+    
     fieldsets = (
         ("Basic Information", {
             "fields": ("name", "company_code", "trade_license", "logo")
@@ -43,7 +58,7 @@ class CompanyAdmin(admin.ModelAdmin):
         ("Subscription & Limits", {
             "fields": (
                 "plan_type", 
-                "start_date",  # This is now readonly
+                "start_date",
                 "expiry_date", 
                 "is_active",
                 "max_users", 
@@ -66,32 +81,45 @@ class CompanyAdmin(admin.ModelAdmin):
         if days is None:
             return "N/A"
         if days < 0:
-            return format_html('<span style="color: red;">Expired ({} days)</span>', abs(days))
+            return format_html('<span style="color: red; font-weight: bold;">Expired ({} days ago)</span>', abs(days))
+        elif days < 7:
+            return format_html('<span style="color: red; font-weight: bold;">{} days</span>', days)
         elif days < 30:
             return format_html('<span style="color: orange;">{} days</span>', days)
         else:
             return format_html('<span style="color: green;">{} days</span>', days)
-    days_until_expiry_display.short_description = "Days Until Expiry"
+    days_until_expiry_display.short_description = "Expiry Status"
     
     def user_count(self, obj):
-        return obj.active_user_count
+        count = obj.active_user_count
+        url = reverse("admin:core_user_changelist") + f"?company__id__exact={obj.id}"
+        return format_html('<a href="{}">{}</a>', url, count)
     user_count.short_description = "Active Users"
+    
+    def product_count(self, obj):
+        count = obj.products.count()
+        # You can add a link to products if you have a Product model
+        return count
+    product_count.short_description = "Products"
     
     def action_buttons(self, obj):
         view_url = reverse("admin:core_company_change", args=[obj.id])
         users_url = reverse("admin:core_user_changelist") + f"?company__id__exact={obj.id}"
+        staff_url = reverse("admin:core_staff_changelist") + f"?company__id__exact={obj.id}"
+        
         return format_html(
-            '<a href="{}" class="button">Edit</a> &nbsp; '
-            '<a href="{}" class="button">View Users</a>',
-            view_url, users_url
+            '<a href="{}" class="button" style="padding: 5px 10px; background: #417690; color: white; text-decoration: none; border-radius: 3px; margin: 2px;">Edit</a>'
+            '<a href="{}" class="button" style="padding: 5px 10px; background: #417690; color: white; text-decoration: none; border-radius: 3px; margin: 2px;">Users</a>'
+            '<a href="{}" class="button" style="padding: 5px 10px; background: #417690; color: white; text-decoration: none; border-radius: 3px; margin: 2px;">Staff</a>',
+            view_url, users_url, staff_url
         )
     action_buttons.short_description = "Actions"
     
     def get_queryset(self, request):
-        return super().get_queryset(request).prefetch_related('users', 'products')
-
-
-# ... rest of your admin.py remains the same ...
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs.prefetch_related('users', 'products')
+        return qs.filter(users=request.user)
 
 
 @admin.register(User)
@@ -137,6 +165,7 @@ class UserAdmin(BaseUserAdmin):
         "role", 
         "company", 
         "is_staff", 
+        "is_superuser",
         "is_active", 
         "is_verified",
         "last_login",
@@ -147,6 +176,7 @@ class UserAdmin(BaseUserAdmin):
         "role", 
         "company", 
         "is_staff", 
+        "is_superuser",
         "is_active", 
         "is_verified",
         "last_login"
@@ -172,10 +202,13 @@ class UserAdmin(BaseUserAdmin):
     ordering = ("username",)
     
     def full_name(self, obj):
-        return obj.full_name
+        return obj.get_full_name() or "No Name"
     full_name.short_description = "Full Name"
     
     def permissions_summary(self, obj):
+        if obj.is_superuser:
+            return format_html('<span style="color: green; font-weight: bold;">SUPERUSER (All Permissions)</span>')
+        
         perms = []
         if obj.can_manage_products:
             perms.append("Products")
@@ -185,8 +218,17 @@ class UserAdmin(BaseUserAdmin):
             perms.append("Purchases")
         if obj.can_view_reports:
             perms.append("Reports")
+        if obj.can_manage_users:
+            perms.append("Users")
+            
         return ", ".join(perms) if perms else "View Only"
     permissions_summary.short_description = "Permissions"
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs.select_related('company')
+        return qs.filter(company=request.user.company)
 
 
 @admin.register(StaffRole)
@@ -197,14 +239,15 @@ class StaffRoleAdmin(admin.ModelAdmin):
         "external_id", 
         "is_active",
         "staff_count",
+        "company_count",
         "created_at"
     )
     
-    list_filter = ("role_type", "is_active")
+    list_filter = ("role_type", "is_active", "created_at")
     
     search_fields = ("name", "external_id", "description")
     
-    readonly_fields = ("created_at", "staff_count")
+    readonly_fields = ("created_at", "staff_count", "company_count")
     
     fieldsets = (
         ("Basic Information", {
@@ -218,7 +261,7 @@ class StaffRoleAdmin(admin.ModelAdmin):
             "classes": ("collapse",)
         }),
         ("Statistics", {
-            "fields": ("staff_count",),
+            "fields": ("staff_count", "company_count"),
             "classes": ("collapse",)
         })
     )
@@ -226,6 +269,12 @@ class StaffRoleAdmin(admin.ModelAdmin):
     def staff_count(self, obj):
         return obj.staff_members.count()
     staff_count.short_description = "Staff Members"
+    
+    def company_count(self, obj):
+        # Count distinct companies using this role
+        from django.db.models import Count
+        return obj.staff_members.values('company').distinct().count()
+    company_count.short_description = "Companies Using"
 
 
 @admin.register(Staff)
@@ -331,7 +380,7 @@ class StaffAdmin(admin.ModelAdmin):
         }
         color = status_colors.get(obj.status, "black")
         return format_html(
-            '<span style="color: {};">{}</span>',
+            '<span style="color: {}; font-weight: bold;">{}</span>',
             color,
             obj.get_status_display()
         )
@@ -345,6 +394,8 @@ class StaffAdmin(admin.ModelAdmin):
     
     def employment_duration_display(self, obj):
         days = obj.employment_duration
+        if days is None:
+            return "N/A"
         if days >= 365:
             years = days // 365
             return f"{years} year{'s' if years > 1 else ''}"
@@ -356,11 +407,16 @@ class StaffAdmin(admin.ModelAdmin):
     employment_duration_display.short_description = "Duration"
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'user', 'company', 'role'
-        )
+        qs = super().get_queryset(request).select_related('user', 'company', 'role')
+        if request.user.is_superuser:
+            return qs
+        return qs.filter(company=request.user.company)
 
 
+# Customize admin site
 admin.site.site_header = "Meherin Mart ERP Administration"
 admin.site.site_title = "Meherin Mart ERP"
 admin.site.index_title = "Welcome to Meherin Mart ERP Admin Panel"
+
+# Unregister default Group if not needed
+# admin.site.unregister(Group)
