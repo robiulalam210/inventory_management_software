@@ -88,16 +88,7 @@ urlpatterns = [
     path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
     path('api/products/filters/', ProductViewSet.as_view({'get': 'filters'}), name='product-filters'),
     
-# GET /api/products/stock-info/?status=0  # Out of stock
-# GET /api/products/stock-info/?status=1  # Low stock  
-# GET /api/products/stock-info/?status=2  # In stock
 
-# GET /api/products/?stock_status=0  # Using filter class
-# GET /api/products/?stock_status=1  # Using filter class
-# GET /api/products/?stock_status=2  # Using filter class
-# GET /api/products/?category=1&stock_status=1&product_name=laptop
-# GET /api/products/search/?q=laptop&category_id=1&stock_status=2
-# GET /api/products/low-stock/  # Only low stock products
 
     # Admin UI
     path('admin/signup/', company_admin_signup, name='company_admin_signup'),

@@ -1,10 +1,7 @@
 from pathlib import Path
 import os
-import dj_database_url
 from datetime import timedelta
 
-# -----------------------------
-# BASE DIR
 # -----------------------------
 # BASE DIR
 # -----------------------------
@@ -13,32 +10,35 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
 
 print(f"BASE_DIR is set to: {BASE_DIR}")
 print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
+
 # -----------------------------
 # SECURITY
 # -----------------------------
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-key")
-DEBUG = os.environ.get("DJANGO_DEBUG", "False") == "True"
+SECRET_KEY = "django-insecure-meherinmart-xyz-2024-secret-key-change-this-in-production"
+DEBUG = True  # Set to False in production
 
-# ✅ Render domain এবং localhost অনুমোদিত করো
 ALLOWED_HOSTS = [
-    "inventory-management-software-1.onrender.com",
+    "meherinmart.xyz",
+    "www.meherinmart.xyz",
     "localhost",
     "127.0.0.1",
+    ".onrender.com",
 ]
 
-# ✅ Render এর CSRF সাপোর্টের জন্য অবশ্যই দরকার
 CSRF_TRUSTED_ORIGINS = [
-    "https://inventory-management-software-1.onrender.com",
+    "https://meherinmart.xyz",
+    "https://www.meherinmart.xyz",
 ]
 
-# (যদি ফ্রন্টএন্ড আলাদা হোস্টে থাকে, সেটা এখানে যোগ করো)
 CORS_ALLOWED_ORIGINS = [
-    "https://inventory-management-software-1.onrender.com",
+    "https://meherinmart.xyz",
+    "https://www.meherinmart.xyz",
 ]
 
 APPEND_SLASH = True
 LOGIN_URL = '/admin/login/'
-LOGIN_REDIRECT_URL = '/admin/dashboard/'   # Optional, for post-login redirect
+LOGIN_REDIRECT_URL = '/admin/'
+
 # -----------------------------
 # INSTALLED APPS
 # -----------------------------
@@ -78,7 +78,7 @@ INSTALLED_APPS = [
 # -----------------------------
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # ✅ whitenoise উপরে রাখো
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -106,29 +106,52 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'inventory_api.wsgi.application'
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
-    'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
-    'ALGORITHM': 'HS256',
-    'SIGNING_KEY': SECRET_KEY,
-    'AUTH_HEADER_TYPES': ('Bearer',),
-}
+
 # -----------------------------
-# DATABASE
+# POSTGRESQL DATABASE CONFIGURATION
+# -----------------------------
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'meherinm_meherinmart_db',      # Database name
+#         'USER': 'root',                          # MySQL user
+#         'PASSWORD': '',       # MySQL password
+#         'HOST': 'localhost',                   # MySQL host
+#         'PORT': '3306',                          # MySQL default port
+#         'OPTIONS': {
+#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+#         }
+#     }
+# }
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'meherinm_meherinmart_db',      # Database name
+#         'USER': 'meherinm_robi',                          # MySQL user
+#         'PASSWORD': 'meherinmart@123',       # MySQL password
+#         'HOST': '127.0.0.1',                     # MySQL host
+#         'PORT': '3306',                          # MySQL default port
+#         'OPTIONS': {
+#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+#         }
+#     }
+# }
+# -----------------------------
+# SQLITE DATABASE CONFIGURATION
 # -----------------------------
 DATABASES = {
-    'default': dj_database_url.config(
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
-        conn_max_age=600,
-    )
+    'default': {                        
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': 'meherinm_meherinmart_db',      # Database name
+        'USER': 'meherinm_robi',                          # MySQL user
+        'PASSWORD': 'meherinmart@123', 
+        'HOST': 'localhost',       # MySQL password
+    }
 }
 
 # -----------------------------
 # AUTH
 # -----------------------------
-# Add to your settings.py
 AUTH_USER_MODEL = 'core.User'
 
 AUTHENTICATION_BACKENDS = [
@@ -147,10 +170,14 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20
 }
 
-from datetime import timedelta
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 # -----------------------------
@@ -167,7 +194,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # INTERNATIONALIZATION
 # -----------------------------
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'Asia/Dhaka'  # ✅ তোমার জন্য লোকাল টাইম
+TIME_ZONE = 'Asia/Dhaka'
 USE_I18N = True
 USE_TZ = True
 
@@ -175,10 +202,28 @@ USE_TZ = True
 # STATIC FILES
 # -----------------------------
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Media files
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# -----------------------------
+# SECURITY SETTINGS
+# -----------------------------
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
 
 # -----------------------------
 # DEFAULT AUTO FIELD
 # -----------------------------
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField' 
