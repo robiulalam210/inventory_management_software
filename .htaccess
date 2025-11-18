@@ -1,13 +1,12 @@
 RewriteEngine On
 RewriteBase /
 
-# Static files
-RewriteRule ^static/(.*)$ /static/$1 [L]
+# Handle static files
+RewriteCond %{REQUEST_URI} ^/static/ [OR]
+RewriteCond %{REQUEST_URI} ^/media/
+RewriteRule ^ - [L]
 
-# Media files  
-RewriteRule ^media/(.*)$ /media/$1 [L]
-
-# Django routes
+# Handle Django admin and API routes
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ /passenger_wsgi.py/$1 [L]
+RewriteRule ^(.*)$ passenger_wsgi.py/$1 [L,QSA]
