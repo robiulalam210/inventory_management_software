@@ -140,3 +140,53 @@ class UserSerializer(serializers.ModelSerializer):
             instance.set_password(password)
         instance.save()
         return instance
+    
+
+
+# Example of what your login serializer should return
+class UserLoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField()
+
+    def validate(self, attrs):
+        username = attrs.get('username')
+        password = attrs.get('password')
+
+        if username and password:
+            user = authenticate(username=username, password=password)
+            
+            if not user:
+                raise serializers.ValidationError('Invalid credentials')
+                
+            if not user.is_active:
+                raise serializers.ValidationError('User account is disabled')
+                
+            attrs['user'] = user
+            return attrs
+        else:
+            raise serializers.ValidationError('Must include "username" and "password"')
+
+# In your login view
+def login_view(request):
+    serializer = UserLoginSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.validated_data['user']
+        
+        # Generate tokens
+        refresh = RefreshToken.for_user(user)
+        
+        return Response({
+            'message': 'Login successful',
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,  # This should be SUPER_ADMIN, not STAFF
+                'company_id': user.company.id if user.company else None,
+                'company_name': user.company.name if user.company else None
+            },
+            'tokens': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        })

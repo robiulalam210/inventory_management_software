@@ -24,6 +24,7 @@ from core.froms import CompanyAdminSignupForm, UserForm
 # from . import views
 from transactions.views import TransactionViewSet
 
+
 router = DefaultRouter()
 
 router.register(r'companies', CompanyViewSet, basename='company')
@@ -64,6 +65,10 @@ router.register(r'transactions', TransactionViewSet, basename='transaction')
 urlpatterns = [
     # API routes
     path('', include(router.urls)),
+    
+    
+    
+    
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
@@ -88,7 +93,16 @@ urlpatterns = [
     path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
     path('api/products/filters/', ProductViewSet.as_view({'get': 'filters'}), name='product-filters'),
     
+# GET /api/products/stock-info/?status=0  # Out of stock
+# GET /api/products/stock-info/?status=1  # Low stock  
+# GET /api/products/stock-info/?status=2  # In stock
 
+# GET /api/products/?stock_status=0  # Using filter class
+# GET /api/products/?stock_status=1  # Using filter class
+# GET /api/products/?stock_status=2  # Using filter class
+# GET /api/products/?category=1&stock_status=1&product_name=laptop
+# GET /api/products/search/?q=laptop&category_id=1&stock_status=2
+# GET /api/products/low-stock/  # Only low stock products
 
     # Admin UI
     path('admin/signup/', company_admin_signup, name='company_admin_signup'),
@@ -97,3 +111,5 @@ urlpatterns = [
     path('admin/users/', user_list, name='user_list'),
     path('admin/users/create/', create_user, name='create_user'),
 ]
+
+
