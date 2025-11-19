@@ -43,7 +43,7 @@ class CompanyAdmin(SuperUserAdmin):
     )
     list_filter = ("is_active", "plan_type", "start_date", "created_at")
     search_fields = ("name", "company_code", "phone", "email", "trade_license")
-    readonly_fields = ("company_code", "created_at", "updated_at", "user_count", "product_count")
+    readonly_fields = ("company_code", "start_date", "created_at", "updated_at", "user_count", "product_count")
     
     fieldsets = (
         ("Basic Information", {
@@ -58,7 +58,7 @@ class CompanyAdmin(SuperUserAdmin):
         ("Subscription & Limits", {
             "fields": (
                 "plan_type", 
-                "start_date",
+                "start_date",  # Keep it here but it will be readonly
                 "expiry_date", 
                 "is_active",
                 "max_users", 
@@ -75,6 +75,34 @@ class CompanyAdmin(SuperUserAdmin):
             "classes": ("collapse",)
         })
     )
+    
+    # Add this method to handle the add form separately
+    def get_fieldsets(self, request, obj=None):
+        if obj is None:  # This is an add form
+            # Exclude start_date from add form since it's auto-generated
+            add_fieldsets = (
+                ("Basic Information", {
+                    "fields": ("name", "trade_license", "logo")
+                }),
+                ("Contact Information", {
+                    "fields": ("address", "phone", "email", "website")
+                }),
+                ("Business Settings", {
+                    "fields": ("currency", "timezone", "fiscal_year_start")
+                }),
+                ("Subscription & Limits", {
+                    "fields": (
+                        "plan_type", 
+                        "expiry_date", 
+                        "is_active",
+                        "max_users", 
+                        "max_products", 
+                        "max_branches"
+                    )
+                }),
+            )
+            return add_fieldsets
+        return super().get_fieldsets(request, obj)
     
     def days_until_expiry_display(self, obj):
         days = obj.days_until_expiry
@@ -120,8 +148,7 @@ class CompanyAdmin(SuperUserAdmin):
         if request.user.is_superuser:
             return qs.prefetch_related('users', 'products')
         return qs.filter(users=request.user)
-
-
+    
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     fieldsets = BaseUserAdmin.fieldsets + (

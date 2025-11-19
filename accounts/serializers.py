@@ -52,5 +52,15 @@ class AccountSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        validated_data['balance'] = validated_data.get('opening_balance', 0)
-        return super().create(validated_data)
+        request = self.context.get('request')
+        user = request.user if request else None
+
+        # company auto-set
+        validated_data['company'] = user.company
+
+        # Pass user to model for opening balance transaction
+        account = Account.objects.create(
+            **validated_data,
+            creating_user=user
+        )
+        return account

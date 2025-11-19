@@ -1,4 +1,3 @@
-# money_receipts/models.py
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -8,16 +7,17 @@ from customers.models import Customer
 from accounts.models import Account
 from django.contrib.auth import get_user_model
 import logging
+import random
+import string
 
 logger = logging.getLogger(__name__)
-
 User = get_user_model()
 
 class MoneyReceipt(models.Model):
     PAYMENT_TYPE_CHOICES = [
         ('overall', 'Overall Payment'),
         ('specific', 'Specific Invoice Payment'),
-        ('advance', 'Advance Payment'),  # ADDED
+        ('advance', 'Advance Payment'),
     ]
     
     PAYMENT_STATUS_CHOICES = [
@@ -32,18 +32,13 @@ class MoneyReceipt(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
     sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True)
 
-    # Payment type fields
     payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='overall')
     specific_invoice = models.BooleanField(default=False)
-    
-    # NEW: Advance payment field
     is_advance_payment = models.BooleanField(default=False)
-    
-    # Payment status
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='completed')
 
     amount = models.DecimalField(max_digits=12, decimal_places=2)
-    payment_method = models.CharField(max_length=100)
+    payment_method = models.CharField(max_length=100, default='cash')
     payment_date = models.DateTimeField(default=timezone.now)
     remark = models.TextField(null=True, blank=True)
     seller = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='money_receipts_sold')
@@ -51,7 +46,6 @@ class MoneyReceipt(models.Model):
     cheque_status = models.CharField(max_length=20, null=True, blank=True)
     cheque_id = models.CharField(max_length=64, null=True, blank=True)
 
-    # Transaction reference
     transaction = models.OneToOneField(
         'transactions.Transaction', 
         on_delete=models.SET_NULL, 
@@ -70,7 +64,7 @@ class MoneyReceipt(models.Model):
             models.Index(fields=['company', 'payment_date']),
             models.Index(fields=['customer', 'payment_date']),
             models.Index(fields=['mr_no']),
-            models.Index(fields=['is_advance_payment']),  # ADDED
+            models.Index(fields=['is_advance_payment']),
         ]
 
     def __str__(self):
@@ -82,7 +76,6 @@ class MoneyReceipt(models.Model):
         if self.amount <= 0:
             raise ValidationError("Amount must be greater than 0")
         
-        # Advance payment validation
         if self.is_advance_payment and not self.customer:
             raise ValidationError("Customer is required for advance payments")
         
@@ -92,56 +85,91 @@ class MoneyReceipt(models.Model):
         if self.payment_type == 'overall' and not self.customer:
             raise ValidationError("Overall payment must have a customer reference")
         
-        # Validate account belongs to same company
         if self.account and self.account.company != self.company:
             raise ValidationError("Account must belong to the same company")
         
-        # Validate customer belongs to same company
         if self.customer and self.customer.company != self.company:
             raise ValidationError("Customer must belong to the same company")
 
     def save(self, *args, **kwargs):
-        is_new = self.pk is None
+        """FIXED: Safe save method with proper recursion prevention"""
+        # Prevent recursion
+        if getattr(self, '_saving', False):
+            return super().save(*args, **kwargs)
+        
+        self._saving = True
+        
+        try:
+            is_new = self.pk is None
 
-        # Generate MR number if new
-        if is_new and not self.mr_no:
-            self.mr_no = self.generate_mr_no()
+            # Generate MR number if new
+            if is_new and not self.mr_no:
+                self.mr_no = self._generate_mr_no()
 
-        # Set payment type based on conditions
-        if self.is_advance_payment:
-            self.payment_type = 'advance'
-            self.specific_invoice = False
-        elif self.sale:
-            self.payment_type = 'specific'
-            self.specific_invoice = True
-            # Ensure customer is set from sale
-            if not self.customer and self.sale.customer:
-                self.customer = self.sale.customer
-        else:
-            self.payment_type = 'overall'
-            self.specific_invoice = False
+            # Set payment type based on conditions
+            if self.is_advance_payment:
+                self.payment_type = 'advance'
+                self.specific_invoice = False
+            elif self.sale:
+                self.payment_type = 'specific'
+                self.specific_invoice = True
+                # Ensure customer is set from sale
+                if not self.customer and self.sale.customer:
+                    self.customer = self.sale.customer
+            else:
+                self.payment_type = 'overall'
+                self.specific_invoice = False
 
-        # Validate before saving
-        self.clean()
+            # Validate before saving
+            self.clean()
 
-        # Save the model first
-        super().save(*args, **kwargs)
+            # Save the model first
+            super().save(*args, **kwargs)
 
-        # Process payment and create transaction if completed
-        if self.payment_status == 'completed' and not getattr(self, '_auto_created', False):
-            self.process_payment()
-            self.create_transaction()
+            # Process payment and create transaction if completed
+            # FIXED: Only process for new receipts or if payment status changed to completed
+            if (self.payment_status == 'completed' and 
+                not getattr(self, '_payment_processed', False)):
+                
+                self._payment_processed = True
+                self.process_payment()
+                self.create_transaction()
+                
+        finally:
+            self._saving = False
 
-    def generate_mr_no(self):
+    def _generate_mr_no(self):
         """Generate unique money receipt number"""
-        last_receipt = MoneyReceipt.objects.filter(company=self.company).order_by("-id").first()
-        new_id = (last_receipt.id + 1) if last_receipt else 1
-        return f"MR-{1000 + new_id}"
+        try:
+            last_receipt = MoneyReceipt.objects.filter(
+                company=self.company
+            ).order_by("-id").first()
+            
+            new_id = (last_receipt.id + 1) if last_receipt else 1
+            mr_no = f"MR-{1000 + new_id}"
+            
+            # Check for duplicates
+            counter = 0
+            while MoneyReceipt.objects.filter(mr_no=mr_no).exists() and counter < 100:
+                new_id += 1
+                mr_no = f"MR-{1000 + new_id}"
+                counter += 1
+                
+            if counter >= 100:
+                # Fallback: use timestamp
+                timestamp = int(timezone.now().timestamp())
+                mr_no = f"MR-{timestamp}"
+                
+            return mr_no
+            
+        except Exception as e:
+            logger.error(f"Error generating mr_no: {e}")
+            # Last resort fallback
+            timestamp = int(timezone.now().timestamp())
+            return f"MR-{timestamp}"
 
     def process_payment(self):
-        """
-        Process payment based on type and update related sales
-        """
+        """Process payment based on type"""
         try:
             if self.is_advance_payment:
                 return self._process_advance_payment()
@@ -153,153 +181,154 @@ class MoneyReceipt(models.Model):
             # Mark as failed if processing fails
             self.payment_status = 'failed'
             self.save(update_fields=['payment_status'])
-            raise ValidationError(f"Payment processing failed: {str(e)}")
+            logger.error(f"Payment processing failed for {self.mr_no}: {str(e)}")
+            return False
 
     def _process_advance_payment(self):
-        """
-        Process advance payment - add to customer balance
-        """
+        """Process advance payment - add to customer balance"""
         if not self.customer:
+            logger.error("Cannot process advance payment: No customer specified")
             return False
 
-        # Update customer's advance balance
-        self.customer.advance_balance += self.amount
-        self.customer.save(update_fields=['advance_balance'])
-
-        logger.info(f"Advance payment processed for customer {self.customer.name}: {self.amount} Taka")
-        return True
+        try:
+            # Update customer's advance balance
+            self.customer.advance_balance += self.amount
+            self.customer.save(update_fields=['advance_balance'])
+            logger.info(f"Advance payment processed for {self.customer.name}: {self.amount}")
+            return True
+        except Exception as e:
+            logger.error(f"Error processing advance payment: {e}")
+            return False
 
     def _process_specific_invoice_payment(self):
-        """
-        Process payment for a specific invoice
-        """
+        """Process payment for a specific invoice"""
         if not self.sale:
+            logger.error("Cannot process specific payment: No sale specified")
             return False
 
-        # Check if payment amount is valid
-        max_allowed = self.sale.due_amount
-        if self.amount > max_allowed:
-            raise ValidationError(
-                f"Payment amount ({self.amount}) cannot be greater than due amount ({max_allowed})"
-            )
+        try:
+            from sales.models import Sale
+            
+            # Get fresh sale object to avoid stale data
+            sale = Sale.objects.get(id=self.sale.id)
+            
+            # If sale is already paid, treat as advance
+            if sale.due_amount <= 0:
+                if sale.customer:
+                    sale.customer.advance_balance += self.amount
+                    sale.customer.save(update_fields=['advance_balance'])
+                    logger.info(f"Payment for paid invoice {sale.invoice_no} treated as advance: {self.amount}")
+                return True
+            
+            # Validate payment amount
+            if self.amount > sale.due_amount:
+                # Only pay the due amount, treat rest as advance
+                payment_amount = sale.due_amount
+                advance_amount = self.amount - sale.due_amount
+                
+                # Process payment
+                sale.paid_amount += payment_amount
+                sale.due_amount = Decimal('0.00')
+                sale.payment_status = 'paid'
+                
+                # Save sale WITHOUT triggering money receipt
+                sale._skip_money_receipt = True
+                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
+                
+                # Process advance if any
+                if advance_amount > 0 and sale.customer:
+                    sale.customer.advance_balance += advance_amount
+                    sale.customer.save(update_fields=['advance_balance'])
+                    logger.info(f"Excess payment {advance_amount} treated as advance")
+                    
+            else:
+                # Normal payment
+                sale.paid_amount += self.amount
+                sale.due_amount = sale.due_amount - self.amount
+                sale.payment_status = 'paid' if sale.due_amount == 0 else 'partial'
+                
+                # Save sale WITHOUT triggering money receipt
+                sale._skip_money_receipt = True
+                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
 
-        # Update sale
-        sale = self.sale
-        sale.paid_amount += self.amount
-        sale.due_amount = max(sale.due_amount - self.amount, 0)
-        sale.payment_status = 'paid' if sale.due_amount == 0 else 'partial'
-        sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
-
-        logger.info(f"Payment processed for invoice {sale.invoice_no}: {self.amount} Taka")
-        return True
+            logger.info(f"Payment processed for {sale.invoice_no}: {self.amount}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error processing specific invoice payment: {e}")
+            return False
 
     def _process_overall_payment(self):
-        """
-        Process payment for all due invoices of the customer
-        """
-        from sales.models import Sale
-
+        """Process payment for all due invoices of the customer"""
         if not self.customer:
-            raise ValidationError("Customer is required for overall payment")
+            logger.error("Cannot process overall payment: No customer specified")
+            return False
 
-        due_sales = Sale.objects.filter(
-            customer=self.customer,
-            company=self.company,
-            due_amount__gt=0
-        ).order_by('sale_date')
+        try:
+            from sales.models import Sale
 
-        remaining = self.amount
-        applied_invoices = []
+            due_sales = Sale.objects.filter(
+                customer=self.customer,
+                company=self.company,
+                due_amount__gt=0
+            ).order_by('sale_date')
 
-        for sale in due_sales:
-            if remaining <= 0:
-                break
+            remaining = self.amount
+            processed_any = False
 
-            applied = min(remaining, sale.due_amount)
-            sale.paid_amount += applied
-            sale.due_amount = max(sale.due_amount - applied, 0)
-            sale.payment_status = 'paid' if sale.due_amount == 0 else 'partial'
-            sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
+            for sale in due_sales:
+                if remaining <= 0:
+                    break
+
+                applied = min(remaining, sale.due_amount)
+                sale.paid_amount += applied
+                sale.due_amount = sale.due_amount - applied
+                sale.payment_status = 'paid' if sale.due_amount == 0 else 'partial'
+                
+                # Save sale WITHOUT triggering money receipt
+                sale._skip_money_receipt = True
+                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
+                
+                remaining -= applied
+                processed_any = True
+                logger.info(f"Applied {applied} to invoice {sale.invoice_no}")
+
+            # Treat remaining as advance
+            if remaining > 0:
+                self.customer.advance_balance += remaining
+                self.customer.save(update_fields=['advance_balance'])
+                logger.info(f"Remaining {remaining} added as advance for {self.customer.name}")
+
+            return processed_any or remaining > 0
             
-            applied_invoices.append({
-                'sale': sale,
-                'amount_applied': applied
-            })
-            remaining -= applied
-
-        # If there's remaining amount after paying all dues, treat it as advance
-        if remaining > 0:
-            self.customer.advance_balance += remaining
-            self.customer.save(update_fields=['advance_balance'])
-            
-            # Update this receipt to track advance
-            self.is_advance_payment = True
-            self.amount = self.amount - remaining  # Adjust amount to actual payment
-            self.save(update_fields=['is_advance_payment', 'amount'])
-            
-            logger.info(f"Remaining amount {remaining} Taka added as advance for customer {self.customer.name}")
-
-        return True
+        except Exception as e:
+            logger.error(f"Error processing overall payment: {e}")
+            return False
 
     def create_transaction(self):
-        """
-        Create a transaction record for this money receipt
-        Only create if no transaction exists and if not linked to a sale that already created one
-        """
-        # Don't create transaction if no account
+        """Create transaction record for this money receipt"""
         if not self.account:
-            logger.warning("No account specified for money receipt transaction")
+            logger.warning(f"No account specified for money receipt {self.mr_no}")
             return None
 
         # Check if transaction already exists
-        if self.transaction:
-            logger.info(f"Money receipt {self.mr_no} already has transaction: {self.transaction.transaction_no}")
+        if hasattr(self, 'transaction') and self.transaction:
+            logger.info(f"Money receipt {self.mr_no} already has transaction")
             return self.transaction
-
-        # If this money receipt is linked to a sale, check if sale already created a transaction
-        if self.sale and hasattr(self.sale, 'transactions'):
-            sale_transactions = self.sale.transactions.filter(status='completed')
-            if sale_transactions.exists():
-                logger.info(f"Sale {self.sale.invoice_no} already has transactions, skipping money receipt transaction")
-                # Link to the first sale transaction instead of creating new one
-                self.transaction = sale_transactions.first()
-                self.save(update_fields=['transaction'])
-                return self.transaction
 
         try:
             from transactions.models import Transaction
-            
-            # Create credit transaction (money receipt increases account balance)
-            transaction = Transaction.objects.create(
-                company=self.company,
-                transaction_type='credit',
-                amount=self.amount,
-                account=self.account,
-                payment_method=self.payment_method,
-                description=f"Money Receipt {self.mr_no} - {self.get_customer_display()}",
-                money_receipt=self,
-                created_by=self.created_by,
-                status='completed'
-            )
-            
-            # Link transaction to money receipt
-            self.transaction = transaction
-            self.save(update_fields=['transaction'])
-            
-            logger.info(f"Transaction created for money receipt: {transaction.transaction_no}")
+            transaction = Transaction.create_for_money_receipt(self)
+            if transaction:
+                logger.info(f"Transaction created for money receipt {self.mr_no}: {transaction.transaction_no}")
             return transaction
             
-        except ImportError as e:
-            logger.error(f"Failed to import Transaction model: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Error creating transaction for money receipt: {e}")
+            logger.error(f"Error creating transaction for {self.mr_no}: {e}")
             return None
 
     def get_payment_summary(self):
-        """
-        Returns a dictionary summary of the payment
-        """
+        """Get payment summary"""
         summary = {
             'mr_no': self.mr_no,
             'payment_type': self.payment_type,
@@ -317,87 +346,31 @@ class MoneyReceipt(models.Model):
                 'new_balance': float(self.customer.advance_balance) if self.customer else 0
             })
         elif self.payment_type == 'specific' and self.sale:
-            sale = self.sale
-            previous_paid = float(sale.paid_amount - self.amount)
-            previous_due = float(sale.due_amount + self.amount)
+            try:
+                from sales.models import Sale
+                sale = Sale.objects.get(id=self.sale.id)
+                
+                previous_paid = float(sale.paid_amount - self.amount)
+                previous_due = float(sale.due_amount + self.amount)
 
-            summary.update({
-                'invoice_no': sale.invoice_no,
-                'before_payment': {
-                    'invoice_total': float(sale.grand_total),
-                    'previous_paid': previous_paid,
-                    'previous_due': previous_due,
-                },
-                'after_payment': {
-                    'current_paid': float(sale.paid_amount),
-                    'current_due': float(sale.due_amount),
-                    'payment_applied': float(self.amount),
-                },
-                'invoice_status': 'paid' if sale.due_amount == 0 else 'partial'
-            })
-        else:
-            from sales.models import Sale
-            from django.db.models import Sum
-
-            total_due_before = Sale.objects.filter(
-                customer=self.customer,
-                company=self.company,
-                due_amount__gt=0
-            ).aggregate(total_due=Sum('due_amount'))['total_due'] or 0
-
-            total_due_after = max(total_due_before - self.amount, 0)
-
-            summary.update({
-                'customer': self.customer.name if self.customer else 'Unknown',
-                'before_payment': {'total_due': float(total_due_before)},
-                'after_payment': {
-                    'total_due': float(total_due_after),
-                    'payment_applied': float(self.amount)
-                },
-                'affected_invoices': self.get_affected_invoices(),
-                'overall_status': 'completed' if total_due_after == 0 else 'partial'
-            })
-
-        return summary
-
-    def get_affected_invoices(self):
-        """
-        Returns list of invoices affected by this receipt
-        """
-        from sales.models import Sale
-
-        affected = []
-        
-        if self.payment_type == 'specific' and self.sale:
-            affected.append({
-                'invoice_no': self.sale.invoice_no,
-                'amount_applied': float(self.amount),
-                'previous_due': float(self.sale.due_amount + self.amount),
-                'current_due': float(self.sale.due_amount)
-            })
-        else:
-            # For overall payments, we need to calculate which invoices were paid
-            due_sales = Sale.objects.filter(
-                customer=self.customer,
-                company=self.company,
-                due_amount__gt=0
-            ).order_by('sale_date')
-
-            remaining = self.amount
-            for sale in due_sales:
-                if remaining <= 0:
-                    break
-
-                applied = min(remaining, sale.due_amount)
-                affected.append({
+                summary.update({
                     'invoice_no': sale.invoice_no,
-                    'amount_applied': float(applied),
-                    'previous_due': float(sale.due_amount + applied),
-                    'current_due': float(sale.due_amount)
+                    'before_payment': {
+                        'invoice_total': float(sale.grand_total),
+                        'previous_paid': previous_paid,
+                        'previous_due': previous_due,
+                    },
+                    'after_payment': {
+                        'current_paid': float(sale.paid_amount),
+                        'current_due': float(sale.due_amount),
+                        'payment_applied': float(self.amount),
+                    },
+                    'invoice_status': 'paid' if sale.due_amount == 0 else 'partial'
                 })
-                remaining -= applied
-
-        return affected
+            except Exception as e:
+                logger.error(f"Error getting payment summary for sale: {e}")
+        
+        return summary
 
     def get_customer_display(self):
         """Get customer display name"""
@@ -417,84 +390,59 @@ class MoneyReceipt(models.Model):
 
     @classmethod
     def create_auto_receipt(cls, sale, created_by=None):
-        """
-        Create a MoneyReceipt automatically without processing payment
-        Used for sales that already have payment processing
-        """
+        """Create money receipt automatically for sale"""
         if sale.paid_amount <= 0:
             return None
 
-        receipt = cls(
-            company=sale.company,
-            customer=sale.customer,
-            sale=sale,
-            payment_type='specific',
-            specific_invoice=True,
-            amount=sale.paid_amount,
-            payment_method=sale.payment_method or 'Cash',
-            payment_date=timezone.now(),
-            remark=f"Auto-generated receipt - {sale.invoice_no}",
-            seller=sale.sale_by,
-            account=sale.account,
-            created_by=created_by or sale.created_by,
-            payment_status='completed'
-        )
+        try:
+            receipt = cls(
+                company=sale.company,
+                customer=sale.customer,
+                sale=sale,
+                payment_type='specific',
+                specific_invoice=True,
+                amount=sale.paid_amount,
+                payment_method=sale.payment_method or 'Cash',
+                payment_date=timezone.now(),
+                remark=f"Auto-generated receipt - {sale.invoice_no}",
+                seller=sale.sale_by,
+                account=sale.account,
+                created_by=created_by or sale.created_by,
+                payment_status='completed'
+            )
 
-        setattr(receipt, '_auto_created', True)
-        receipt.save()
-        
-        return receipt
+            setattr(receipt, '_auto_created', True)
+            receipt.save()
+            return receipt
+            
+        except Exception as e:
+            logger.error(f"Error creating auto receipt for sale {sale.invoice_no}: {e}")
+            return None
 
     @classmethod
     def create_advance_receipt(cls, customer, amount, payment_method, account, company, created_by=None, seller=None):
-        """
-        Create an advance payment receipt
-        """
-        receipt = cls(
-            company=company,
-            customer=customer,
-            sale=None,
-            payment_type='advance',
-            specific_invoice=False,
-            is_advance_payment=True,
-            amount=amount,
-            payment_method=payment_method,
-            payment_date=timezone.now(),
-            remark="Advance payment received",
-            seller=seller,
-            account=account,
-            created_by=created_by,
-            payment_status='completed'
-        )
+        """Create advance payment receipt"""
+        try:
+            receipt = cls(
+                company=company,
+                customer=customer,
+                sale=None,
+                payment_type='advance',
+                specific_invoice=False,
+                is_advance_payment=True,
+                amount=amount,
+                payment_method=payment_method,
+                payment_date=timezone.now(),
+                remark="Advance payment received",
+                seller=seller,
+                account=account,
+                created_by=created_by,
+                payment_status='completed'
+            )
 
-        receipt.save()
-        return receipt
-
-    @classmethod
-    def get_customer_payment_summary(cls, customer, company):
-        """
-        Get payment summary for a customer
-        """
-        from django.db.models import Sum
-        
-        receipts = cls.objects.filter(
-            customer=customer,
-            company=company,
-            payment_status='completed'
-        )
-        
-        total_received = receipts.aggregate(
-            total=Sum('amount')
-        )['total'] or 0
-        
-        advance_receipts = receipts.filter(is_advance_payment=True)
-        total_advance = advance_receipts.aggregate(total=Sum('amount'))['total'] or 0
-        
-        return {
-            'customer': customer.name,
-            'total_receipts': receipts.count(),
-            'total_amount_received': float(total_received),
-            'total_advance_payments': float(total_advance),
-            'current_advance_balance': float(customer.advance_balance),
-            'receipts': list(receipts.values('mr_no', 'amount', 'payment_date', 'payment_type', 'is_advance_payment'))
-        }
+            receipt.save()
+            return receipt
+            
+        except Exception as e:
+            logger.error(f"Error creating advance receipt: {e}")
+            return None

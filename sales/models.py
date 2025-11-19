@@ -24,10 +24,8 @@ class Sale(models.Model):
 
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
     sale_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_made')
-
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
-
     customer_name = models.CharField(max_length=100, blank=True, null=True)
 
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
@@ -71,166 +69,246 @@ class Sale(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        old_paid_amount = 0
+        """Safe save method with recursion prevention"""
+        # Prevent recursion
+        if getattr(self, '_saving', False):
+            return super().save(*args, **kwargs)
         
-        if not is_new:
-            try:
-                old_instance = Sale.objects.get(pk=self.pk)
-                old_paid_amount = old_instance.paid_amount
-                # Store old values for signal processing
-                self._old_paid_amount = old_paid_amount
-            except Sale.DoesNotExist:
-                pass
+        self._saving = True
         
-        # Handle customer_name for walk-in customers
-        if self.customer_type == 'walk_in' and not self.customer_name:
-            self.customer_name = 'Walk-in Customer'
-        
-        # For walk-in customers without customer_id, use customer_name directly
-        if self.customer_type == 'walk_in' and not self.customer:
-            if self.customer_name and self.customer_name != 'Walk-in Customer':
-                pass
-            else:
+        try:
+            is_new = self.pk is None
+            old_paid_amount = 0
+            
+            if not is_new:
+                try:
+                    old_instance = Sale.objects.get(pk=self.pk)
+                    old_paid_amount = old_instance.paid_amount
+                except Sale.DoesNotExist:
+                    pass
+            
+            # Handle customer
+            if self.customer_type == 'walk_in' and not self.customer_name:
                 self.customer_name = 'Walk-in Customer'
-        
-        # For saved customers, ensure customer is set
-        if self.customer_type == 'saved_customer' and not self.customer:
-            raise ValidationError("Saved customer must have a customer record.")
-        
-        # Generate invoice number for new sales
-        if is_new and not self.invoice_no:
-            self.invoice_no = self._generate_invoice_no()
-        
-        # Save first to get PK for related objects
-        super().save(*args, **kwargs)
-        
-        # Update totals after saving
-        self.update_totals()
-        
-        # Check if payment was made and create receipt
-        payment_increased = not is_new and self.paid_amount > old_paid_amount
-        if payment_increased and self.with_money_receipt == 'Yes':
-            self.create_money_receipt()
+            
+            if self.customer_type == 'walk_in' and not self.customer:
+                if not self.customer_name or self.customer_name == 'Walk-in Customer':
+                    self.customer_name = 'Walk-in Customer'
+            
+            if self.customer_type == 'saved_customer' and not self.customer:
+                raise ValidationError("Saved customer must have a customer record.")
+            
+            # Generate invoice number
+            if is_new and not self.invoice_no:
+                self.invoice_no = self._generate_invoice_no_safe()
+            
+            # Set default account if payment is made but no account
+            if self.paid_amount > 0 and not self.account:
+                self._set_default_account()
+            
+            # Save first to get PK
+            super().save(*args, **kwargs)
+            
+            # Update totals after saving
+            self.update_totals()
+            
+            # Create money receipt if payment increased
+            payment_increased = not is_new and self.paid_amount > old_paid_amount
+            
+            if (payment_increased and 
+                self.with_money_receipt == 'Yes' and 
+                self.paid_amount > 0 and
+                not getattr(self, '_skip_money_receipt', False)):
+                
+                self.create_money_receipt()
+                
+        finally:
+            self._saving = False
 
-    def _generate_invoice_no(self):
-        """Generate unique invoice number"""
+    def _generate_invoice_no_safe(self):
+        """Generate invoice number with decimal corruption protection"""
         if not self.company:
             return None
             
-        last_sale = Sale.objects.filter(company=self.company).order_by("-id").first()
-        new_id = (last_sale.id + 1) if last_sale else 1
-        return f"SL-{1000 + new_id}"
+        try:
+            # Get last sale safely
+            last_sale = Sale.objects.filter(company=self.company).order_by("-id").first()
+            new_id = (last_sale.id + 1) if last_sale else 1
+            return f"SL-{1000 + new_id}"
+        except Exception as e:
+            logger.error(f"Error generating invoice number: {e}")
+            # Fallback: use timestamp
+            timestamp = int(timezone.now().timestamp())
+            return f"SL-{timestamp}"
+
+    def _set_default_account(self):
+        """Set default account for sale"""
+        try:
+            from accounts.models import Account
+            default_account = Account.objects.filter(
+                company=self.company, 
+                is_active=True
+            ).first()
+            
+            if default_account:
+                self.account = default_account
+                logger.info(f"Set default account {default_account.name} for {self.invoice_no}")
+                
+        except Exception as e:
+            logger.warning(f"Could not set default account: {e}")
 
     def update_totals(self):
         """Update all calculated totals for the sale"""
         try:
+            if getattr(self, '_updating_totals', False):
+                return
+                
+            self._updating_totals = True
+            
+            # Calculate from items
             items = self.items.all()
-            gross = sum([item.subtotal() for item in items]) if items.exists() else Decimal('0.00')
+            gross = Decimal('0.00')
+            for item in items:
+                try:
+                    gross += Decimal(str(item.subtotal()))
+                except:
+                    gross += Decimal('0.00')
 
-            # Calculate overall discount
+            # Calculate discounts and charges safely
             discount_amount = Decimal('0.00')
-            if self.overall_discount_type == 'percent' and self.overall_discount:
-                discount_amount = gross * (self.overall_discount / Decimal('100.00'))
-            elif self.overall_discount_type == 'fixed' and self.overall_discount:
-                discount_amount = self.overall_discount
+            try:
+                if self.overall_discount_type == 'percent' and self.overall_discount:
+                    discount_amount = gross * (Decimal(str(self.overall_discount)) / Decimal('100.00'))
+                elif self.overall_discount_type == 'fixed' and self.overall_discount:
+                    discount_amount = Decimal(str(self.overall_discount))
+            except:
+                discount_amount = Decimal('0.00')
 
-            # Calculate charges on GROSS amount
             vat_amount = Decimal('0.00')
-            if self.overall_vat_type == 'percent' and self.overall_vat_amount:
-                vat_amount = gross * (self.overall_vat_amount / Decimal('100.00'))
-            elif self.overall_vat_type == 'fixed' and self.overall_vat_amount:
-                vat_amount = self.overall_vat_amount
+            try:
+                if self.overall_vat_type == 'percent' and self.overall_vat_amount:
+                    vat_amount = gross * (Decimal(str(self.overall_vat_amount)) / Decimal('100.00'))
+                elif self.overall_vat_type == 'fixed' and self.overall_vat_amount:
+                    vat_amount = Decimal(str(self.overall_vat_amount))
+            except:
+                vat_amount = Decimal('0.00')
 
             service_amount = Decimal('0.00')
-            if self.overall_service_type == 'percent' and self.overall_service_charge:
-                service_amount = gross * (self.overall_service_charge / Decimal('100.00'))
-            elif self.overall_service_type == 'fixed' and self.overall_service_charge:
-                service_amount = self.overall_service_charge
+            try:
+                if self.overall_service_type == 'percent' and self.overall_service_charge:
+                    service_amount = gross * (Decimal(str(self.overall_service_charge)) / Decimal('100.00'))
+                elif self.overall_service_type == 'fixed' and self.overall_service_charge:
+                    service_amount = Decimal(str(self.overall_service_charge))
+            except:
+                service_amount = Decimal('0.00')
 
             delivery_amount = Decimal('0.00')
-            if self.overall_delivery_type == 'percent' and self.overall_delivery_charge:
-                delivery_amount = gross * (self.overall_delivery_charge / Decimal('100.00'))
-            elif self.overall_delivery_type == 'fixed' and self.overall_delivery_charge:
-                delivery_amount = self.overall_delivery_charge
+            try:
+                if self.overall_delivery_type == 'percent' and self.overall_delivery_charge:
+                    delivery_amount = gross * (Decimal(str(self.overall_delivery_charge)) / Decimal('100.00'))
+                elif self.overall_delivery_type == 'fixed' and self.overall_delivery_charge:
+                    delivery_amount = Decimal(str(self.overall_delivery_charge))
+            except:
+                delivery_amount = Decimal('0.00')
 
-            # Calculate NET TOTAL (without delivery charge)
-            net_total = gross - discount_amount + vat_amount + service_amount
+            # Calculate totals with safety limits
+            max_amount = Decimal('9999999.99')
             
-            # Calculate GRAND TOTAL (net total + delivery charge)
+            net_total = gross - discount_amount + vat_amount + service_amount
             grand_total = net_total + delivery_amount
 
-            # Update fields
-            self.gross_total = round(gross, 2)
-            self.net_total = round(net_total, 2)
-            self.grand_total = round(grand_total, 2)
-            self.payable_amount = round(grand_total, 2)
+            # Set amounts safely
+            self.gross_total = min(self._safe_decimal(gross), max_amount)
+            self.net_total = min(self._safe_decimal(net_total), max_amount)
+            self.grand_total = min(self._safe_decimal(grand_total), max_amount)
+            self.payable_amount = min(self._safe_decimal(grand_total), max_amount)
             
-            # FIXED: Calculate due amount first (can be negative)
-            self.due_amount = self.payable_amount - self.paid_amount
+            # Calculate due amount safely
+            paid = self._safe_decimal(self.paid_amount)
+            payable = self._safe_decimal(self.payable_amount)
+            self.due_amount = max(min(payable - paid, max_amount), Decimal('0.00'))
+            self.change_amount = Decimal('0.00')
             
-            # FIXED: Calculate change amount (only for immediate return)
-            self.change_amount = Decimal('0.00')  # We'll handle overpayment as advance
-            
-            # FIXED: Handle overpayment as customer advance
+            # Handle overpayment
             if self.due_amount < 0 and self.customer:
-                # This is an overpayment - convert to customer advance
-                advance_amount = -self.due_amount  # Convert negative to positive
-                
-                # Update customer's advance balance
-                self.customer.advance_balance += advance_amount
-                self.customer.save(update_fields=['advance_balance'])
-                
-                logger.info(f"Overpayment of {advance_amount} converted to advance for customer {self.customer.name}")
-                
-                # Reset due amount since it's now advance
-                self.due_amount = Decimal('0.00')
+                try:
+                    advance_amount = -self.due_amount
+                    self.customer.advance_balance += advance_amount
+                    self.customer.save(update_fields=['advance_balance'])
+                    self.due_amount = Decimal('0.00')
+                except:
+                    self.due_amount = Decimal('0.00')
             
-            # FIXED: Update payment status
+            # Update payment status
             self._update_payment_status()
 
-            # Save the updated totals
-            super().save(update_fields=[
+            # Save totals without triggering recursion
+            update_fields = [
                 "gross_total", "net_total", "grand_total", 
                 "payable_amount", "due_amount", "change_amount",
                 "payment_status"
-            ])
+            ]
+            
+            # Use update to avoid recursion
+            Sale.objects.filter(pk=self.pk).update(
+                gross_total=self.gross_total,
+                net_total=self.net_total,
+                grand_total=self.grand_total,
+                payable_amount=self.payable_amount,
+                due_amount=self.due_amount,
+                change_amount=self.change_amount,
+                payment_status=self.payment_status
+            )
             
         except Exception as e:
-            logger.error(f"Error updating totals for sale {self.invoice_no}: {str(e)}")
+            logger.error(f"Error updating totals for {self.invoice_no}: {str(e)}")
+        finally:
+            self._updating_totals = False
+
+    def _safe_decimal(self, value):
+        """Convert value to Decimal safely"""
+        try:
+            if value is None:
+                return Decimal('0.00')
+            if isinstance(value, Decimal):
+                return value
+            return Decimal(str(value))
+        except:
+            return Decimal('0.00')
 
     def _update_payment_status(self):
         """Update payment status based on current amounts"""
-        if self.paid_amount >= self.payable_amount:
-            self.due_amount = Decimal('0.00')
-            self.payment_status = 'paid'
-            # No longer logging change amount since it's handled as advance
-        elif self.paid_amount > Decimal('0.00'):
-            self.payment_status = 'partial'
-        else:
+        try:
+            paid = self._safe_decimal(self.paid_amount)
+            payable = self._safe_decimal(self.payable_amount)
+            
+            if paid >= payable:
+                self.due_amount = Decimal('0.00')
+                self.payment_status = 'paid'
+            elif paid > Decimal('0.00'):
+                self.payment_status = 'partial'
+            else:
+                self.payment_status = 'pending'
+        except:
             self.payment_status = 'pending'
 
-  
     def create_money_receipt(self):
-        """
-        Automatically create money receipt when payment is made
-        """
+        """Create money receipt for this sale"""
         if self.paid_amount <= 0:
             return None
         
         try:
             from money_receipts.models import MoneyReceipt
             
-            # Check if money receipt already exists for this sale
+            # Check if already exists
             existing_receipt = MoneyReceipt.objects.filter(sale=self).first()
-            
             if existing_receipt:
                 if existing_receipt.amount != self.paid_amount:
                     existing_receipt.amount = self.paid_amount
                     existing_receipt.save()
                 return existing_receipt
             
-            # Create new money receipt
+            # Create new receipt
             money_receipt = MoneyReceipt(
                 company=self.company,
                 customer=self.customer,
@@ -238,20 +316,18 @@ class Sale(models.Model):
                 amount=self.paid_amount,
                 payment_method=self.payment_method or 'Cash',
                 payment_date=timezone.now(),
-                remark=f"Auto-generated receipt for {self.invoice_no} - {self.get_customer_display()}",
+                remark=f"Auto receipt for {self.invoice_no}",
                 seller=self.sale_by,
-                account=self.account
+                account=self.account,
+                created_by=self.created_by
             )
             
-            # Mark as auto-created to avoid recursion
-            setattr(money_receipt, '_auto_created', True)
             money_receipt.save()
-            
-            logger.info(f"Money receipt created automatically: {money_receipt.mr_no} for {self.invoice_no}")
+            logger.info(f"Money receipt created: {money_receipt.mr_no} for {self.invoice_no}")
             return money_receipt
             
         except Exception as e:
-            logger.error(f"Error creating money receipt for sale {self.invoice_no}: {e}")
+            logger.error(f"Error creating money receipt for {self.invoice_no}: {e}")
             return None
 
     def clean(self):
@@ -352,14 +428,17 @@ class SaleItem(models.Model):
 
     def subtotal(self):
         """Calculate subtotal for this item"""
-        total = self.unit_price * self.quantity
-        
-        if self.discount_type == 'percent' and self.discount:
-            total -= total * (self.discount / Decimal('100.00'))
-        elif self.discount_type == 'fixed' and self.discount:
-            total -= self.discount
+        try:
+            total = Decimal(str(self.unit_price)) * self.quantity
             
-        return round(max(total, Decimal('0.00')), 2)
+            if self.discount_type == 'percent' and self.discount:
+                total -= total * (Decimal(str(self.discount)) / Decimal('100.00'))
+            elif self.discount_type == 'fixed' and self.discount:
+                total -= Decimal(str(self.discount))
+                
+            return round(max(total, Decimal('0.00')), 2)
+        except:
+            return Decimal('0.00')
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -375,22 +454,34 @@ class SaleItem(models.Model):
 
         # Update product stock for new items
         if is_new:
-            self.product.stock_qty -= self.quantity
-            self.product.save(update_fields=['stock_qty'])
+            try:
+                self.product.stock_qty -= self.quantity
+                self.product.save(update_fields=['stock_qty'])
+            except:
+                pass
         
         # Update sale totals
-        self.sale.update_totals()
+        try:
+            self.sale.update_totals()
+        except:
+            pass
 
     def delete(self, *args, **kwargs):
         # Restore product stock
-        self.product.stock_qty += self.quantity
-        self.product.save(update_fields=['stock_qty'])
+        try:
+            self.product.stock_qty += self.quantity
+            self.product.save(update_fields=['stock_qty'])
+        except:
+            pass
         
         sale = self.sale
         super().delete(*args, **kwargs)
         
         # Update sale totals after deletion
-        sale.update_totals()
+        try:
+            sale.update_totals()
+        except:
+            pass
 
     def __str__(self):
         return f"{self.product.name} x {self.quantity} - {self.subtotal()}"

@@ -148,9 +148,6 @@ class SaleSerializer(serializers.ModelSerializer):
             vat_amount = validated_data.pop('vat', 0)
             service_charge_amount = validated_data.pop('service_charge', 0)
             delivery_charge_amount = validated_data.pop('delivery_charge', 0)
-            original_paid_amount = validated_data.get('paid_amount', 0)
-            with_money_receipt = validated_data.get('with_money_receipt', 'No')
-            customer_type = validated_data.get('customer_type', 'walk_in')
             
             validated_data['overall_vat_amount'] = vat_amount
             validated_data['overall_service_charge'] = service_charge_amount
@@ -164,16 +161,23 @@ class SaleSerializer(serializers.ModelSerializer):
 
             # Handle customer
             customer = validated_data.get('customer')
+            customer_type = validated_data.get('customer_type', 'walk_in')
             if not customer and customer_type == 'walk_in':
-                customer = self.get_walk_in_customer(
-                    validated_data['company'],
-                    validated_data.get('customer_name')
+                # Create or get walk-in customer
+                from customers.models import Customer
+                walk_in_customer, created = Customer.objects.get_or_create(
+                    name='Walk-in Customer',
+                    company=validated_data['company'],
+                    defaults={
+                        'phone': 'N/A',
+                        'email': 'walkin@example.com',
+                        'address': 'Walk-in Customer'
+                    }
                 )
-                validated_data['customer'] = customer
+                validated_data['customer'] = walk_in_customer
 
             with transaction.atomic():
-                # ✅ FIXED: Use the actual paid_amount from request
-                # Don't set it to 0 initially
+                # Create sale
                 sale = Sale.objects.create(**validated_data)
 
                 # Create SaleItems
@@ -187,24 +191,25 @@ class SaleSerializer(serializers.ModelSerializer):
                         discount_type=item.get('discount_type', 'fixed')
                     )
 
-                # Update totals - this will calculate payable_amount and set payment_status
+                # FIXED: Call update_totals on the sale instance
                 sale.update_totals()
                 
-                # ✅ FIXED: REMOVED the strict validation for walk-in customers
-                # Allow partial payments for both walk-in and saved customers
-                # The payment_status will be automatically set to 'partial' in update_totals()
-
                 # Handle account balance and money receipt
                 account = validated_data.get('account')
+                with_money_receipt = validated_data.get('with_money_receipt', 'No')
+                
                 if account and sale.paid_amount > 0:
-                    account.balance += sale.paid_amount
-                    account.save(update_fields=['balance'])
-                    
-                    if with_money_receipt == 'Yes' and sale.paid_amount > 0:
-                        try:
-                            sale.create_money_receipt()
-                        except Exception as e:
-                            print(f"Error creating money receipt: {e}")
+                    try:
+                        account.balance += sale.paid_amount
+                        account.save(update_fields=['balance'])
+                        
+                        if with_money_receipt == 'Yes' and sale.paid_amount > 0:
+                            try:
+                                sale.create_money_receipt()
+                            except Exception as e:
+                                logger.error(f"Error creating money receipt: {e}")
+                    except Exception as e:
+                        logger.error(f"Error updating account balance: {e}")
 
                 return sale
 
@@ -217,7 +222,6 @@ class SaleSerializer(serializers.ModelSerializer):
             import traceback
             logger.error(traceback.format_exc())
             raise serializers.ValidationError(f"Failed to create sale: {str(e)}")
-    
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         representation['gross_total'] = instance.gross_total

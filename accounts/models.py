@@ -1,4 +1,3 @@
-# accounts/models.py
 from django.db import models
 from django.db.models import Q, Max
 from decimal import Decimal
@@ -71,28 +70,28 @@ class Account(models.Model):
             try:
                 from transactions.models import Transaction
                 
-                # Generate transaction number
-                last_transaction = Transaction.objects.filter(
-                    company=self.company
-                ).order_by('-id').first()
+                # Generate company-specific transaction number
+                company_prefix = self.company.name[:3].upper() if self.company else "COM"
+                timestamp = int(timezone.now().timestamp())
+                transaction_no = f"{company_prefix}-OB-{timestamp}"
                 
-                transaction_no = "TXN-1001"
-                if last_transaction and last_transaction.transaction_no:
-                    try:
-                        last_number = int(last_transaction.transaction_no.split('-')[-1])
-                        new_number = last_number + 1
-                        transaction_no = f"TXN-{new_number}"
-                    except (ValueError, IndexError):
-                        transaction_no = f"TXN-{1001 + (last_transaction.id if last_transaction else 0)}"
-                else:
-                    transaction_no = "TXN-1001"
+                # Ensure uniqueness
+                counter = 1
+                base_no = transaction_no
+                while Transaction.objects.filter(transaction_no=transaction_no).exists():
+                    transaction_no = f"{base_no}-{counter}"
+                    counter += 1
+                    if counter > 100:
+                        # Ultimate fallback
+                        transaction_no = f"{company_prefix}-OB-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+                        break
 
-                # Create opening balance transaction
+                # Create opening balance transaction WITH special flag
                 transaction = Transaction.objects.create(
                     company=self.company,
                     transaction_no=transaction_no,
                     account=self,
-                    transaction_type='credit',  # Opening balance increases account balance
+                    transaction_type='credit',
                     amount=self.opening_balance,
                     description=f"Opening balance for {self.name}",
                     transaction_date=timezone.now().date(),
@@ -101,13 +100,19 @@ class Account(models.Model):
                     is_opening_balance=True
                 )
                 
+                print(f"✅ Opening balance transaction created: {transaction.transaction_no} for account {self.name}")
                 return transaction
             except Exception as e:
-                print(f"Error creating opening balance transaction: {e}")
+                print(f"❌ Error creating opening balance transaction: {e}")
                 return None
         return None
 
     def save(self, *args, **kwargs):
+        # Extract user from kwargs if provided
+        user = kwargs.pop('creating_user', None)
+        if user and not self.pk:
+            self._creating_user = user
+        
         is_new = self.pk is None
         creating_opening_balance = is_new and self.opening_balance and self.opening_balance > 0
         
@@ -116,7 +121,8 @@ class Account(models.Model):
             self.bank_name = None
             self.branch = None
             
-        if is_new and (self.balance is None or self.balance == 0):
+        # Set initial balance to opening_balance for new accounts
+        if is_new:
             self.balance = self.opening_balance
         
         # Generate company-specific AC_NO
@@ -130,14 +136,11 @@ class Account(models.Model):
             
             if last_account and last_account.ac_no:
                 try:
-                    # Extract the number from AC_NO (e.g., "ACC-1005" -> 1005)
                     last_number = int(last_account.ac_no.split('-')[1])
                     new_number = last_number + 1
                 except (ValueError, IndexError):
-                    # If parsing fails, start from 1001
                     new_number = 1001
             else:
-                # First account for this company
                 new_number = 1001
                 
             self.ac_no = f"ACC-{new_number}"
@@ -145,10 +148,10 @@ class Account(models.Model):
         # Save the account first
         super().save(*args, **kwargs)
         
-        # Create opening balance transaction after saving
+        # Create opening balance transaction after saving (for record keeping only)
         if creating_opening_balance and hasattr(self, '_creating_user'):
             self.create_opening_balance_transaction(self._creating_user)
-
+            
     def clean(self):
         from django.core.exceptions import ValidationError
         

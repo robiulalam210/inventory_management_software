@@ -98,6 +98,37 @@ class Expense(models.Model):
         if self.account and self.amount > self.account.balance:
             raise ValidationError(f"Insufficient balance in account. Available: {self.account.balance}")
 
+    # def save(self, *args, **kwargs):
+    #     is_new = self.pk is None
+        
+    #     # Generate invoice number if new and not provided
+    #     if is_new and not self.invoice_number:
+    #         self.invoice_number = self.generate_invoice_number()
+        
+    #     # Validate before saving
+    #     self.clean()
+        
+    #     # Save the expense
+    #     super().save(*args, **kwargs)
+        
+    #     # Update account balance and create transaction for new expenses
+    #     if is_new and self.account:
+    #         logger.info(f"🔄 Creating transaction for new expense {self.invoice_number}")
+    #         try:
+    #             self.update_account_balance()
+    #             transaction = self.create_expense_transaction()
+    #             if transaction:
+    #                 logger.info(f"✅ Transaction created successfully: {transaction.id}")
+    #             else:
+    #                 logger.error(f"❌ Transaction creation returned None for expense {self.invoice_number}")
+    #         except Exception as e:
+    #             logger.error(f"❌ Error in transaction creation process: {str(e)}")
+    #             logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    #     else:
+    #         if not is_new:
+    #             logger.info(f"ℹ️ Expense update - no transaction created for {self.invoice_number}")
+    #         if not self.account:
+    #             logger.warning(f"⚠️ No account specified for expense {self.invoice_number} - skipping transaction")
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         
@@ -108,17 +139,21 @@ class Expense(models.Model):
         # Validate before saving
         self.clean()
         
-        # Save the expense
+        # Save the expense first
         super().save(*args, **kwargs)
         
-        # Update account balance and create transaction for new expenses
+        # For NEW expenses with account: Create transaction ONLY (no direct balance update)
         if is_new and self.account:
-            logger.info(f"🔄 Creating transaction for new expense {self.invoice_number}")
+            logger.info(f"🔄 Processing new expense {self.invoice_number}")
             try:
-                self.update_account_balance()
+                # ONLY create transaction - DO NOT update balance directly
+                # The transaction's save() method will handle balance update
                 transaction = self.create_expense_transaction()
                 if transaction:
                     logger.info(f"✅ Transaction created successfully: {transaction.id}")
+                    # Verify account balance after transaction
+                    self.account.refresh_from_db()
+                    logger.info(f"💰 Account balance after transaction: {self.account.balance}")
                 else:
                     logger.error(f"❌ Transaction creation returned None for expense {self.invoice_number}")
             except Exception as e:
@@ -130,6 +165,7 @@ class Expense(models.Model):
             if not self.account:
                 logger.warning(f"⚠️ No account specified for expense {self.invoice_number} - skipping transaction")
 
+                
     def generate_invoice_number(self):
         """Generate unique invoice number: EXP-1001, EXP-1002, etc."""
         if not self.company:
@@ -171,18 +207,18 @@ class Expense(models.Model):
             # Fallback: timestamp-based numbering
             return f"EXP-{int(timezone.now().timestamp())}"
 
-    def update_account_balance(self):
-        """Update account balance for expense payment - DEBIT transaction"""
-        if self.account and self.amount > 0:
-            try:
-                # Expense decreases account balance (DEBIT - money going out)
-                old_balance = self.account.balance
-                self.account.balance -= self.amount
-                self.account.save(update_fields=['balance', 'updated_at'])
-                logger.info(f"✅ Account balance updated for expense {self.invoice_number}: {old_balance} -> {self.account.balance}")
-            except Exception as e:
-                logger.error(f"❌ Error updating account balance for expense {self.invoice_number}: {str(e)}")
-                raise
+    # def update_account_balance(self):
+    #     """Update account balance for expense payment - DEBIT transaction"""
+    #     if self.account and self.amount > 0:
+    #         try:
+    #             # Expense decreases account balance (DEBIT - money going out)
+    #             old_balance = self.account.balance
+    #             self.account.balance -= self.amount
+    #             self.account.save(update_fields=['balance', 'updated_at'])
+    #             logger.info(f"✅ Account balance updated for expense {self.invoice_number}: {old_balance} -> {self.account.balance}")
+    #         except Exception as e:
+    #             logger.error(f"❌ Error updating account balance for expense {self.invoice_number}: {str(e)}")
+    #             raise
 
     def create_expense_transaction(self):
         """Create DEBIT transaction record for this expense - GUARANTEED VERSION"""
