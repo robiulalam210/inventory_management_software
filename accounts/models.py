@@ -15,16 +15,17 @@ class Account(models.Model):
     TYPE_CASH = 'Cash'
     TYPE_OTHER = 'Other'
 
-    AC_TYPE_CHOICES = [
-        (TYPE_BANK, 'Bank'),
-        (TYPE_MOBILE, 'Mobile banking'),
-        (TYPE_CASH, 'Cash'),
-        (TYPE_OTHER, 'Other'),
-    ]
+    ACCOUNT_TYPE_CHOICES = [
+    (TYPE_BANK, 'Bank'),
+    (TYPE_MOBILE, 'Mobile banking'),
+    (TYPE_CASH, 'Cash'),
+    (TYPE_OTHER, 'Other'),
+]
+
     ac_no = models.CharField(max_length=20, null=True, blank=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=150)
-    ac_type = models.CharField(max_length=30, choices=AC_TYPE_CHOICES, default=TYPE_OTHER)
+    ac_type = models.CharField(max_length=30, choices=ACCOUNT_TYPE_CHOICES, default=TYPE_OTHER)
     number = models.CharField(max_length=64, blank=True, null=True)
     bank_name = models.CharField(max_length=150, blank=True, null=True)
     branch = models.CharField(max_length=150, blank=True, null=True)

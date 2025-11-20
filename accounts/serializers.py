@@ -7,7 +7,8 @@ class AccountSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     ac_id = serializers.IntegerField(source='id', read_only=True)
     ac_name = serializers.CharField(source='name')
-    ac_type = serializers.CharField()
+    ac_type = serializers.ChoiceField(choices=Account.ACCOUNT_TYPE_CHOICES)
+
     ac_number = serializers.CharField(source='number', required=False, allow_null=True, allow_blank=True)
     balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     bank_name = serializers.CharField(required=False, allow_null=True, allow_blank=True)
