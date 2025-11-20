@@ -5,6 +5,8 @@ from decimal import Decimal
 from core.models import Company
 from accounts.models import Account
 from django.conf import settings
+from django.db.models import Q  
+from django.db.models import F
 import random
 import string
 import logging
@@ -80,7 +82,14 @@ class Transaction(models.Model):
         null=True, blank=True, 
         related_name='transactions'
     )
-
+    # ✅ FIXED: OneToOneField with matching related_name
+   
+    supplier_payment = models.ForeignKey(
+        'supplier_payment.SupplierPayment',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='transactions'  # CHANGED: Different related_name
+    )   
     # Extra
     description = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
@@ -91,6 +100,7 @@ class Transaction(models.Model):
             models.Index(fields=['company', 'transaction_date']),
             models.Index(fields=['account', 'transaction_date']),
             models.Index(fields=['transaction_no']),
+            models.Index(fields=['supplier_payment']),
         ]
 
     def __str__(self):
@@ -174,7 +184,8 @@ class Transaction(models.Model):
     def _update_account_balance(self):
         """Update account balance based on transaction"""
         try:
-            account = self.account
+            # Refresh account to get latest balance
+            account = Account.objects.get(id=self.account.id)
             old_balance = account.balance
             
             logger.info(f"BALANCE UPDATE DEBUG - Before:")
@@ -184,21 +195,49 @@ class Transaction(models.Model):
             logger.info(f"  - Amount: {self.amount}")
             
             if self.transaction_type == 'credit':
-                account.balance += self.amount
-                logger.info(f"💰 CREDIT: Account {account.name} balance updated from {old_balance} to {account.balance} (+{self.amount})")
+                # CREDIT increases balance
+                new_balance = old_balance + self.amount
+                account.balance = new_balance
+                logger.info(f"💰 CREDIT: Account {account.name} balance updated from {old_balance} to {new_balance} (+{self.amount})")
+                
             elif self.transaction_type == 'debit':
-                # Check sufficient balance for regular debit transactions
-                if account.balance < self.amount:
-                    raise ValidationError(f"Insufficient balance in account {account.name}")
-                account.balance -= self.amount
-                logger.info(f"💸 DEBIT: Account {account.name} balance updated from {old_balance} to {account.balance} (-{self.amount})")
+                # DEBIT decreases balance with proper validation
+                if old_balance < self.amount:
+                    # Check if this is an opening balance transaction or special case
+                    if self.is_opening_balance:
+                        # Allow negative for opening balance setup
+                        new_balance = old_balance - self.amount
+                        account.balance = new_balance
+                        logger.warning(f"⚠️  DEBIT (Opening): Account {account.name} balance updated from {old_balance} to {new_balance} (-{self.amount}) - Negative balance allowed for opening")
+                    else:
+                        # Regular debit transaction - insufficient funds
+                        error_msg = f"Insufficient balance in account {account.name}. Available: {old_balance}, Required: {self.amount}"
+                        logger.error(f"❌ {error_msg}")
+                        # Mark transaction as failed
+                        self.status = 'failed'
+                        super().save(update_fields=['status'])
+                        raise ValidationError(error_msg)
+                else:
+                    # Sufficient funds
+                    new_balance = old_balance - self.amount
+                    account.balance = new_balance
+                    logger.info(f"💸 DEBIT: Account {account.name} balance updated from {old_balance} to {new_balance} (-{self.amount})")
             
             # Save the updated account balance
-            account.save(update_fields=['balance'])
+            account.save(update_fields=['balance', 'updated_at'])
             logger.info(f"✅ Account balance saved successfully")
+            
+            # Update transaction status if it was successful
+            if self.status != 'failed':
+                self.status = 'completed'
+                super().save(update_fields=['status'])
             
         except Exception as e:
             logger.error(f"❌ Error updating account balance: {e}")
+            # Mark transaction as failed
+            if self.pk:
+                self.status = 'failed'
+                super().save(update_fields=['status'])
             raise
 
     def clean(self):
@@ -209,37 +248,46 @@ class Transaction(models.Model):
         if self.account and self.company and self.account.company != self.company:
             raise ValidationError("Account must belong to the same company")
         
-        # Validate debit transactions have sufficient balance
-        # BUT skip this check for opening balance transactions
-        if (self.transaction_type == 'debit' and self.status == 'completed' and 
-            self.account and not self.is_opening_balance and self.amount > self.account.balance):
-            raise ValidationError(f"Insufficient balance in account {self.account.name}")
+        # Improved debit transaction validation
+        if (self.transaction_type == 'debit' and 
+            self.status == 'completed' and 
+            self.account and 
+            not self.is_opening_balance):
+            
+            # Refresh account to get current balance
+            current_account = Account.objects.get(id=self.account.id)
+            if self.amount > current_account.balance:
+                raise ValidationError(
+                    f"Insufficient balance in account {current_account.name}. "
+                    f"Available: {current_account.balance}, Required: {self.amount}"
+                )
 
-    # ... rest of your model methods
     def reverse(self):
         """Reverse this transaction"""
         if self.status != 'completed':
             raise ValidationError("Only completed transactions can be reversed")
         
         with transaction.atomic():
-            # Create reversal transaction
+            # Create reversal transaction with proper amount handling
             reversal_type = 'credit' if self.transaction_type == 'debit' else 'debit'
+            
             reversal = Transaction.objects.create(
                 company=self.company,
                 transaction_type=reversal_type,
                 amount=self.amount,
                 account=self.account,
                 payment_method=self.payment_method,
-                description=f"Reversal of {self.transaction_no}",
+                description=f"Reversal of {self.transaction_no} - {self.description}",
                 created_by=self.created_by,
                 status='completed',
-                is_opening_balance=False  # Reversals are never opening balance
+                is_opening_balance=False
             )
             
             # Mark original as cancelled
             self.status = 'cancelled'
             self.save(update_fields=['status'])
             
+            logger.info(f"🔄 Transaction {self.transaction_no} reversed by {reversal.transaction_no}")
             return reversal
 
     @property
@@ -258,42 +306,223 @@ class Transaction(models.Model):
                 logger.error(f"No account set for money receipt {money_receipt.mr_no}")
                 return None
             
-            transaction_obj = cls.objects.create(
-                company=money_receipt.company,
-                transaction_type='credit',  # Money receipt is always credit
-                amount=money_receipt.amount,
-                account=money_receipt.account,
-                payment_method=money_receipt.payment_method,
-                description=f"Money Receipt {money_receipt.mr_no} - {money_receipt.get_customer_display()}",
-                money_receipt=money_receipt,
-                created_by=money_receipt.created_by,
-                status='completed',
-                transaction_date=money_receipt.payment_date,
-                is_opening_balance=False
-            )
-            
-            logger.info(f"✅ Transaction created for money receipt: {transaction_obj.transaction_no}")
-            return transaction_obj
+            # Use atomic transaction for consistency
+            with transaction.atomic():
+                transaction_obj = cls.objects.create(
+                    company=money_receipt.company,
+                    transaction_type='credit',  # Money receipt is always credit
+                    amount=money_receipt.amount,
+                    account=money_receipt.account,
+                    payment_method=money_receipt.payment_method,
+                    description=f"Money Receipt {money_receipt.mr_no} - {money_receipt.get_customer_display()}",
+                    money_receipt=money_receipt,
+                    created_by=money_receipt.created_by,
+                    status='completed',
+                    transaction_date=money_receipt.payment_date,
+                    is_opening_balance=False
+                )
+                
+                logger.info(f"✅ Transaction created for money receipt: {transaction_obj.transaction_no}")
+                return transaction_obj
             
         except Exception as e:
-            logger.error(f"Error creating transaction for money receipt {money_receipt.mr_no}: {e}")
+            logger.error(f"❌ Error creating transaction for money receipt {money_receipt.mr_no}: {e}")
             return None
+
+    @classmethod
+    def create_for_purchase_payment(cls, purchase, amount, payment_method, account, created_by):
+        """Create transaction for purchase payment"""
+        try:
+            if not account:
+                logger.error(f"No account specified for purchase payment")
+                return None
+            
+            # Purchase payments are DEBIT transactions (money going out)
+            with transaction.atomic():
+                transaction_obj = cls.objects.create(
+                    company=purchase.company,
+                    transaction_type='debit',  # Purchase payment decreases balance
+                    amount=amount,
+                    account=account,
+                    payment_method=payment_method,
+                    description=f"Purchase Payment - {purchase.invoice_no} - {purchase.supplier.name}",
+                    purchase=purchase,
+                    created_by=created_by,
+                    status='completed',
+                    transaction_date=timezone.now(),
+                    is_opening_balance=False
+                )
+                
+                logger.info(f"✅ Debit transaction created for purchase payment: {transaction_obj.transaction_no}")
+                return transaction_obj
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating transaction for purchase payment: {e}")
+            return None
+
+    @classmethod
+    def create_for_expense(cls, expense):
+        """Create transaction for expense"""
+        try:
+            if not expense.account:
+                logger.error(f"No account set for expense {expense.invoice_number}")
+                return None
+            
+            # Expenses are DEBIT transactions (money going out)
+            with transaction.atomic():
+                transaction_obj = cls.objects.create(
+                    company=expense.company,
+                    transaction_type='debit',  # Expense decreases balance
+                    amount=expense.amount,
+                    account=expense.account,
+                    payment_method=expense.payment_method or 'cash',
+                    description=f"Expense - {expense.invoice_number} - {expense.category.name if expense.category else 'No Category'}",
+                    expense=expense,
+                    created_by=expense.created_by,
+                    status='completed',
+                    transaction_date=expense.expense_date,
+                    is_opening_balance=False
+                )
+                
+                logger.info(f"✅ Debit transaction created for expense: {transaction_obj.transaction_no}")
+                return transaction_obj
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating transaction for expense: {e}")
+            return None
+
+    @classmethod
+    def create_for_supplier_payment(cls, supplier_payment, cash_amount):
+        """Create transaction for supplier payment - ENHANCED VERSION"""
+        try:
+            logger.info(f"🔄 Attempting to create transaction for supplier payment: {supplier_payment.sp_no}")
+            logger.info(f"  - Cash Amount: {cash_amount}")
+            logger.info(f"  - Account: {supplier_payment.account}")
+            logger.info(f"  - Payment Method: {supplier_payment.payment_method}")
+            
+            if not supplier_payment.account:
+                logger.error(f"❌ No account set for supplier payment {supplier_payment.sp_no}")
+                return None
+            
+            if cash_amount <= 0:
+                logger.info(f"⏩ No cash portion for supplier payment {supplier_payment.sp_no}, skipping transaction")
+                return None
+            
+            # Supplier payments are DEBIT transactions (money going out)
+            with transaction.atomic():
+                transaction_obj = cls.objects.create(
+                    company=supplier_payment.company,
+                    transaction_type='debit',  # Supplier payment decreases balance
+                    amount=cash_amount,
+                    account=supplier_payment.account,
+                    payment_method=supplier_payment.payment_method,
+                    reference_no=supplier_payment.reference_no,
+                    description=cls._generate_supplier_payment_description(supplier_payment),
+                    supplier_payment=supplier_payment,  # LINK TO SUPPLIER PAYMENT
+                    created_by=supplier_payment.created_by,
+                    status='completed',
+                    transaction_date=timezone.now(),
+                    is_opening_balance=False
+                )
+                
+                logger.info(f"✅ Debit transaction created for supplier payment: {transaction_obj.transaction_no}")
+                logger.info(f"🔗 Transaction {transaction_obj.transaction_no} linked to supplier payment {supplier_payment.sp_no}")
+                return transaction_obj
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating transaction for supplier payment {supplier_payment.sp_no}: {e}")
+            import traceback
+            logger.error(f"📋 Traceback: {traceback.format_exc()}")
+            return None
+
+    @classmethod
+    def _generate_supplier_payment_description(cls, supplier_payment):
+        """Generate description for supplier payment transaction"""
+        base_desc = f"Supplier Payment - {supplier_payment.supplier.name}"
+        
+        if supplier_payment.payment_type == 'specific' and supplier_payment.purchase:
+            return f"{base_desc} - Invoice: {supplier_payment.purchase.invoice_no}"
+        elif supplier_payment.payment_type == 'advance':
+            return f"{base_desc} - Advance Payment"
+        else:
+            return f"{base_desc} - Overall Payment"
 
     @classmethod
     def get_account_balance(cls, account):
         """Calculate account balance from transactions (for verification)"""
-        credits = cls.objects.filter(
-            account=account, 
-            status='completed',
-            transaction_type='credit',
-            is_opening_balance=False
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        
-        debits = cls.objects.filter(
-            account=account, 
-            status='completed',
-            transaction_type='debit', 
-            is_opening_balance=False
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-        
-        return credits - debits
+        try:
+            credits = cls.objects.filter(
+                account=account, 
+                status='completed',
+                transaction_type='credit',
+                is_opening_balance=False
+            ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
+            
+            debits = cls.objects.filter(
+                account=account, 
+                status='completed',
+                transaction_type='debit', 
+                is_opening_balance=False
+            ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
+            
+            # Opening balance transactions (both debit and credit affect balance)
+            opening_credits = cls.objects.filter(
+                account=account,
+                status='completed', 
+                transaction_type='credit',
+                is_opening_balance=True
+            ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
+            
+            opening_debits = cls.objects.filter(
+                account=account,
+                status='completed',
+                transaction_type='debit',
+                is_opening_balance=True
+            ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
+            
+            total_balance = (credits + opening_credits) - (debits + opening_debits)
+            
+            logger.info(f"📊 Account Balance Calculation for {account.name}:")
+            logger.info(f"  - Regular Credits: {credits}")
+            logger.info(f"  - Regular Debits: {debits}")
+            logger.info(f"  - Opening Credits: {opening_credits}")
+            logger.info(f"  - Opening Debits: {opening_debits}")
+            logger.info(f"  - Calculated Balance: {total_balance}")
+            logger.info(f"  - Stored Balance: {account.balance}")
+            
+            return total_balance
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating account balance: {e}")
+            return Decimal('0.00')
+
+    def get_transaction_details(self):
+        """Get detailed transaction information"""
+        return {
+            'id': self.id,
+            'transaction_no': self.transaction_no,
+            'type': self.transaction_type,
+            'amount': float(self.amount),
+            'account': self.account.name,
+            'payment_method': self.payment_method,
+            'status': self.status,
+            'date': self.transaction_date.isoformat(),
+            'description': self.description,
+            'is_opening_balance': self.is_opening_balance,
+            'linked_to': self._get_linked_object_type()
+        }
+
+    def _get_linked_object_type(self):
+        """Get the type of object this transaction is linked to"""
+        if self.money_receipt:
+            return f"Money Receipt: {self.money_receipt.mr_no}"
+        elif self.sale:
+            return f"Sale: {self.sale.invoice_no}"
+        elif self.expense:
+            return f"Expense: {self.expense.invoice_number}"
+        elif self.purchase:
+            return f"Purchase: {self.purchase.invoice_no}"
+        elif self.supplier_payment:
+            return f"Supplier Payment: {self.supplier_payment.sp_no}"
+        else:
+            return "Manual Transaction"

@@ -69,6 +69,7 @@ class SupplierPaymentListCreateAPIView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+        # supplier_payment/views.py - FIXED VERSION
     def post(self, request):
         """Create a new supplier payment"""
         try:
@@ -79,11 +80,11 @@ class SupplierPaymentListCreateAPIView(APIView):
             # Create a mutable copy of the data
             data = request.data.copy()
             
-            # Handle field mappings - FIXED: map seller_id to prepared_by
+            # ✅ FIXED: Map seller_id to created_by (not prepared_by)
             field_mappings = {
                 'account_id': 'account',
                 'supplier_id': 'supplier', 
-                'seller_id': 'prepared_by',  # Map seller_id to prepared_by
+                'seller_id': 'created_by',  # ✅ FIXED: seller_id -> created_by
                 'purchase_id': 'purchase',
             }
             
@@ -119,10 +120,10 @@ class SupplierPaymentListCreateAPIView(APIView):
             serializer = SupplierPaymentSerializer(data=data, context={'request': request})
             serializer.is_valid(raise_exception=True)
             
-            # FIXED: Use prepared_by instead of created_by
+            # ✅ FIXED: Use created_by (matching the model field)
             payment = serializer.save(
                 company=request.user.company,
-                prepared_by=request.user  # CHANGED: created_by -> prepared_by
+                created_by=request.user  # ✅ CORRECT: created_by matches model
             )
             
             logger.info(f"Supplier payment created successfully: {payment.sp_no}")
