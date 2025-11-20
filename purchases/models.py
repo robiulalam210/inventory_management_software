@@ -73,11 +73,14 @@ class Purchase(models.Model):
         return f"{self.invoice_no or 'No Invoice'} - {self.supplier.name}"
 
     def _update_payment_status(self):
-        """Update payment status based on paid amount"""
-        if self.paid_amount == 0:
+        """Update payment status based on paid amount - FIXED VERSION"""
+        if self.paid_amount <= 0:
             self.payment_status = 'pending'
         elif self.paid_amount >= self.grand_total:
             self.payment_status = 'paid'
+            # ✅ CRITICAL: Ensure due_amount is 0 when fully paid
+            if self.due_amount > 0:
+                self.due_amount = Decimal('0.00')
         elif self.paid_amount > 0 and self.paid_amount < self.grand_total:
             self.payment_status = 'partial'
         else:
@@ -89,15 +92,51 @@ class Purchase(models.Model):
             return Decimal('0.00')
         return Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
+    # def generate_invoice_no(self):
+    #     """Generate company-specific sequential invoice number"""
+    #     if not self.company:
+    #         return f"PO-1001"
+            
+    #     try:
+    #         # Get the last invoice number for this company
+    #         last_purchase = Purchase.objects.filter(
+    #             company=self.company,
+    #             invoice_no__isnull=False,
+    #             invoice_no__startswith='PO-'
+    #         ).order_by('-invoice_no').first()
+            
+    #         if last_purchase and last_purchase.invoice_no:
+    #             try:
+    #                 # Extract number from "PO-1001" format
+    #                 last_number = int(last_purchase.invoice_no.split('-')[1])
+    #                 new_number = last_number + 1
+    #             except (ValueError, IndexError):
+    #                 # If parsing fails, count existing purchases
+    #                 existing_count = Purchase.objects.filter(company=self.company).count()
+    #                 new_number = 1001 + existing_count
+    #         else:
+    #             # First purchase for this company
+    #             existing_count = Purchase.objects.filter(company=self.company).count()
+    #             new_number = 1001 + existing_count
+                
+    #         return f"PO-{new_number}"
+            
+    #     except Exception as e:
+    #         logger.error(f"Error generating invoice number: {str(e)}")
+    #         # Fallback: simple count-based numbering
+    #         existing_count = Purchase.objects.filter(company=self.company).count()
+    #         return f"PO-{1001 + existing_count}"
+# purchases/models.py - FIXED generate_invoice_no METHOD
+
     def generate_invoice_no(self):
-        """Generate company-specific sequential invoice number"""
+        """Generate company-specific sequential invoice number - FIXED VERSION"""
         if not self.company:
             return f"PO-1001"
             
         try:
-            # Get the last invoice number for this company
+            # ✅ FIXED: Get last purchase FOR THIS COMPANY ONLY
             last_purchase = Purchase.objects.filter(
-                company=self.company,
+                company=self.company,  # ✅ Only this company's purchases
                 invoice_no__isnull=False,
                 invoice_no__startswith='PO-'
             ).order_by('-invoice_no').first()
@@ -108,11 +147,11 @@ class Purchase(models.Model):
                     last_number = int(last_purchase.invoice_no.split('-')[1])
                     new_number = last_number + 1
                 except (ValueError, IndexError):
-                    # If parsing fails, count existing purchases
+                    # If parsing fails, count existing purchases FOR THIS COMPANY
                     existing_count = Purchase.objects.filter(company=self.company).count()
                     new_number = 1001 + existing_count
             else:
-                # First purchase for this company
+                # First purchase FOR THIS COMPANY
                 existing_count = Purchase.objects.filter(company=self.company).count()
                 new_number = 1001 + existing_count
                 
@@ -120,10 +159,12 @@ class Purchase(models.Model):
             
         except Exception as e:
             logger.error(f"Error generating invoice number: {str(e)}")
-            # Fallback: simple count-based numbering
+            # Fallback: count-based numbering FOR THIS COMPANY
             existing_count = Purchase.objects.filter(company=self.company).count()
             return f"PO-{1001 + existing_count}"
+    
 
+    
     def update_totals(self):
         """Update purchase totals from items - FIXED VERSION"""
         logger.info(f"🔄 Purchase.update_totals called for purchase ID: {self.id}")
@@ -133,16 +174,16 @@ class Purchase(models.Model):
             subtotal = sum([item.subtotal() for item in items])
             subtotal = self._round_decimal(subtotal)
 
-            # Calculate overall discount - FIXED: Don't allow discount to exceed subtotal
+            # Calculate overall discount
             discount_amount = Decimal('0.00')
             if self.overall_discount_type == 'percentage':
                 discount_amount = subtotal * (self.overall_discount / Decimal('100.00'))
             elif self.overall_discount_type == 'fixed':
-                discount_amount = min(self.overall_discount, subtotal)  # Don't allow negative totals
+                discount_amount = min(self.overall_discount, subtotal)
             
             discount_amount = self._round_decimal(discount_amount)
 
-            # Calculate charges on SUBTOTAL amount
+            # Calculate charges
             vat_amount = Decimal('0.00')
             if self.vat_type == 'percentage':
                 vat_amount = subtotal * (self.vat / Decimal('100.00'))
@@ -164,39 +205,45 @@ class Purchase(models.Model):
                 delivery_amount = self.overall_delivery_charge
             delivery_amount = self._round_decimal(delivery_amount)
 
-            # Calculate totals - FIXED: Ensure no negative totals
+            # Calculate totals
             total_after_discount = max(Decimal('0.00'), subtotal - discount_amount)
             grand_total = max(Decimal('0.00'), total_after_discount + vat_amount + service_amount + delivery_amount)
 
-            # Update fields
+            # ✅ FIXED: Use direct assignment instead of self.save() to avoid recursion
+            # Update fields without triggering save
             self.total = subtotal
             self.grand_total = grand_total
             
-            # Recalculate due amount
-            self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
-            self.change_amount = max(Decimal('0.00'), self.paid_amount - self.grand_total)
+            # ✅ FIXED: Proper due amount calculation
+            self.due_amount = max(Decimal('0.00'), grand_total - self.paid_amount)
+            self.change_amount = max(Decimal('0.00'), self.paid_amount - grand_total)
             self._update_payment_status()
 
-            logger.info(f"📊 Purchase totals updated: Subtotal={subtotal}, Discount={discount_amount}, Grand Total={grand_total}, Due={self.due_amount}")
+            logger.info(f"📊 Purchase totals updated: Subtotal={subtotal}, Grand Total={grand_total}, Paid={self.paid_amount}, Due={self.due_amount}")
             
-            # Save only if instance already exists
+            # ✅ FIXED: Only save if instance exists and use update_fields
             if self.pk:
-                super().save(update_fields=[
-                    "total", "grand_total", "due_amount", "change_amount", "payment_status", "date_updated"
-                ])
-                return True
+                # Use direct database update to avoid signal recursion
+                Purchase.objects.filter(pk=self.pk).update(
+                    total=self.total,
+                    grand_total=self.grand_total,
+                    due_amount=self.due_amount,
+                    change_amount=self.change_amount,
+                    payment_status=self.payment_status,
+                    date_updated=timezone.now()
+                )
+                # Refresh instance from database
+                self.refresh_from_db()
+                
+            return True
                 
         except Exception as e:
             logger.error(f"❌ Error updating purchase totals: {str(e)}")
             return False
 
     def save(self, *args, **kwargs):
-        """Custom save method to handle invoice generation - FIXED VERSION"""
+        """Custom save method - FIXED VERSION"""
         is_new = self.pk is None
-        
-        # ✅ FIXED: Remove custom kwargs before calling super().save()
-        # Extract our custom parameter and remove it from kwargs
-        should_update_totals = kwargs.pop('update_totals', True)
         
         # Generate invoice number for new purchases
         if is_new and not self.invoice_no:
@@ -206,18 +253,24 @@ class Purchase(models.Model):
         if self.paid_amount < 0:
             raise ValueError("Paid amount cannot be negative")
         
-        # SAVE FIRST to get PK
+        # ✅ FIXED: Calculate due_amount before first save
+        if is_new:
+            self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
+            self._update_payment_status()
+        
+        # Save to database
         super().save(*args, **kwargs)
         
-        # Update totals after save (this will save again with update_fields)
-        if is_new or should_update_totals:
+        # ✅ FIXED: Update totals after save (but only if needed)
+        if is_new:
             self.update_totals()
         
-        # Update supplier totals
+        # ✅ FIXED: Update supplier totals with error handling
         if self.supplier:
-            logger.info(f"🔄 Purchase.save: Triggering supplier update for '{self.supplier.name}'")
             try:
-                self.supplier.update_purchase_totals()
+                from django.db import transaction
+                # Use transaction to avoid recursion
+                transaction.on_commit(lambda: self.supplier.update_purchase_totals())
             except Exception as e:
                 logger.error(f"❌ ERROR updating supplier totals: {e}")
 
@@ -230,38 +283,58 @@ class Purchase(models.Model):
         if amount > self.due_amount:
             raise ValueError(f"Payment amount ({amount}) exceeds due amount ({self.due_amount})")
         
-        self.paid_amount += amount
+        # ✅ FIXED: Calculate new values BEFORE updating fields
+        new_paid_amount = self.paid_amount + amount
+        new_due_amount = max(Decimal('0.00'), self.grand_total - new_paid_amount)
+        new_change_amount = max(Decimal('0.00'), new_paid_amount - self.grand_total)
+        
+        # Update instance fields
+        self.paid_amount = new_paid_amount
+        self.due_amount = new_due_amount
+        self.change_amount = new_change_amount
         
         if payment_method:
             self.payment_method = payment_method
         if account:
             self.account = account
             
-        # ✅ FIXED: Save without triggering full update_totals
-        # We'll handle the totals update manually
-        update_fields = ["paid_amount", "due_amount", "change_amount", "payment_status", "date_updated"]
+        # Update payment status
+        self._update_payment_status()
+        
+        # ✅ FIXED: Save ALL fields to ensure consistency
+        update_fields = [
+            "paid_amount", "due_amount", "change_amount", "payment_status", 
+            "date_updated"
+        ]
+        
+        # Add optional fields if they exist
         if payment_method:
             update_fields.append("payment_method")
         if account:
             update_fields.append("account")
-            
-        # Update payment status
-        self._update_payment_status()
         
-        # Save with specific fields to avoid recursion
+        # Save with specific fields
         super().save(update_fields=update_fields)
         
         # Update account balance if account is provided
         if account and amount > 0:
-            account.balance -= amount  # Decrease balance for purchase payment
-            account.save(update_fields=['balance'])
-            
-        # Create transaction for the payment
-        self.create_payment_transaction(amount, payment_method, account)
-            
-        logger.info(f"✅ Payment of {amount} applied to purchase {self.invoice_no}")
+            try:
+                account.balance -= amount  # Decrease balance for purchase payment
+                account.save(update_fields=['balance'])
+            except Exception as e:
+                logger.error(f"❌ Error updating account balance: {e}")
+                # Don't fail the payment if account update fails
+                
+        # Create transaction for the payment (handle the error gracefully)
+        try:
+            self.create_payment_transaction(amount, payment_method, account)
+        except Exception as e:
+            logger.error(f"❌ Transaction creation failed but payment recorded: {e}")
+            # Payment should still succeed even if transaction fails
+                
+        logger.info(f"✅ Payment of {amount} applied to purchase {self.invoice_no}. "
+                    f"New: Paid={self.paid_amount}, Due={self.due_amount}, Status={self.payment_status}")
         return True
-
     def create_payment_transaction(self, amount, payment_method=None, account=None):
         """
         Create a transaction record for purchase payment

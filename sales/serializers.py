@@ -1,3 +1,5 @@
+# sales/serializers.py - COMPLETE FIXED VERSION
+
 from rest_framework import serializers
 from .models import Customer, Sale, SaleItem
 from products.models import Product
@@ -6,47 +8,61 @@ from money_receipts.models import MoneyReceipt
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from rest_framework.exceptions import ValidationError
+from decimal import Decimal
+import logging
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
 class SaleItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
-        queryset=Product.objects.all(), source='product'
+        queryset=Product.objects.all(), 
+        source='product',
+        write_only=True
     )
     product_name = serializers.CharField(source='product.name', read_only=True)
     subtotal = serializers.SerializerMethodField()
 
     class Meta:
         model = SaleItem
-        fields = ['id', 'product_id', 'product_name', 'quantity', 'unit_price',
-                  'discount', 'discount_type', 'subtotal']
+        fields = [
+            'id', 'product_id', 'product_name', 'quantity', 'unit_price',
+            'discount', 'discount_type', 'subtotal'
+        ]
+        read_only_fields = ['id', 'product_name', 'subtotal']
 
     def get_subtotal(self, obj):
         return obj.subtotal()
 
     def validate(self, attrs):
-        product = attrs['product']
-        qty = attrs['quantity']
+        product = attrs.get('product')
+        qty = attrs.get('quantity', 0)
         request = self.context.get('request')
 
+        if not product:
+            raise serializers.ValidationError({
+                'product': 'Product is required.'
+            })
+
+        if qty <= 0:
+            raise serializers.ValidationError({
+                'quantity': 'Quantity must be greater than 0.'
+            })
+
         if qty > product.stock_qty:
-            raise serializers.ValidationError(
-                f"Not enough stock for {product.name}. Available: {product.stock_qty}"
-            )
+            raise serializers.ValidationError({
+                'quantity': f"Not enough stock for {product.name}. Available: {product.stock_qty}"
+            })
 
         if request and hasattr(request.user, 'company') and product.company != request.user.company:
-            raise serializers.ValidationError(
-                f"Cannot use product from another company: {product.company.name}"
-            )
+            raise serializers.ValidationError({
+                'product': f"Cannot use product from another company: {product.company.name}"
+            })
 
         return attrs
 
-    def create(self, validated_data):
-        product = validated_data['product']
-        qty = validated_data['quantity']
-        product.stock_qty -= qty
-        product.save(update_fields=['stock_qty'])
-        return SaleItem.objects.create(**validated_data)
 
 class SaleSerializer(serializers.ModelSerializer):
     customer_id = serializers.PrimaryKeyRelatedField(
@@ -56,7 +72,7 @@ class SaleSerializer(serializers.ModelSerializer):
         allow_null=True
     )
     customer_name = serializers.CharField(required=False, allow_blank=True)
-    items = SaleItemSerializer(many=True)
+    items = SaleItemSerializer(many=True, write_only=True)  # ✅ FIXED: Make items write_only
     due_amount = serializers.SerializerMethodField()
     change_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     payment_method = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -98,10 +114,10 @@ class SaleSerializer(serializers.ModelSerializer):
             'payment_method', 'account_id', 'account_name',
             'customer_type', 'with_money_receipt', 'remark',
             'vat', 'service_charge', 'delivery_charge',
-            'items'
+            'items'  # ✅ This is now write_only
         ]
         read_only_fields = [
-            'invoice_no', 'gross_total', 'net_total', 'grand_total', 
+            'id', 'invoice_no', 'gross_total', 'net_total', 'grand_total', 
             'payable_amount', 'due_amount', 'change_amount',
             'overall_delivery_charge', 'overall_service_charge', 'overall_vat_amount',
             'created_by_name', 'sale_by_name'
@@ -110,22 +126,17 @@ class SaleSerializer(serializers.ModelSerializer):
     def get_due_amount(self, obj):
         return max(0, obj.payable_amount - obj.paid_amount)
 
-    def get_walk_in_customer(self, company, customer_name=None):
-        name = customer_name or 'Walk-in Customer'
-        
-        try:
-            customer = Customer.objects.get(
-                name=name,
-                company=company
-            )
-            return customer
-        except Customer.DoesNotExist:
-            return None
-
     def validate(self, attrs):
         customer_type = attrs.get('customer_type', 'walk_in')
         with_money_receipt = attrs.get('with_money_receipt', 'No')
         paid_amount = attrs.get('paid_amount', 0)
+        items = attrs.get('items', [])
+        
+        # Validate items exist
+        if not items:
+            raise serializers.ValidationError({
+                'items': 'At least one item is required for the sale.'
+            })
         
         # Remove customer requirement for walk-in with money receipt
         if customer_type == 'walk_in' and with_money_receipt == 'Yes':
@@ -143,8 +154,12 @@ class SaleSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """Create sale with nested items - FIXED VERSION"""
         try:
-            items_data = validated_data.pop('items')
+            # Extract nested items data
+            items_data = validated_data.pop('items', [])
+            
+            # Extract additional fields
             vat_amount = validated_data.pop('vat', 0)
             service_charge_amount = validated_data.pop('service_charge', 0)
             delivery_charge_amount = validated_data.pop('delivery_charge', 0)
@@ -153,45 +168,46 @@ class SaleSerializer(serializers.ModelSerializer):
             validated_data['overall_service_charge'] = service_charge_amount
             validated_data['overall_delivery_charge'] = delivery_charge_amount
             
+            # Get request context
             request = self.context.get('request')
             if request and request.user.is_authenticated:
                 validated_data['created_by'] = request.user
                 validated_data['sale_by'] = request.user
-                validated_data['company'] = getattr(request.user, 'company', None)
+                # Ensure company is set from user
+                if hasattr(request.user, 'company'):
+                    validated_data['company'] = request.user.company
 
-            # Handle customer
+            # Handle customer for walk-in sales
             customer = validated_data.get('customer')
             customer_type = validated_data.get('customer_type', 'walk_in')
-            if not customer and customer_type == 'walk_in':
-                # Create or get walk-in customer
-                from customers.models import Customer
-                walk_in_customer, created = Customer.objects.get_or_create(
-                    name='Walk-in Customer',
-                    company=validated_data['company'],
-                    defaults={
-                        'phone': 'N/A',
-                        'email': 'walkin@example.com',
-                        'address': 'Walk-in Customer'
-                    }
-                )
-                validated_data['customer'] = walk_in_customer
+            
+            if customer_type == 'walk_in' and not customer:
+                validated_data['customer'] = None
+                if not validated_data.get('customer_name'):
+                    validated_data['customer_name'] = 'Walk-in Customer'
 
+            # Use transaction to ensure data consistency
             with transaction.atomic():
-                # Create sale
+                # Create the sale instance
                 sale = Sale.objects.create(**validated_data)
 
-                # Create SaleItems
-                for item in items_data:
-                    SaleItem.objects.create(
+                # Create all sale items
+                sale_items = []
+                for item_data in items_data:
+                    sale_item = SaleItem(
                         sale=sale,
-                        product=item['product'],
-                        quantity=item['quantity'],
-                        unit_price=item['unit_price'],
-                        discount=item.get('discount', 0),
-                        discount_type=item.get('discount_type', 'fixed')
+                        product=item_data['product'],
+                        quantity=item_data['quantity'],
+                        unit_price=item_data['unit_price'],
+                        discount=item_data.get('discount', 0),
+                        discount_type=item_data.get('discount_type', 'fixed')
                     )
-
-                # FIXED: Call update_totals on the sale instance
+                    sale_items.append(sale_item)
+                
+                # Bulk create items for better performance
+                SaleItem.objects.bulk_create(sale_items)
+                
+                # Update sale totals
                 sale.update_totals()
                 
                 # Handle account balance and money receipt
@@ -213,17 +229,20 @@ class SaleSerializer(serializers.ModelSerializer):
 
                 return sale
 
-        except serializers.ValidationError:
-            raise
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.error(f"Error creating sale: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             raise serializers.ValidationError(f"Failed to create sale: {str(e)}")
+
     def to_representation(self, instance):
+        """Custom representation to include items in response"""
         representation = super().to_representation(instance)
+        
+        # Add items to the response
+        items_serializer = SaleItemSerializer(instance.items.all(), many=True)
+        representation['items'] = items_serializer.data
+        
         representation['gross_total'] = instance.gross_total
         representation['net_total'] = instance.net_total
         representation['grand_total'] = instance.grand_total
@@ -237,6 +256,7 @@ class SaleSerializer(serializers.ModelSerializer):
             representation['customer_name'] = 'Walk-in Customer'
             
         return representation
+
 
 class DueSaleSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source='customer.name', read_only=True)

@@ -1,3 +1,5 @@
+# money_receipts/serializers.py - COMPLETE FIXED VERSION
+
 from rest_framework import serializers
 from .models import MoneyReceipt
 from sales.models import Sale
@@ -53,11 +55,28 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
             'payment_type', 'specific_invoice', 'payment_summary'
         ]
 
+    def __init__(self, *args, **kwargs):
+        """Initialize with company-filtered querysets"""
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        
+        if request and hasattr(request, 'user') and hasattr(request.user, 'company'):
+            company = request.user.company
+            
+            # Filter querysets by company
+            self.fields['customer_id'].queryset = Customer.objects.filter(company=company)
+            self.fields['account_id'].queryset = Account.objects.filter(company=company)
+            self.fields['sale_id'].queryset = Sale.objects.filter(company=company)
+
     def validate(self, attrs):
-        """Enhanced validation"""
+        """Enhanced validation with company checks"""
+        request = self.context.get('request')
+        company = getattr(request.user, 'company', None) if request else None
+        
         amount = attrs.get('amount')
         customer = attrs.get('customer')
         sale = attrs.get('sale')
+        account = attrs.get('account')  # ✅ FIXED: Changed from 'attts' to 'attrs'
         is_advance_payment = attrs.get('is_advance_payment', False)
         payment_type = attrs.get('payment_type', 'overall')
 
@@ -66,6 +85,23 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "amount": "Payment amount must be greater than 0."
             })
+
+        # ✅ FIXED: Validate company consistency
+        if company:
+            if customer and customer.company != company:
+                raise serializers.ValidationError({
+                    "customer": "Customer must belong to your company."
+                })
+            
+            if sale and sale.company != company:
+                raise serializers.ValidationError({
+                    "sale": "Sale must belong to your company."
+                })
+            
+            if account and account.company != company:
+                raise serializers.ValidationError({
+                    "account": "Account must belong to your company."
+                })
 
         # Validate customer requirements
         if is_advance_payment and not customer:
@@ -89,17 +125,26 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
         """Create money receipt with proper context"""
         request = self.context.get('request')
         
-        # Set company and seller from request user
-        if request and request.user:
-            validated_data['company'] = getattr(request.user, 'company', None)
-            if 'seller' not in validated_data or not validated_data['seller']:
-                validated_data['seller'] = request.user
-            if 'created_by' not in validated_data or not validated_data['created_by']:
-                validated_data['created_by'] = request.user
+        if not request or not hasattr(request.user, 'company'):
+            raise serializers.ValidationError("User must be associated with a company.")
+        
+        # ✅ FIXED: Ensure company is set from request user
+        validated_data['company'] = request.user.company
+        
+        # Set seller and created_by from request user
+        if 'seller' not in validated_data or not validated_data['seller']:
+            validated_data['seller'] = request.user
+        if 'created_by' not in validated_data or not validated_data['created_by']:
+            validated_data['created_by'] = request.user
         
         # Set default payment method if not provided
         if 'payment_method' not in validated_data or not validated_data['payment_method']:
             validated_data['payment_method'] = 'cash'
+        
+        # ✅ FIXED: Double-check customer company
+        customer = validated_data.get('customer')
+        if customer and customer.company != validated_data['company']:
+            raise serializers.ValidationError("Customer company mismatch.")
         
         # Create the money receipt
         receipt = MoneyReceipt.objects.create(**validated_data)

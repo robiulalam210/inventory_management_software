@@ -8,10 +8,11 @@ class SaleAdmin(admin.ModelAdmin):
     search_fields = ['customer__name']
 
     def get_customer_name(self, obj):
-        return obj.customer.name
+        if obj.customer:
+            return obj.customer.name
+        return "No Customer"  # or return an empty string ""
     get_customer_name.short_description = 'Customer'
 
 @admin.register(SaleItem)
 class SaleItemAdmin(admin.ModelAdmin):
     list_display = ['sale', 'product', 'quantity', 'unit_price', 'discount', 'discount_type']
-

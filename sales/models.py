@@ -1,3 +1,5 @@
+# sales/models.py - COMPLETELY FIXED VERSION
+
 from django.db import models
 from django.core.exceptions import ValidationError
 from accounts.models import Account
@@ -69,7 +71,7 @@ class Sale(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        """Safe save method with recursion prevention"""
+        """Safe save method with recursion prevention - FIXED VERSION"""
         # Prevent recursion
         if getattr(self, '_saving', False):
             return super().save(*args, **kwargs)
@@ -87,6 +89,25 @@ class Sale(models.Model):
                 except Sale.DoesNotExist:
                     pass
             
+            # ✅ FIXED: Auto-assign company from created_by user if not set
+            if not self.company and hasattr(self, 'created_by') and self.created_by:
+                if hasattr(self.created_by, 'company') and self.created_by.company:
+                    self.company = self.created_by.company
+                    logger.info(f"Auto-assigned company from user: {self.company}")
+            
+            # ✅ FIXED: CRITICAL - Ensure company is set before any operations
+            if not self.company:
+                logger.error("Sale cannot be saved without a company")
+                raise ValidationError("Sale must be associated with a company.")
+            
+            # ✅ FIXED: Validate customer belongs to same company
+            if self.customer and self.customer.company != self.company:
+                logger.warning(f"Customer company mismatch. Customer: {self.customer.company}, Sale: {self.company}")
+                # Reset customer if company doesn't match
+                self.customer = None
+                self.customer_type = 'walk_in'
+                self.customer_name = 'Walk-in Customer'
+            
             # Handle customer
             if self.customer_type == 'walk_in' and not self.customer_name:
                 self.customer_name = 'Walk-in Customer'
@@ -95,8 +116,17 @@ class Sale(models.Model):
                 if not self.customer_name or self.customer_name == 'Walk-in Customer':
                     self.customer_name = 'Walk-in Customer'
             
+            # ✅ FIXED: Validate saved customer belongs to same company
+            if self.customer_type == 'saved_customer' and self.customer:
+                if self.customer.company != self.company:
+                    raise ValidationError({
+                        'customer': 'Customer must belong to the same company.'
+                    })
+            
             if self.customer_type == 'saved_customer' and not self.customer:
-                raise ValidationError("Saved customer must have a customer record.")
+                raise ValidationError({
+                    'customer': 'Saved customer must have a customer record.'
+                })
             
             # Generate invoice number
             if is_new and not self.invoice_no:
@@ -106,37 +136,66 @@ class Sale(models.Model):
             if self.paid_amount > 0 and not self.account:
                 self._set_default_account()
             
+            # ✅ FIXED: Validate account belongs to same company
+            if self.account and self.account.company != self.company:
+                logger.warning(f"Account company mismatch. Resetting account.")
+                self.account = None
+            
             # Save first to get PK
             super().save(*args, **kwargs)
             
             # Update totals after saving
             self.update_totals()
             
-            # Create money receipt if payment increased
+            # ✅ FIXED: Create transaction ONLY if no money receipt will be created
             payment_increased = not is_new and self.paid_amount > old_paid_amount
             
-            if (payment_increased and 
-                self.with_money_receipt == 'Yes' and 
-                self.paid_amount > 0 and
-                not getattr(self, '_skip_money_receipt', False)):
+            if (is_new or payment_increased) and self.paid_amount > 0:
+                if self.with_money_receipt == 'No':
+                    # Create sale transaction directly
+                    self.create_transaction()
+                elif self.with_money_receipt == 'Yes' and not getattr(self, '_skip_money_receipt', False):
+                    # Create money receipt (which will create transaction)
+                    self.create_money_receipt()
                 
-                self.create_money_receipt()
-                
+        except Exception as e:
+            logger.error(f"Error saving sale: {str(e)}")
+            raise
         finally:
             self._saving = False
 
     def _generate_invoice_no_safe(self):
-        """Generate invoice number with decimal corruption protection"""
+        """Generate invoice number with decimal corruption protection - FIXED VERSION"""
         if not self.company:
-            return None
+            logger.error("Cannot generate invoice number: No company assigned")
+            return f"SL-{int(timezone.now().timestamp())}"
             
         try:
-            # Get last sale safely
-            last_sale = Sale.objects.filter(company=self.company).order_by("-id").first()
-            new_id = (last_sale.id + 1) if last_sale else 1
-            return f"SL-{1000 + new_id}"
+            # ✅ FIXED: Get last sale by invoice_no, not by id
+            last_sale = Sale.objects.filter(
+                company=self.company,
+                invoice_no__isnull=False,
+                invoice_no__startswith='SL-'
+            ).order_by('-invoice_no').first()
+            
+            if last_sale and last_sale.invoice_no:
+                try:
+                    # Extract number from "SL-1001" format
+                    last_number = int(last_sale.invoice_no.split('-')[1])
+                    new_number = last_number + 1
+                except (ValueError, IndexError):
+                    # If parsing fails, count existing sales for this company
+                    existing_count = Sale.objects.filter(company=self.company).count()
+                    new_number = 1001 + existing_count
+            else:
+                # First sale for this company
+                existing_count = Sale.objects.filter(company=self.company).count()
+                new_number = 1001 + existing_count
+                
+            return f"SL-{new_number}"
+            
         except Exception as e:
-            logger.error(f"Error generating invoice number: {e}")
+            logger.error(f"Error generating invoice number: {str(e)}")
             # Fallback: use timestamp
             timestamp = int(timezone.now().timestamp())
             return f"SL-{timestamp}"
@@ -157,8 +216,45 @@ class Sale(models.Model):
         except Exception as e:
             logger.warning(f"Could not set default account: {e}")
 
+    def create_transaction(self):
+        """Create transaction for sale - FIXED VERSION"""
+        try:
+            from transactions.models import Transaction
+            
+            # Check if transaction already exists
+            existing_transaction = Transaction.objects.filter(
+                reference_model='sale',
+                reference_id=self.id
+            ).first()
+            
+            if existing_transaction:
+                logger.info(f"Transaction already exists for sale {self.invoice_no}")
+                return existing_transaction
+            
+            # Only create transaction if payment was made and account exists
+            if self.paid_amount > 0 and self.account:
+                transaction = Transaction(
+                    company=self.company,
+                    account=self.account,
+                    amount=self.paid_amount,
+                    transaction_type='credit',
+                    reference_model='sale',
+                    reference_id=self.id,
+                    date=timezone.now(),
+                    description=f"Sale {self.invoice_no}",
+                    created_by=self.created_by
+                )
+                
+                transaction.save()
+                logger.info(f"Sale transaction created: {transaction.transaction_no} for {self.invoice_no}")
+                return transaction
+                
+        except Exception as e:
+            logger.error(f"Error creating sale transaction for {self.invoice_no}: {e}")
+        return None
+
     def update_totals(self):
-        """Update all calculated totals for the sale"""
+        """Update all calculated totals for the sale - FIXED PAYMENT LOGIC"""
         try:
             if getattr(self, '_updating_totals', False):
                 return
@@ -223,25 +319,36 @@ class Sale(models.Model):
             self.grand_total = min(self._safe_decimal(grand_total), max_amount)
             self.payable_amount = min(self._safe_decimal(grand_total), max_amount)
             
-            # Calculate due amount safely
+            # ✅ FIXED: CORRECT PAYMENT CALCULATION
             paid = self._safe_decimal(self.paid_amount)
             payable = self._safe_decimal(self.payable_amount)
-            self.due_amount = max(min(payable - paid, max_amount), Decimal('0.00'))
-            self.change_amount = Decimal('0.00')
             
-            # Handle overpayment
-            if self.due_amount < 0 and self.customer:
-                try:
-                    advance_amount = -self.due_amount
-                    self.customer.advance_balance += advance_amount
-                    self.customer.save(update_fields=['advance_balance'])
-                    self.due_amount = Decimal('0.00')
-                except:
-                    self.due_amount = Decimal('0.00')
+            # Calculate due amount and change
+            if paid > payable:
+                # Overpayment - customer paid more than required
+                self.due_amount = Decimal('0.00')
+                self.change_amount = paid - payable
+            else:
+                # Normal payment or partial payment
+                self.due_amount = payable - paid
+                self.change_amount = Decimal('0.00')
             
             # Update payment status
             self._update_payment_status()
 
+            # ✅ FIXED: Handle advance balance for saved customers only
+            if (self.customer and 
+                self.customer_type == 'saved_customer' and 
+                self.change_amount > 0):
+                # For saved customers, excess goes to advance balance
+                try:
+                    self.customer.advance_balance += self.change_amount
+                    self.customer.save(update_fields=['advance_balance'])
+                    logger.info(f"Added {self.change_amount} to advance balance for {self.customer.name}")
+                    self.change_amount = Decimal('0.00')  # Reset change since it's now advance
+                except Exception as e:
+                    logger.error(f"Error updating customer advance balance: {e}")
+            
             # Save totals without triggering recursion
             update_fields = [
                 "gross_total", "net_total", "grand_total", 
@@ -277,28 +384,36 @@ class Sale(models.Model):
             return Decimal('0.00')
 
     def _update_payment_status(self):
-        """Update payment status based on current amounts"""
+        """Update payment status based on current amounts - FIXED SINGLE VERSION"""
         try:
             paid = self._safe_decimal(self.paid_amount)
             payable = self._safe_decimal(self.payable_amount)
             
             if paid >= payable:
-                self.due_amount = Decimal('0.00')
                 self.payment_status = 'paid'
             elif paid > Decimal('0.00'):
                 self.payment_status = 'partial'
             else:
                 self.payment_status = 'pending'
-        except:
+                
+            logger.info(f"Payment Status Update - Paid: {paid}, Payable: {payable}, Status: {self.payment_status}")
+            
+        except Exception as e:
+            logger.error(f"Error updating payment status: {e}")
             self.payment_status = 'pending'
 
     def create_money_receipt(self):
-        """Create money receipt for this sale"""
+        """Create money receipt for this sale - FIXED VERSION"""
         if self.paid_amount <= 0:
             return None
         
         try:
             from money_receipts.models import MoneyReceipt
+            
+            # ✅ FIXED: For walk-in customers, don't set customer in money receipt
+            money_receipt_customer = self.customer
+            if self.customer_type == 'walk_in':
+                money_receipt_customer = None
             
             # Check if already exists
             existing_receipt = MoneyReceipt.objects.filter(sale=self).first()
@@ -311,7 +426,7 @@ class Sale(models.Model):
             # Create new receipt
             money_receipt = MoneyReceipt(
                 company=self.company,
-                customer=self.customer,
+                customer=money_receipt_customer,  # None for walk-in customers
                 sale=self,
                 amount=self.paid_amount,
                 payment_method=self.payment_method or 'Cash',
@@ -333,6 +448,12 @@ class Sale(models.Model):
     def clean(self):
         """Model validation"""
         super().clean()
+        
+        # Validate that company is set
+        if not self.company:
+            raise ValidationError({
+                'company': 'Sale must be associated with a company.'
+            })
         
         # Validate that due_amount is not negative
         if self.due_amount < 0:
@@ -360,9 +481,13 @@ class Sale(models.Model):
         return self.customer_type == 'walk_in'
 
     def get_customer_display(self):
+        """Get customer display name - FIXED VERSION"""
         if self.customer_type == 'walk_in':
             return self.customer_name or "Walk-in Customer"
-        return self.customer.name if self.customer else "Unknown Customer"
+        elif self.customer:
+            return self.customer.name
+        else:
+            return "Unknown Customer"
 
     def add_payment(self, amount, payment_method=None, account=None):
         """
@@ -450,29 +575,45 @@ class SaleItem(models.Model):
                     f"Not enough stock for {self.product.name}. Available: {self.product.stock_qty}, Requested: {self.quantity}"
                 )
         
-        super().save(*args, **kwargs)
-
-        # Update product stock for new items
-        if is_new:
+        # ✅ FIXED: Store old quantity for stock adjustment
+        old_qty = 0
+        if not is_new:
             try:
-                self.product.stock_qty -= self.quantity
-                self.product.save(update_fields=['stock_qty'])
-            except:
+                old_item = SaleItem.objects.get(pk=self.pk)
+                old_qty = old_item.quantity
+            except SaleItem.DoesNotExist:
                 pass
         
-        # Update sale totals
+        super().save(*args, **kwargs)
+
+        # ✅ FIXED: Update product stock properly
+        try:
+            product = self.product
+            if is_new:
+                # New item - decrease stock
+                product.stock_qty -= self.quantity
+            else:
+                # Updated item - adjust stock based on quantity change
+                stock_change = self.quantity - old_qty
+                product.stock_qty -= stock_change
+            
+            product.save(update_fields=['stock_qty'])
+        except Exception as e:
+            logger.error(f"Error updating product stock: {e}")
+        
+        # ✅ FIXED: Update sale totals
         try:
             self.sale.update_totals()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error updating sale totals: {e}")
 
     def delete(self, *args, **kwargs):
         # Restore product stock
         try:
             self.product.stock_qty += self.quantity
             self.product.save(update_fields=['stock_qty'])
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error restoring product stock: {e}")
         
         sale = self.sale
         super().delete(*args, **kwargs)
@@ -480,8 +621,8 @@ class SaleItem(models.Model):
         # Update sale totals after deletion
         try:
             sale.update_totals()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error updating sale totals after deletion: {e}")
 
     def __str__(self):
         return f"{self.product.name} x {self.quantity} - {self.subtotal()}"

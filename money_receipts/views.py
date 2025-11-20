@@ -100,8 +100,10 @@ class MoneyReceiptCreateAPIView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # money_receipts/views.py - FIX THE POST METHOD
+
     def post(self, request):
-        """Create new money receipt"""
+        """Create new money receipt - FIXED VERSION"""
         try:
             logger.info("Creating money receipt", extra={
                 'user': request.user.id,
@@ -109,11 +111,21 @@ class MoneyReceiptCreateAPIView(APIView):
                 'data': request.data
             })
             
+            # Validate user has company
+            if not hasattr(request.user, 'company') or not request.user.company:
+                return custom_response(
+                    success=False,
+                    message="User must be associated with a company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
             # Prepare data
             data = request.data.copy()
             
-            # Set required fields from request context
-            data['company'] = getattr(request.user, 'company_id', None)
+            # ✅ FIXED: Remove company from data - let serializer handle it
+            if 'company' in data:
+                del data['company']
             
             # Validate required fields
             required_fields = ['customer_id', 'payment_date', 'payment_method', 'amount']
@@ -127,6 +139,7 @@ class MoneyReceiptCreateAPIView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
+            # ✅ FIXED: Pass request context to serializer
             serializer = MoneyReceiptSerializer(data=data, context={'request': request})
             
             if serializer.is_valid():
@@ -156,8 +169,6 @@ class MoneyReceiptCreateAPIView(APIView):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
 class MoneyReceiptDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

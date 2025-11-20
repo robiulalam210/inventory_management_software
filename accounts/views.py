@@ -45,7 +45,11 @@ class AccountViewSet(BaseInventoryViewSet):
         # Get filter parameters
         ac_type = self.request.query_params.get('ac_type')
         logger.debug(f"Requested ac_type filter: '{ac_type}'")
-        
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        else:
+            return Account.objects.none()
         # Apply company filtering (CRITICAL - add this)
         if hasattr(self.request, 'user') and hasattr(self.request.user, 'company'):
             queryset = queryset.filter(company=self.request.user.company)

@@ -28,7 +28,7 @@ class MoneyReceipt(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    mr_no = models.CharField(max_length=20, unique=True, blank=True)
+    mr_no = models.CharField(max_length=20, blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
     sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True)
 
@@ -91,8 +91,10 @@ class MoneyReceipt(models.Model):
         if self.customer and self.customer.company != self.company:
             raise ValidationError("Customer must belong to the same company")
 
+   # money_receipts/models.py - FIX THE SAVE METHOD
+
     def save(self, *args, **kwargs):
-        """FIXED: Safe save method with proper recursion prevention"""
+        """FIXED: Safe save method with proper company validation"""
         # Prevent recursion
         if getattr(self, '_saving', False):
             return super().save(*args, **kwargs)
@@ -101,6 +103,15 @@ class MoneyReceipt(models.Model):
         
         try:
             is_new = self.pk is None
+
+            # ✅ FIXED: Auto-assign company from customer or sale if not set
+            if not self.company:
+                if self.customer:
+                    self.company = self.customer.company
+                elif self.sale:
+                    self.company = self.sale.company
+                elif hasattr(self, '_request_user') and hasattr(self._request_user, 'company'):
+                    self.company = self._request_user.company
 
             # Generate MR number if new
             if is_new and not self.mr_no:
@@ -113,12 +124,26 @@ class MoneyReceipt(models.Model):
             elif self.sale:
                 self.payment_type = 'specific'
                 self.specific_invoice = True
-                # Ensure customer is set from sale
+                # Ensure customer is set from sale and validate company
                 if not self.customer and self.sale.customer:
                     self.customer = self.sale.customer
+                    # ✅ FIXED: Ensure customer company matches
+                    if self.customer.company != self.company:
+                        logger.warning(f"Customer company mismatch. Resetting customer.")
+                        self.customer = None
             else:
                 self.payment_type = 'overall'
                 self.specific_invoice = False
+
+            # ✅ FIXED: Validate company consistency before clean
+            if self.customer and self.customer.company != self.company:
+                raise ValidationError("Customer must belong to the same company")
+            
+            if self.sale and self.sale.company != self.company:
+                raise ValidationError("Sale must belong to the same company")
+                
+            if self.account and self.account.company != self.company:
+                raise ValidationError("Account must belong to the same company")
 
             # Validate before saving
             self.clean()
@@ -127,7 +152,6 @@ class MoneyReceipt(models.Model):
             super().save(*args, **kwargs)
 
             # Process payment and create transaction if completed
-            # FIXED: Only process for new receipts or if payment status changed to completed
             if (self.payment_status == 'completed' and 
                 not getattr(self, '_payment_processed', False)):
                 
@@ -138,36 +162,54 @@ class MoneyReceipt(models.Model):
         finally:
             self._saving = False
 
+
+  # money_receipts/models.py - FIXED _generate_mr_no METHOD
+
     def _generate_mr_no(self):
-        """Generate unique money receipt number"""
+        """Generate company-specific sequential MR number - FIXED VERSION"""
+        if not self.company:
+            logger.error("Cannot generate MR number: No company assigned")
+            timestamp = int(timezone.now().timestamp())
+            return f"MR-{timestamp}"
+            
         try:
+            # ✅ FIXED: Get last receipt FOR THIS COMPANY ONLY
             last_receipt = MoneyReceipt.objects.filter(
-                company=self.company
-            ).order_by("-id").first()
+                company=self.company,  # ✅ Only this company's receipts
+                mr_no__isnull=False,
+                mr_no__startswith='MR-'
+            ).order_by('-mr_no').first()
             
-            new_id = (last_receipt.id + 1) if last_receipt else 1
-            mr_no = f"MR-{1000 + new_id}"
-            
-            # Check for duplicates
-            counter = 0
-            while MoneyReceipt.objects.filter(mr_no=mr_no).exists() and counter < 100:
-                new_id += 1
-                mr_no = f"MR-{1000 + new_id}"
-                counter += 1
+            if last_receipt and last_receipt.mr_no:
+                try:
+                    # Extract number from "MR-1001" format
+                    last_number = int(last_receipt.mr_no.split('-')[1])
+                    new_number = last_number + 1
+                except (ValueError, IndexError):
+                    # If parsing fails, count existing receipts FOR THIS COMPANY
+                    existing_count = MoneyReceipt.objects.filter(company=self.company).count()
+                    new_number = 1001 + existing_count
+            else:
+                # First receipt FOR THIS COMPANY
+                existing_count = MoneyReceipt.objects.filter(company=self.company).count()
+                new_number = 1001 + existing_count
                 
-            if counter >= 100:
-                # Fallback: use timestamp
-                timestamp = int(timezone.now().timestamp())
-                mr_no = f"MR-{timestamp}"
+            mr_no = f"MR-{new_number}"
+            
+            # Check for duplicates (shouldn't happen with company filter)
+            counter = 0
+            while MoneyReceipt.objects.filter(company=self.company, mr_no=mr_no).exists() and counter < 10:
+                new_number += 1
+                mr_no = f"MR-{new_number}"
+                counter += 1
                 
             return mr_no
             
         except Exception as e:
             logger.error(f"Error generating mr_no: {e}")
-            # Last resort fallback
             timestamp = int(timezone.now().timestamp())
             return f"MR-{timestamp}"
-
+        
     def process_payment(self):
         """Process payment based on type"""
         try:

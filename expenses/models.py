@@ -71,7 +71,7 @@ class Expense(models.Model):
     account = models.ForeignKey(Account, on_delete=models.SET_NULL, blank=True, null=True, related_name='expenses')
     expense_date = models.DateField(default=timezone.now)
     note = models.TextField(blank=True, null=True)
-    invoice_number = models.CharField(max_length=100, unique=True, blank=True, null=True)
+    invoice_number = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
         ordering = ['-expense_date', '-date_created']
@@ -166,60 +166,88 @@ class Expense(models.Model):
                 logger.warning(f"⚠️ No account specified for expense {self.invoice_number} - skipping transaction")
 
                 
+    # def generate_invoice_number(self):
+    #     """Generate unique invoice number: EXP-1001, EXP-1002, etc."""
+    #     if not self.company:
+    #         return f"EXP-{int(timezone.now().timestamp())}"
+            
+    #     try:
+    #         # Get the last invoice number for this company
+    #         last_expense = Expense.objects.filter(
+    #             company=self.company,
+    #             invoice_number__startswith='EXP-'
+    #         ).order_by('-invoice_number').first()
+            
+    #         if last_expense and last_expense.invoice_number:
+    #             try:
+    #                 # Extract number from "EXP-1001" format
+    #                 last_number = int(last_expense.invoice_number.split('-')[1])
+    #                 next_number = last_number + 1
+    #             except (ValueError, IndexError):
+    #                 # If parsing fails, count existing expenses
+    #                 existing_count = Expense.objects.filter(company=self.company).count()
+    #                 next_number = 1001 + existing_count
+    #         else:
+    #             # First expense for this company
+    #             existing_count = Expense.objects.filter(company=self.company).count()
+    #             next_number = 1001 + existing_count
+            
+    #         invoice_number = f"EXP-{next_number}"
+            
+    #         # Ensure uniqueness
+    #         counter = 1
+    #         while Expense.objects.filter(invoice_number=invoice_number).exists():
+    #             invoice_number = f"EXP-{next_number + counter}"
+    #             counter += 1
+                
+    #         return invoice_number
+            
+    #     except Exception as e:
+    #         logger.error(f"Error generating invoice number: {str(e)}")
+    #         # Fallback: timestamp-based numbering
+    #         return f"EXP-{int(timezone.now().timestamp())}"
     def generate_invoice_number(self):
-        """Generate unique invoice number: EXP-1001, EXP-1002, etc."""
+        """Generate unique invoice number: EXP-1001, EXP-1002, etc. - FIXED"""
         if not self.company:
-            return f"EXP-{int(timezone.now().timestamp())}"
-            
+            # Fallback for expenses without company
+            return f"EXP-TEMP-{int(timezone.now().timestamp())}"
+        
         try:
-            # Get the last invoice number for this company
-            last_expense = Expense.objects.filter(
-                company=self.company,
-                invoice_number__startswith='EXP-'
-            ).order_by('-invoice_number').first()
+            # Use database aggregation to safely get the max number
+            from django.db.models import Max
+            from django.db.models.functions import Cast, Substr
             
-            if last_expense and last_expense.invoice_number:
-                try:
-                    # Extract number from "EXP-1001" format
-                    last_number = int(last_expense.invoice_number.split('-')[1])
-                    next_number = last_number + 1
-                except (ValueError, IndexError):
-                    # If parsing fails, count existing expenses
-                    existing_count = Expense.objects.filter(company=self.company).count()
-                    next_number = 1001 + existing_count
-            else:
-                # First expense for this company
-                existing_count = Expense.objects.filter(company=self.company).count()
-                next_number = 1001 + existing_count
+            # Get the current max invoice number for this company
+            max_expense = Expense.objects.filter(
+                company=self.company,
+                invoice_number__regex=r'^EXP-\d+$'
+            ).aggregate(
+                max_number=Max(
+                    Cast(
+                        Substr('invoice_number', 5),  # Extract after 'EXP-'
+                        output_field=models.IntegerField()
+                    )
+                )
+            )
+            
+            # Start from max number + 1 or 1001 if no expenses exist
+            next_number = (max_expense['max_number'] or 1000) + 1
             
             invoice_number = f"EXP-{next_number}"
             
-            # Ensure uniqueness
-            counter = 1
-            while Expense.objects.filter(invoice_number=invoice_number).exists():
-                invoice_number = f"EXP-{next_number + counter}"
+            # Double-check uniqueness (handles race conditions)
+            counter = 0
+            while Expense.objects.filter(company=self.company, invoice_number=invoice_number).exists():
                 counter += 1
+                invoice_number = f"EXP-{next_number + counter}"
                 
             return invoice_number
             
         except Exception as e:
             logger.error(f"Error generating invoice number: {str(e)}")
-            # Fallback: timestamp-based numbering
-            return f"EXP-{int(timezone.now().timestamp())}"
-
-    # def update_account_balance(self):
-    #     """Update account balance for expense payment - DEBIT transaction"""
-    #     if self.account and self.amount > 0:
-    #         try:
-    #             # Expense decreases account balance (DEBIT - money going out)
-    #             old_balance = self.account.balance
-    #             self.account.balance -= self.amount
-    #             self.account.save(update_fields=['balance', 'updated_at'])
-    #             logger.info(f"✅ Account balance updated for expense {self.invoice_number}: {old_balance} -> {self.account.balance}")
-    #         except Exception as e:
-    #             logger.error(f"❌ Error updating account balance for expense {self.invoice_number}: {str(e)}")
-    #             raise
-
+            # Fallback with high precision timestamp
+            return f"EXP-{int(timezone.now().timestamp() * 1000)}"
+    
     def create_expense_transaction(self):
         """Create DEBIT transaction record for this expense - GUARANTEED VERSION"""
         if not self.account:
