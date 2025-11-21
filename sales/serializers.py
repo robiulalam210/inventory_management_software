@@ -152,9 +152,8 @@ class SaleSerializer(serializers.ModelSerializer):
             })
         
         return attrs
-
     def create(self, validated_data):
-        """Create sale with nested items - FIXED VERSION"""
+        """Create sale with nested items - FIXED sale_by issue"""
         try:
             # Extract nested items data
             items_data = validated_data.pop('items', [])
@@ -170,12 +169,29 @@ class SaleSerializer(serializers.ModelSerializer):
             
             # Get request context
             request = self.context.get('request')
+            
+            # ✅ CRITICAL FIX: DEBUG LOGGING
+            logger.info(f"🎯 SERIALIZER CREATE - Request user: {request.user.id} - {request.user.username}")
+            logger.info(f"🎯 SERIALIZER CREATE - Validated data keys: {validated_data.keys()}")
+            
             if request and request.user.is_authenticated:
+                # ✅ FIX: Force user assignment BEFORE any other processing
+                if 'sale_by' in validated_data:
+                    sale_by_user = validated_data['sale_by']
+                    logger.info(f"✅ USING PROVIDED sale_by: {sale_by_user.id} - {sale_by_user.username}")
+                else:
+                    # If sale_by not provided, use request user
+                    validated_data['sale_by'] = request.user
+                    logger.info(f"📝 USING REQUEST USER as sale_by: {request.user.username}")
+                
+                # ✅ FIX: Always set created_by to request user
                 validated_data['created_by'] = request.user
-                validated_data['sale_by'] = request.user
+                logger.info(f"👤 SET created_by to: {request.user.username}")
+                
                 # Ensure company is set from user
                 if hasattr(request.user, 'company'):
                     validated_data['company'] = request.user.company
+                    logger.info(f"🏢 SET company: {request.user.company}")
 
             # Handle customer for walk-in sales
             customer = validated_data.get('customer')
@@ -188,8 +204,18 @@ class SaleSerializer(serializers.ModelSerializer):
 
             # Use transaction to ensure data consistency
             with transaction.atomic():
+                # ✅ DEBUG: Log what we're passing to Sale.objects.create()
+                logger.info(f"🎯 ABOUT TO CREATE SALE WITH:")
+                logger.info(f"   sale_by: {getattr(validated_data.get('sale_by'), 'username', 'None')}")
+                logger.info(f"   created_by: {getattr(validated_data.get('created_by'), 'username', 'None')}")
+                
                 # Create the sale instance
                 sale = Sale.objects.create(**validated_data)
+                
+                # ✅ DEBUG: Log what was actually created
+                logger.info(f"🎯 SALE CREATED:")
+                logger.info(f"   sale_by: {getattr(sale.sale_by, 'username', 'None')}")
+                logger.info(f"   created_by: {getattr(sale.created_by, 'username', 'None')}")
 
                 # Create all sale items
                 sale_items = []
@@ -234,6 +260,88 @@ class SaleSerializer(serializers.ModelSerializer):
             import traceback
             logger.error(traceback.format_exc())
             raise serializers.ValidationError(f"Failed to create sale: {str(e)}")
+
+    # def create(self, validated_data):
+    #     """Create sale with nested items - FIXED VERSION"""
+    #     try:
+    #         # Extract nested items data
+    #         items_data = validated_data.pop('items', [])
+            
+    #         # Extract additional fields
+    #         vat_amount = validated_data.pop('vat', 0)
+    #         service_charge_amount = validated_data.pop('service_charge', 0)
+    #         delivery_charge_amount = validated_data.pop('delivery_charge', 0)
+            
+    #         validated_data['overall_vat_amount'] = vat_amount
+    #         validated_data['overall_service_charge'] = service_charge_amount
+    #         validated_data['overall_delivery_charge'] = delivery_charge_amount
+            
+    #         # Get request context
+    #         request = self.context.get('request')
+    #         if request and request.user.is_authenticated:
+    #             validated_data['created_by'] = request.user
+    #             validated_data['sale_by'] = request.user
+    #             # Ensure company is set from user
+    #             if hasattr(request.user, 'company'):
+    #                 validated_data['company'] = request.user.company
+
+    #         # Handle customer for walk-in sales
+    #         customer = validated_data.get('customer')
+    #         customer_type = validated_data.get('customer_type', 'walk_in')
+            
+    #         if customer_type == 'walk_in' and not customer:
+    #             validated_data['customer'] = None
+    #             if not validated_data.get('customer_name'):
+    #                 validated_data['customer_name'] = 'Walk-in Customer'
+
+    #         # Use transaction to ensure data consistency
+    #         with transaction.atomic():
+    #             # Create the sale instance
+    #             sale = Sale.objects.create(**validated_data)
+
+    #             # Create all sale items
+    #             sale_items = []
+    #             for item_data in items_data:
+    #                 sale_item = SaleItem(
+    #                     sale=sale,
+    #                     product=item_data['product'],
+    #                     quantity=item_data['quantity'],
+    #                     unit_price=item_data['unit_price'],
+    #                     discount=item_data.get('discount', 0),
+    #                     discount_type=item_data.get('discount_type', 'fixed')
+    #                 )
+    #                 sale_items.append(sale_item)
+                
+    #             # Bulk create items for better performance
+    #             SaleItem.objects.bulk_create(sale_items)
+                
+    #             # Update sale totals
+    #             sale.update_totals()
+                
+    #             # Handle account balance and money receipt
+    #             account = validated_data.get('account')
+    #             with_money_receipt = validated_data.get('with_money_receipt', 'No')
+                
+    #             if account and sale.paid_amount > 0:
+    #                 try:
+    #                     account.balance += sale.paid_amount
+    #                     account.save(update_fields=['balance'])
+                        
+    #                     if with_money_receipt == 'Yes' and sale.paid_amount > 0:
+    #                         try:
+    #                             sale.create_money_receipt()
+    #                         except Exception as e:
+    #                             logger.error(f"Error creating money receipt: {e}")
+    #                 except Exception as e:
+    #                     logger.error(f"Error updating account balance: {e}")
+
+    #             return sale
+
+    #     except Exception as e:
+    #         logger.error(f"Error creating sale: {str(e)}")
+    #         import traceback
+    #         logger.error(traceback.format_exc())
+    #         raise serializers.ValidationError(f"Failed to create sale: {str(e)}")
 
     def to_representation(self, instance):
         """Custom representation to include items in response"""

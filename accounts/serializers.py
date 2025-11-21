@@ -3,13 +3,12 @@ from .models import Account
 from decimal import Decimal
 
 class AccountSerializer(serializers.ModelSerializer):
-    ac_name = serializers.CharField(source='name', write_only=True)
     ac_number = serializers.CharField(source='number', required=False, allow_blank=True, allow_null=True)
     status = serializers.SerializerMethodField()
     
     class Meta:
         model = Account
-        fields = ['id', 'ac_name', 'ac_type', 'ac_number', 'balance', 'bank_name', 'branch', 'opening_balance', 'company', 'status', 'ac_no']
+        fields = ['id', 'name', 'ac_type', 'ac_number', 'balance', 'bank_name', 'branch', 'opening_balance', 'company', 'status', 'ac_no']
         # REMOVED read_only from opening_balance and balance
         extra_kwargs = {
             'balance': {'read_only': True},  # Keep balance read_only as it's calculated

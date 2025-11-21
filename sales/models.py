@@ -72,6 +72,7 @@ class Sale(models.Model):
 
     def save(self, *args, **kwargs):
         """Safe save method with recursion prevention - FIXED VERSION"""
+        
         # Prevent recursion
         if getattr(self, '_saving', False):
             return super().save(*args, **kwargs)
