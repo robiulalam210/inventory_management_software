@@ -53,6 +53,8 @@ class Transaction(models.Model):
     transaction_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    date_updated = models.DateTimeField(auto_now=True)  # Add this field
+
 
     # Flags
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='completed')
@@ -331,30 +333,33 @@ class Transaction(models.Model):
 
     @classmethod
     def create_for_purchase_payment(cls, purchase, amount, payment_method, account, created_by):
-        """Create transaction for purchase payment"""
+        """Create transaction for purchase payment - SIMPLIFIED VERSION"""
         try:
-            if not account:
-                logger.error(f"No account specified for purchase payment")
-                return None
+            logger.info(f"🔄 Creating purchase payment transaction:")
+            logger.info(f"  - Purchase: {purchase.invoice_no}")
+            logger.info(f"  - Amount: {amount}")
+            logger.info(f"  - Account: {account.name}")
             
-            # Purchase payments are DEBIT transactions (money going out)
-            with transaction.atomic():
-                transaction_obj = cls.objects.create(
-                    company=purchase.company,
-                    transaction_type='debit',  # Purchase payment decreases balance
-                    amount=amount,
-                    account=account,
-                    payment_method=payment_method,
-                    description=f"Purchase Payment - {purchase.invoice_no} - {purchase.supplier.name}",
-                    purchase=purchase,
-                    created_by=created_by,
-                    status='completed',
-                    transaction_date=timezone.now(),
-                    is_opening_balance=False
-                )
-                
-                logger.info(f"✅ Debit transaction created for purchase payment: {transaction_obj.transaction_no}")
-                return transaction_obj
+            transaction_obj = cls(
+                company=purchase.company,
+                transaction_type='debit',
+                amount=amount,
+                account=account,
+                payment_method=payment_method,
+                description=f"Purchase Payment - {purchase.invoice_no} - {purchase.supplier.name}",
+                purchase=purchase,
+                created_by=created_by,
+                status='completed',
+                transaction_date=timezone.now(),
+                is_opening_balance=False
+            )
+            
+            # Generate transaction number before saving
+            transaction_obj.transaction_no = transaction_obj._generate_transaction_no()
+            transaction_obj.save()
+            
+            logger.info(f"✅ Debit transaction created: {transaction_obj.transaction_no}")
+            return transaction_obj
             
         except Exception as e:
             logger.error(f"❌ Error creating transaction for purchase payment: {e}")

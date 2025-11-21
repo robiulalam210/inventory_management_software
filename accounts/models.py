@@ -118,7 +118,7 @@ class Account(models.Model):
         creating_opening_balance = is_new and self.opening_balance and self.opening_balance > 0
         
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
-            self.number = None
+            # self.number = None
             self.bank_name = None
             self.branch = None
             

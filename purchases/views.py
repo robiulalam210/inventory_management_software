@@ -9,8 +9,7 @@ from core.pagination import CustomPageNumberPagination
 from .models import Purchase, PurchaseItem
 from .serializers import PurchaseSerializer, PurchaseItemSerializer
 from suppliers.models import Supplier
-from django.db import models  # Add this import
-from django.db.models import Q  # Add this import
+from django.db import models
 from rest_framework import filters
 
 logger = logging.getLogger(__name__)
@@ -104,10 +103,10 @@ class PurchaseViewSet(BaseCompanyViewSet):
     serializer_class = PurchaseSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPageNumberPagination
-    filter_backends = [filters.OrderingFilter]  # enable ordering filter
-    ordering_fields = ['purchase_date', 'grand_total', 'due_amount', 'invoice_no']  # allowed fields
-    ordering = ['invoice_no']  # default ordering
-
+    filter_backends = [filters.OrderingFilter, filters.SearchFilter]
+    ordering_fields = ['purchase_date', 'grand_total', 'due_amount', 'invoice_no', 'created_at']
+    search_fields = ['invoice_no', 'supplier__name', 'remark']
+    ordering = ['-purchase_date']  # Default: newest first
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -125,8 +124,6 @@ class PurchaseViewSet(BaseCompanyViewSet):
         end_date = self.request.query_params.get('end_date')
         invoice_no = self.request.query_params.get('invoice_no')
         search = self.request.query_params.get('search')
-        ordering = ['invoice_no']  # default ordering
-
         
         # Apply filters
         if payment_status:
@@ -145,20 +142,31 @@ class PurchaseViewSet(BaseCompanyViewSet):
         if invoice_no:
             queryset = queryset.filter(invoice_no__icontains=invoice_no)
         
-        # Handle search parameter - Use 'remark' instead of 'notes'
+        # Handle search parameter
         if search:
-            from django.db.models import Q
             queryset = queryset.filter(
                 Q(invoice_no__icontains=search) |
                 Q(supplier__name__icontains=search) |
-                Q(remark__icontains=search)  # Changed from 'notes' to 'remark'
+                Q(remark__icontains=search)
             )
             
-        return queryset.order_by('-purchase_date', '-id')
+        return queryset
 
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.filter_queryset(self.get_queryset())
+            
+            # Check if pagination should be disabled
+            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
+            
+            if no_pagination:
+                serializer = self.get_serializer(queryset, many=True)
+                return custom_response(
+                    success=True,
+                    message=f"Purchases fetched successfully (no pagination). Total: {queryset.count()}",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
             
             # Apply pagination
             page = self.paginate_queryset(queryset)
@@ -178,7 +186,7 @@ class PurchaseViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase list: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -197,7 +205,7 @@ class PurchaseViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase retrieve: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -225,7 +233,7 @@ class PurchaseViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase create: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -255,7 +263,26 @@ class PurchaseViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase update: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            instance.delete()
+            return custom_response(
+                success=True,
+                message="Purchase deleted successfully.",
+                data=None,
+                status_code=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            logger.error(f"Error in purchase delete: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -273,15 +300,25 @@ class PurchaseViewSet(BaseCompanyViewSet):
             
             # Count by payment status
             status_count = queryset.values('payment_status').annotate(
-                count=models.Count('id')
+                count=models.Count('id'),
+                amount=models.Sum('grand_total')
             )
+            
+            # Get monthly summary
+            monthly_summary = queryset.extra(
+                {'month': "EXTRACT(month FROM purchase_date)", 'year': "EXTRACT(year FROM purchase_date)"}
+            ).values('year', 'month').annotate(
+                count=models.Count('id'),
+                total=models.Sum('grand_total')
+            ).order_by('-year', '-month')[:12]  # Last 12 months
             
             summary_data = {
                 'total_purchases': total_purchases,
                 'total_amount': float(total_amount),
                 'total_due': float(total_due),
                 'total_paid': float(total_paid),
-                'payment_status_breakdown': list(status_count)
+                'payment_status_breakdown': list(status_count),
+                'monthly_summary': list(monthly_summary)
             }
             
             return custom_response(
@@ -294,9 +331,87 @@ class PurchaseViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase summary: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def make_payment(self, request, pk=None):
+        """Make a payment towards a purchase"""
+        try:
+            instance = self.get_object()
+            amount = request.data.get('amount')
+            payment_method = request.data.get('payment_method')
+            account_id = request.data.get('account_id')
+            
+            if not amount or Decimal(amount) <= 0:
+                return custom_response(
+                    success=False,
+                    message="Payment amount must be greater than 0",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get account if provided
+            account = None
+            if account_id:
+                try:
+                    account = Account.objects.get(id=account_id, company=request.user.company)
+                except Account.DoesNotExist:
+                    return custom_response(
+                        success=False,
+                        message="Account not found",
+                        data=None,
+                        status_code=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Make payment
+            instance.make_payment(
+                amount=Decimal(amount),
+                payment_method=payment_method,
+                account=account
+            )
+            
+            return custom_response(
+                success=True,
+                message="Payment applied successfully",
+                data=self.get_serializer(instance).data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error making payment: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel a purchase"""
+        try:
+            instance = self.get_object()
+            reason = request.data.get('reason', 'No reason provided')
+            
+            instance.cancel_purchase(reason)
+            
+            return custom_response(
+                success=True,
+                message="Purchase cancelled successfully",
+                data=self.get_serializer(instance).data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error cancelling purchase: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
             )
 
 
@@ -326,6 +441,18 @@ class PurchaseItemViewSet(BaseCompanyViewSet):
         try:
             queryset = self.filter_queryset(self.get_queryset())
             
+            # Check if pagination should be disabled
+            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
+            
+            if no_pagination:
+                serializer = self.get_serializer(queryset, many=True)
+                return custom_response(
+                    success=True,
+                    message=f"Purchase items fetched successfully (no pagination). Total: {queryset.count()}",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+            
             # Apply pagination
             page = self.paginate_queryset(queryset)
             if page is not None:
@@ -343,7 +470,7 @@ class PurchaseItemViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase item list: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -362,11 +489,11 @@ class PurchaseItemViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase item retrieve: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
 
 class PurchaseAllListViewSet(BaseCompanyViewSet):
     queryset = Purchase.objects.all().select_related('supplier', 'account')
@@ -382,11 +509,7 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
     def get_queryset(self):
         """Apply filters to queryset"""
         queryset = super().get_queryset()
-        user = self.request.user
-        if hasattr(user, 'company') and user.company:
-            queryset = queryset.filter(company=user.company)
-        else:
-            return Customer.objects.none()
+        
         # Get filter parameters
         payment_status = self.request.query_params.get('payment_status')
         supplier_id = self.request.query_params.get('supplier_id')
@@ -417,17 +540,10 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
         try:
             queryset = self.filter_queryset(self.get_queryset())
             
-            # Apply pagination
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-            
-            # If no pagination, return all results
             serializer = self.get_serializer(queryset, many=True)
             return custom_response(
                 success=True,
-                message="Purchases fetched successfully.",
+                message=f"Purchases fetched successfully. Total: {queryset.count()}",
                 data=serializer.data,
                 status_code=status.HTTP_200_OK
             )
@@ -435,7 +551,7 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase list: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -474,7 +590,7 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
             logger.error(f"Error in purchase summary: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -510,7 +626,7 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
             logger.error(f"Error fetching supplier invoices: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -556,7 +672,7 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
             logger.error(f"Error fetching suppliers with invoices: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=str(e),
+                message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

@@ -1,67 +1,76 @@
 # accounts/serializers.py
 from rest_framework import serializers
 from .models import Account
-from django.db import transaction as db_transaction
+from decimal import Decimal
 
 class AccountSerializer(serializers.ModelSerializer):
-    company = serializers.PrimaryKeyRelatedField(read_only=True)
-    ac_id = serializers.IntegerField(source='id', read_only=True)
     ac_name = serializers.CharField(source='name')
-    ac_type = serializers.ChoiceField(choices=Account.ACCOUNT_TYPE_CHOICES)
-
-    ac_number = serializers.CharField(source='number', required=False, allow_null=True, allow_blank=True)
-    balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
-    bank_name = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    branch = serializers.CharField(required=False, allow_null=True, allow_blank=True)
-    opening_balance = serializers.DecimalField(max_digits=14, decimal_places=2)
-    status = serializers.CharField(read_only=True)
-
+    ac_number = serializers.CharField(source='number', required=False, allow_blank=True, allow_null=True)
+    status = serializers.SerializerMethodField()
+    
     class Meta:
         model = Account
-        fields = [
-            'ac_id', 'ac_name', 'ac_type', 'ac_number', 'balance',
-            'bank_name', 'branch', 'opening_balance', 'company', 'status','ac_no',
-        ]
-
-    def validate(self, data):
-        ac_type = data.get('ac_type')
-        number = data.get('number')
-        bank_name = data.get('bank_name')
-        branch = data.get('branch')
-
-        if ac_type in [Account.TYPE_BANK, Account.TYPE_MOBILE]:
-            if not number or number.strip() == '':
-                raise serializers.ValidationError({
-                    'ac_number': 'Account number is required for Bank and Mobile banking accounts.'
-                })
-
-        if ac_type == Account.TYPE_BANK:
-            if not bank_name or bank_name.strip() == '':
-                raise serializers.ValidationError({
-                    'bank_name': 'Bank name is required for Bank accounts.'
-                })
-            if not branch or branch.strip() == '':
-                raise serializers.ValidationError({
-                    'branch': 'Branch name is required for Bank accounts.'
-                })
-
-        if ac_type in [Account.TYPE_CASH, Account.TYPE_OTHER]:
-            data['number'] = None
-            data['bank_name'] = None
-            data['branch'] = None
-
-        return data
+        fields = ['id', 'ac_name', 'ac_type', 'ac_number', 'balance', 'bank_name', 'branch', 'opening_balance', 'company', 'status', 'ac_no']
+        extra_kwargs = {
+            'opening_balance': {'read_only': True},
+            'balance': {'read_only': True},
+        }
+    
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Inactive"
+    
+    def validate_opening_balance(self, value):
+        """Ensure opening_balance is a valid decimal"""
+        if isinstance(value, str):
+            try:
+                if value.strip() == '' or value == '00':
+                    return Decimal('0.00')
+                return Decimal(value)
+            except (ValueError, TypeError):
+                raise serializers.ValidationError("Enter a valid decimal number.")
+        return value
+    
+    # NO validation that prevents Cash/Other accounts from having numbers
 
     def create(self, validated_data):
         request = self.context.get('request')
         user = request.user if request else None
+        company = user.company if user and hasattr(user, 'company') else None
 
-        # company auto-set
-        validated_data['company'] = user.company
+        if not company:
+            raise serializers.ValidationError("User must be associated with a company.")
 
-        # Pass user to model for opening balance transaction
-        account = Account.objects.create(
-            **validated_data,
-            creating_user=user
+        # Extract the data
+        ac_type = validated_data.get('ac_type')
+        number = validated_data.get('number')
+        name = validated_data.get('name')
+        opening_balance = validated_data.get('opening_balance', Decimal('0.00'))
+
+        # Handle empty string as None
+        if number == '':
+            number = None
+
+        # Check for duplicates
+        if number:
+            if Account.objects.filter(company=company, ac_type=ac_type, number=number).exists():
+                raise serializers.ValidationError("An account with this type and number already exists.")
+        else:
+            if Account.objects.filter(company=company, ac_type=ac_type, number__isnull=True).exists():
+                raise serializers.ValidationError(f"A {ac_type} account without a number already exists. Please provide a unique account number.")
+
+        # Create the account
+        account = Account(
+            company=company,
+            name=name,
+            ac_type=ac_type,
+            number=number,
+            bank_name=validated_data.get('bank_name'),
+            branch=validated_data.get('branch'),
+            opening_balance=opening_balance,
+            balance=opening_balance,
+            is_active=True
         )
+
+        # Save with the creating user
+        account.save(creating_user=user)
         return account

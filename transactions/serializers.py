@@ -25,6 +25,8 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
 class TransactionSerializer(serializers.ModelSerializer):
     account_name = serializers.CharField(source='account.name', read_only=True)
     company_name = serializers.CharField(source='company.name', read_only=True)
+    # date_updated = serializers.DateTimeField(read_only=True, required=False)
+
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     
     class Meta:

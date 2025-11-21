@@ -1,9 +1,11 @@
 from django.db import models
-from django.db.models import Sum, F
+from django.db.models import Sum, F, Q
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
 import logging
+from django.core.exceptions import ValidationError
+from django.db import transaction as db_transaction
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,7 @@ class Purchase(models.Model):
         ('partial', 'Partial'),
         ('paid', 'Paid'),
         ('overdue', 'Overdue'),
+        ('cancelled', 'Cancelled'),
     ]
     
     PAYMENT_METHOD_CHOICES = [
@@ -25,23 +28,19 @@ class Purchase(models.Model):
     company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
     supplier = models.ForeignKey('suppliers.Supplier', on_delete=models.CASCADE)
     
-    # ✅ AUTO User & Date Fields
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchases_created')
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchases_updated')
     date_created = models.DateTimeField(auto_now_add=True)
     date_updated = models.DateTimeField(auto_now=True)
     
-    # Purchase Details
     purchase_date = models.DateField(default=timezone.now)
     total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     
-    # ✅ Payment Tracking
     paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     due_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     change_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     
-    # Charges and Discounts
     overall_discount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     overall_discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
     overall_delivery_charge = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
@@ -51,40 +50,101 @@ class Purchase(models.Model):
     vat = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     vat_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
     
-    # Payment Information
     payment_method = models.CharField(max_length=100, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
     account = models.ForeignKey('accounts.Account', on_delete=models.SET_NULL, blank=True, null=True, related_name='purchases')
     invoice_no = models.CharField(max_length=20, blank=True, null=True)
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     return_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     remark = models.TextField(blank=True, null=True)
+    
+    is_active = models.BooleanField(default=True)
+    reference_no = models.CharField(max_length=50, blank=True, null=True)
+    expected_delivery_date = models.DateField(blank=True, null=True)
 
     class Meta:
         ordering = ['-purchase_date', '-date_created']
-        # ✅ Add unique constraint to prevent duplicate invoice numbers
         unique_together = ['company', 'invoice_no']
         indexes = [
             models.Index(fields=['company', 'purchase_date']),
             models.Index(fields=['supplier', 'payment_status']),
             models.Index(fields=['invoice_no']),
+            models.Index(fields=['is_active', 'payment_status']),
+            models.Index(fields=['purchase_date', 'company']),
         ]
 
     def __str__(self):
         return f"{self.invoice_no or 'No Invoice'} - {self.supplier.name}"
 
+    def clean(self):
+        """Validate purchase data before saving"""
+        if self.paid_amount < 0:
+            raise ValidationError("Paid amount cannot be negative")
+        
+        if self.overall_discount < 0:
+            raise ValidationError("Discount cannot be negative")
+            
+        if self.vat < 0:
+            raise ValidationError("VAT cannot be negative")
+            
+        if self.purchase_date > timezone.now().date():
+            raise ValidationError("Purchase date cannot be in the future")
+
     def _update_payment_status(self):
-        """Update payment status based on paid amount - FIXED VERSION"""
+        """Update payment status based on paid amount"""
+        logger.info(f"🔄 Updating payment status: Paid={self.paid_amount}, Grand Total={self.grand_total}, Due={self.due_amount}")
+        
+        if self.payment_status == 'cancelled':
+            logger.info("📝 Purchase is cancelled, status unchanged")
+            return
+            
+        # Don't check items if purchase doesn't have PK yet (during initial creation)
+        if not self.pk:
+            logger.info("📝 Purchase not saved yet, using basic status calculation")
+            if self.paid_amount <= 0:
+                self.payment_status = 'pending'
+            elif self.paid_amount >= self.grand_total:
+                self.payment_status = 'paid'
+                self.due_amount = Decimal('0.00')
+            elif self.paid_amount > 0:
+                self.payment_status = 'partial'
+            else:
+                self.payment_status = 'pending'
+        else:
+            # Only check items if purchase has been saved
+            if self.grand_total == 0:
+                # If grand total is zero but we have items, this might be a calculation issue
+                try:
+                    if self.items.exists():
+                        logger.warning("⚠️ Grand total is 0 but purchase has items - recalculating totals")
+                        self.update_totals(force_update=True)
+                except ValueError:
+                    # This can happen if purchase doesn't have PK yet
+                    logger.warning("⚠️ Cannot check items - purchase not fully saved")
+        
+        # Standard payment status logic (applies to both new and existing purchases)
         if self.paid_amount <= 0:
             self.payment_status = 'pending'
+            logger.info("📝 Status set to: pending")
+        
         elif self.paid_amount >= self.grand_total:
             self.payment_status = 'paid'
-            # ✅ CRITICAL: Ensure due_amount is 0 when fully paid
-            if self.due_amount > 0:
-                self.due_amount = Decimal('0.00')
+            self.due_amount = Decimal('0.00')  # Ensure due is zero when paid
+            logger.info("✅ Status set to: paid")
+        
         elif self.paid_amount > 0 and self.paid_amount < self.grand_total:
             self.payment_status = 'partial'
+            logger.info("🔄 Status set to: partial")
+        
         else:
             self.payment_status = 'pending'
+            logger.info("📝 Status set to: pending (fallback)")
+        
+        # Calculate change amount
+        if self.paid_amount > self.grand_total:
+            self.change_amount = self.paid_amount - self.grand_total
+            logger.info(f"💰 Change amount updated: {self.change_amount}")
+        else:
+            self.change_amount = Decimal('0.00')
 
     def _round_decimal(self, value):
         """Helper method to round decimals consistently"""
@@ -92,89 +152,59 @@ class Purchase(models.Model):
             return Decimal('0.00')
         return Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-    # def generate_invoice_no(self):
-    #     """Generate company-specific sequential invoice number"""
-    #     if not self.company:
-    #         return f"PO-1001"
-            
-    #     try:
-    #         # Get the last invoice number for this company
-    #         last_purchase = Purchase.objects.filter(
-    #             company=self.company,
-    #             invoice_no__isnull=False,
-    #             invoice_no__startswith='PO-'
-    #         ).order_by('-invoice_no').first()
-            
-    #         if last_purchase and last_purchase.invoice_no:
-    #             try:
-    #                 # Extract number from "PO-1001" format
-    #                 last_number = int(last_purchase.invoice_no.split('-')[1])
-    #                 new_number = last_number + 1
-    #             except (ValueError, IndexError):
-    #                 # If parsing fails, count existing purchases
-    #                 existing_count = Purchase.objects.filter(company=self.company).count()
-    #                 new_number = 1001 + existing_count
-    #         else:
-    #             # First purchase for this company
-    #             existing_count = Purchase.objects.filter(company=self.company).count()
-    #             new_number = 1001 + existing_count
-                
-    #         return f"PO-{new_number}"
-            
-    #     except Exception as e:
-    #         logger.error(f"Error generating invoice number: {str(e)}")
-    #         # Fallback: simple count-based numbering
-    #         existing_count = Purchase.objects.filter(company=self.company).count()
-    #         return f"PO-{1001 + existing_count}"
-# purchases/models.py - FIXED generate_invoice_no METHOD
-
     def generate_invoice_no(self):
-        """Generate company-specific sequential invoice number - FIXED VERSION"""
+        """Generate company-specific sequential invoice number"""
         if not self.company:
             return f"PO-1001"
             
         try:
-            # ✅ FIXED: Get last purchase FOR THIS COMPANY ONLY
+            current_year = timezone.now().year
+            
             last_purchase = Purchase.objects.filter(
-                company=self.company,  # ✅ Only this company's purchases
+                company=self.company,
                 invoice_no__isnull=False,
-                invoice_no__startswith='PO-'
+                invoice_no__startswith=f'PO-{current_year}'
             ).order_by('-invoice_no').first()
             
             if last_purchase and last_purchase.invoice_no:
                 try:
-                    # Extract number from "PO-1001" format
-                    last_number = int(last_purchase.invoice_no.split('-')[1])
-                    new_number = last_number + 1
+                    parts = last_purchase.invoice_no.split('-')
+                    if len(parts) >= 3:
+                        last_number = int(parts[2])
+                        new_number = last_number + 1
+                    else:
+                        last_number = int(parts[1])
+                        new_number = last_number + 1
                 except (ValueError, IndexError):
-                    # If parsing fails, count existing purchases FOR THIS COMPANY
                     existing_count = Purchase.objects.filter(company=self.company).count()
                     new_number = 1001 + existing_count
             else:
-                # First purchase FOR THIS COMPANY
-                existing_count = Purchase.objects.filter(company=self.company).count()
-                new_number = 1001 + existing_count
+                new_number = 1001
                 
-            return f"PO-{new_number}"
+            return f"PO-{current_year}-{new_number:04d}"
             
         except Exception as e:
             logger.error(f"Error generating invoice number: {str(e)}")
-            # Fallback: count-based numbering FOR THIS COMPANY
             existing_count = Purchase.objects.filter(company=self.company).count()
             return f"PO-{1001 + existing_count}"
     
-
-    
-    def update_totals(self):
-        """Update purchase totals from items - FIXED VERSION"""
+    def update_totals(self, force_update=False):
+        """Update purchase totals from items"""
+        if hasattr(self, '_updating_totals') and self._updating_totals:
+            return True
+            
+        self._updating_totals = True
         logger.info(f"🔄 Purchase.update_totals called for purchase ID: {self.id}")
         
         try:
-            items = self.items.all()
-            subtotal = sum([item.subtotal() for item in items])
+            items_aggregate = self.items.aggregate(
+                total_subtotal=Sum(F('qty') * F('price'))
+            )
+            subtotal = items_aggregate['total_subtotal'] or Decimal('0.00')
             subtotal = self._round_decimal(subtotal)
 
-            # Calculate overall discount
+            logger.info(f"📦 Calculated subtotal from items: {subtotal}")
+
             discount_amount = Decimal('0.00')
             if self.overall_discount_type == 'percentage':
                 discount_amount = subtotal * (self.overall_discount / Decimal('100.00'))
@@ -183,7 +213,6 @@ class Purchase(models.Model):
             
             discount_amount = self._round_decimal(discount_amount)
 
-            # Calculate charges
             vat_amount = Decimal('0.00')
             if self.vat_type == 'percentage':
                 vat_amount = subtotal * (self.vat / Decimal('100.00'))
@@ -205,216 +234,349 @@ class Purchase(models.Model):
                 delivery_amount = self.overall_delivery_charge
             delivery_amount = self._round_decimal(delivery_amount)
 
-            # Calculate totals
             total_after_discount = max(Decimal('0.00'), subtotal - discount_amount)
             grand_total = max(Decimal('0.00'), total_after_discount + vat_amount + service_amount + delivery_amount)
 
-            # ✅ FIXED: Use direct assignment instead of self.save() to avoid recursion
-            # Update fields without triggering save
-            self.total = subtotal
-            self.grand_total = grand_total
-            
-            # ✅ FIXED: Proper due amount calculation
-            self.due_amount = max(Decimal('0.00'), grand_total - self.paid_amount)
-            self.change_amount = max(Decimal('0.00'), self.paid_amount - grand_total)
-            self._update_payment_status()
+            needs_save = (
+                self.total != subtotal or
+                self.grand_total != grand_total or
+                self.due_amount != max(Decimal('0.00'), grand_total - self.paid_amount) or
+                force_update
+            )
 
-            logger.info(f"📊 Purchase totals updated: Subtotal={subtotal}, Grand Total={grand_total}, Paid={self.paid_amount}, Due={self.due_amount}")
-            
-            # ✅ FIXED: Only save if instance exists and use update_fields
-            if self.pk:
-                # Use direct database update to avoid signal recursion
-                Purchase.objects.filter(pk=self.pk).update(
-                    total=self.total,
-                    grand_total=self.grand_total,
-                    due_amount=self.due_amount,
-                    change_amount=self.change_amount,
-                    payment_status=self.payment_status,
-                    date_updated=timezone.now()
-                )
-                # Refresh instance from database
-                self.refresh_from_db()
+            if needs_save:
+                self.total = subtotal
+                self.grand_total = grand_total
+                self.due_amount = max(Decimal('0.00'), grand_total - self.paid_amount)
+                self.change_amount = max(Decimal('0.00'), self.paid_amount - grand_total)
+                self._update_payment_status()
+
+                logger.info(f"📊 Purchase totals updated: Subtotal={subtotal}, Grand Total={grand_total}, Paid={self.paid_amount}, Due={self.due_amount}, Change={self.change_amount}")
                 
+                if self.pk:
+                    update_fields = [
+                        "total", "grand_total", "due_amount", "change_amount", 
+                        "payment_status", "date_updated"
+                    ]
+                    super().save(update_fields=update_fields)
+                    
             return True
                 
         except Exception as e:
             logger.error(f"❌ Error updating purchase totals: {str(e)}")
             return False
+        finally:
+            self._updating_totals = False
 
     def save(self, *args, **kwargs):
-        """Custom save method - FIXED VERSION"""
+        """Custom save method"""
         is_new = self.pk is None
         
-        # Generate invoice number for new purchases
+        self.clean()
+        
         if is_new and not self.invoice_no:
             self.invoice_no = self.generate_invoice_no()
         
-        # Validate data before saving
-        if self.paid_amount < 0:
-            raise ValueError("Paid amount cannot be negative")
-        
-        # ✅ FIXED: Calculate due_amount before first save
         if is_new:
             self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
             self._update_payment_status()
         
-        # Save to database
         super().save(*args, **kwargs)
-        
-        # ✅ FIXED: Update totals after save (but only if needed)
-        if is_new:
-            self.update_totals()
-        
-        # ✅ FIXED: Update supplier totals with error handling
-        if self.supplier:
-            try:
-                from django.db import transaction
-                # Use transaction to avoid recursion
-                transaction.on_commit(lambda: self.supplier.update_purchase_totals())
-            except Exception as e:
-                logger.error(f"❌ ERROR updating supplier totals: {e}")
 
-    def make_payment(self, amount, payment_method=None, account=None):
-        """Make a payment towards this purchase - FIXED VERSION"""
+    def make_payment(self, amount, payment_method=None, account=None, description=None):
+        """Make a payment towards this purchase"""
         amount = self._round_decimal(amount)
+        
+        # Validate payment
+        can_pay, message = self.can_make_payment(amount)
+        if not can_pay:
+            raise ValueError(message)
+        
+        try:
+            with db_transaction.atomic():
+                # Calculate new values
+                new_paid_amount = self.paid_amount + amount
+                new_due_amount = max(Decimal('0.00'), self.grand_total - new_paid_amount)
+                new_change_amount = max(Decimal('0.00'), new_paid_amount - self.grand_total)
+                
+                logger.info(f"🔄 Payment Calculation:")
+                logger.info(f"  Current: Paid={self.paid_amount}, Due={self.due_amount}, Grand Total={self.grand_total}")
+                logger.info(f"  Payment: Amount={amount}")
+                logger.info(f"  New: Paid={new_paid_amount}, Due={new_due_amount}, Change={new_change_amount}")
+                
+                # Update instance fields
+                self.paid_amount = new_paid_amount
+                self.due_amount = new_due_amount
+                self.change_amount = new_change_amount
+                
+                if payment_method:
+                    self.payment_method = payment_method
+                if account:
+                    self.account = account
+                    
+                # Update payment status
+                self._update_payment_status()
+                
+                # Save purchase first
+                update_fields = [
+                    "paid_amount", "due_amount", "change_amount", "payment_status", 
+                    "date_updated"
+                ]
+                
+                if payment_method:
+                    update_fields.append("payment_method")
+                if account:
+                    update_fields.append("account")
+                
+                super().save(update_fields=update_fields)
+                
+                # Create transaction for the payment
+                if account and amount > 0:
+                    try:
+                        from transactions.models import Transaction
+                        
+                        transaction_obj = Transaction.objects.create(
+                            company=self.company,
+                            transaction_type='debit',
+                            amount=amount,
+                            account=account,
+                            payment_method=payment_method or self.payment_method,
+                            description=description or f"Purchase Payment - {self.invoice_no} - {self.supplier.name}",
+                            purchase=self,
+                            created_by=self.updated_by or self.created_by,
+                            status='completed'
+                        )
+                        
+                        if transaction_obj:
+                            logger.info(f"✅ Debit transaction created for purchase payment: {transaction_obj.transaction_no}")
+                        else:
+                            logger.error(f"❌ Transaction creation returned None")
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Transaction creation failed: {e}")
+                        # Don't fail the payment if transaction creation fails
+            
+            logger.info(f"✅ Payment of {amount} applied to purchase {self.invoice_no}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in make_payment: {e}")
+            raise
+
+    def create_initial_payment_transaction(self):
+        """Create transaction for initial payment when purchase is created"""
+        if self.paid_amount > 0 and self.account:
+            try:
+                from transactions.models import Transaction
+                
+                transaction_obj = Transaction.objects.create(
+                    company=self.company,
+                    transaction_type='debit',
+                    amount=self.paid_amount,
+                    account=self.account,
+                    payment_method=self.payment_method,
+                    description=f"Purchase Payment - {self.invoice_no} - {self.supplier.name}",
+                    purchase=self,
+                    created_by=self.created_by,
+                    status='completed'
+                )
+                
+                if transaction_obj:
+                    logger.info(f"✅ Initial debit transaction created: {transaction_obj.transaction_no}")
+                    return transaction_obj
+                    
+            except Exception as e:
+                logger.error(f"❌ Error creating initial transaction: {e}")
+        
+        return None
+
+    def cancel_purchase(self, reason=None):
+        """Cancel the purchase and reverse stock changes"""
+        if self.payment_status == 'cancelled':
+            raise ValueError("Purchase is already cancelled")
+            
+        try:
+            with db_transaction.atomic():
+                # Reverse stock for all items
+                for item in self.items.all():
+                    item.product.stock_qty -= item.qty
+                    item.product.save()
+                    
+                # Reverse any payments made
+                if self.paid_amount > 0 and self.account:
+                    try:
+                        from transactions.models import Transaction
+                        Transaction.objects.create(
+                            company=self.company,
+                            transaction_type='credit',
+                            amount=self.paid_amount,
+                            account=self.account,
+                            payment_method=self.payment_method,
+                            description=f"Purchase Cancellation - {self.invoice_no} - {reason or 'No reason provided'}",
+                            purchase=self,
+                            created_by=self.updated_by or self.created_by,
+                            status='completed'
+                        )
+                        
+                        self.account.balance += self.paid_amount
+                        self.account.save(update_fields=['balance', 'updated_at'])
+                    except Exception as e:
+                        logger.error(f"Error reversing payment during cancellation: {e}")
+                
+                self.payment_status = 'cancelled'
+                self.is_active = False
+                self.save(update_fields=['payment_status', 'is_active', 'date_updated'])
+                
+            logger.info(f"✅ Purchase {self.invoice_no} cancelled successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error cancelling purchase: {e}")
+            raise
+
+    def add_items(self, items_data):
+        """Add multiple items to the purchase at once"""
+        from .models import PurchaseItem
+        
+        created_items = []
+        for item_data in items_data:
+            try:
+                item = PurchaseItem.objects.create(
+                    purchase=self,
+                    **item_data
+                )
+                created_items.append(item)
+            except Exception as e:
+                logger.error(f"Error creating purchase item: {e}")
+                continue
+        
+        self.update_totals()
+        return created_items
+
+    def instant_pay(self, payment_method, account, paid_amount=None):
+        """
+        Process instant payment for purchase
+        """
+        if paid_amount is None:
+            paid_amount = self.due_amount
+        
+        if paid_amount > 0 and account and payment_method:
+            logger.info(f"💳 Processing instant payment: {paid_amount} via {payment_method}")
+            try:
+                from transactions.models import Transaction
+                transaction = Transaction.create_for_purchase_payment(
+                    purchase=self,
+                    amount=paid_amount,
+                    payment_method=payment_method,
+                    account=account,
+                    created_by=self.created_by
+                )
+                
+                if transaction:
+                    logger.info(f"✅ Instant payment transaction created: {transaction.transaction_no}")
+                    # Refresh purchase to get updated paid_amount
+                    self.refresh_from_db()
+                    return transaction
+                else:
+                    logger.error("❌ Transaction creation returned None")
+                    return None
+                    
+            except Exception as e:
+                logger.error(f"❌ Error in instant_pay: {str(e)}")
+                raise
+        else:
+            logger.warning(f"⚠️ Instant pay skipped - paid_amount: {paid_amount}, account: {account}, payment_method: {payment_method}")
+            return None
+
+    def apply_partial_payment(self, amount, payment_method=None, account=None):
+        """Apply partial payment with proper validation"""
+        amount = self._round_decimal(amount)
+        
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         
         if amount > self.due_amount:
-            raise ValueError(f"Payment amount ({amount}) exceeds due amount ({self.due_amount})")
+            amount = self.due_amount
+            logger.info(f"⚠️ Payment amount adjusted to due amount: {amount}")
         
-        # ✅ FIXED: Calculate new values BEFORE updating fields
-        new_paid_amount = self.paid_amount + amount
-        new_due_amount = max(Decimal('0.00'), self.grand_total - new_paid_amount)
-        new_change_amount = max(Decimal('0.00'), new_paid_amount - self.grand_total)
-        
-        # Update instance fields
-        self.paid_amount = new_paid_amount
-        self.due_amount = new_due_amount
-        self.change_amount = new_change_amount
-        
-        if payment_method:
-            self.payment_method = payment_method
-        if account:
-            self.account = account
-            
-        # Update payment status
-        self._update_payment_status()
-        
-        # ✅ FIXED: Save ALL fields to ensure consistency
-        update_fields = [
-            "paid_amount", "due_amount", "change_amount", "payment_status", 
-            "date_updated"
-        ]
-        
-        # Add optional fields if they exist
-        if payment_method:
-            update_fields.append("payment_method")
-        if account:
-            update_fields.append("account")
-        
-        # Save with specific fields
-        super().save(update_fields=update_fields)
-        
-        # Update account balance if account is provided
-        if account and amount > 0:
-            try:
-                account.balance -= amount  # Decrease balance for purchase payment
-                account.save(update_fields=['balance'])
-            except Exception as e:
-                logger.error(f"❌ Error updating account balance: {e}")
-                # Don't fail the payment if account update fails
-                
-        # Create transaction for the payment (handle the error gracefully)
-        try:
-            self.create_payment_transaction(amount, payment_method, account)
-        except Exception as e:
-            logger.error(f"❌ Transaction creation failed but payment recorded: {e}")
-            # Payment should still succeed even if transaction fails
-                
-        logger.info(f"✅ Payment of {amount} applied to purchase {self.invoice_no}. "
-                    f"New: Paid={self.paid_amount}, Due={self.due_amount}, Status={self.payment_status}")
-        return True
-    def create_payment_transaction(self, amount, payment_method=None, account=None):
-        """
-        Create a transaction record for purchase payment
-        Purchase payments are DEBIT transactions (money going out)
-        """
-        # Don't create transaction if no account
-        if not account:
-            logger.warning("No account specified for purchase payment transaction")
-            return None
+        return self.make_payment(amount, payment_method, account)
 
-        try:
-            from transactions.models import Transaction
-            
-            # Create DEBIT transaction (purchase payment decreases account balance)
-            transaction = Transaction.objects.create(
-                company=self.company,
-                transaction_type='debit',  # FIXED: Changed from 'Debit' to 'debit' for consistency
-                amount=amount,
-                account=account,
-                payment_method=payment_method or self.payment_method,
-                description=f"Purchase Payment - {self.invoice_no} - {self.supplier.name}",
-                purchase=self,  # Link to purchase
-                created_by=self.created_by,
-                status='completed'
-            )
-            
-            logger.info(f"✅ Debit transaction created for purchase payment: {transaction.transaction_no}")
-            return transaction
-            
-        except ImportError as e:
-            logger.error(f"Failed to import Transaction model: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Error creating transaction for purchase payment: {e}")
-            return None
+    def apply_full_payment(self, payment_method=None, account=None):
+        """Pay the remaining due amount"""
+        if self.due_amount > 0:
+            return self.make_payment(self.due_amount, payment_method, account)
+        else:
+            logger.info(f"⚠️ No due amount for full payment on purchase {self.invoice_no}")
+            return False
 
-    def apply_supplier_payment(self, amount):
-        """
-        Apply payment from SupplierPayment model
-        This is called when a SupplierPayment is created for this purchase
-        """
+    def apply_overpayment(self, amount, payment_method=None, account=None):
+        """Apply payment that might be more than due amount"""
         amount = self._round_decimal(amount)
+        
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         
         if amount > self.due_amount:
-            raise ValueError(f"Payment amount ({amount}) exceeds due amount ({self.due_amount})")
+            overpayment_amount = amount - self.due_amount
+            logger.info(f"💰 Overpayment detected: {overpayment_amount} on purchase {self.invoice_no}")
         
-        # Update paid amount and recalculate due amount
-        self.paid_amount += amount
-        self.due_amount = max(0, self.grand_total - self.paid_amount)
-        self._update_payment_status()
-        
-        # Save without triggering the supplier update again
-        update_fields = ["paid_amount", "due_amount", "payment_status", "date_updated"]
-        super().save(update_fields=update_fields)
-        
-        logger.info(f"✅ Supplier payment applied: {amount} to purchase {self.invoice_no}")
-        return True
+        return self.make_payment(amount, payment_method, account)
 
-    def instant_pay(self, payment_method, account):
-        """Instant payment - pay the full grand total - FIXED VERSION"""
-        if self.grand_total > 0:
-            # ✅ FIXED: Use the make_payment method directly
-            return self.make_payment(self.grand_total, payment_method, account)
-        return False
-
-    def get_payment_summary(self):
-        """Get payment summary for API responses"""
+    def get_payment_breakdown(self):
+        """Get detailed payment breakdown for API responses"""
         return {
             'invoice_no': self.invoice_no,
             'grand_total': float(self.grand_total),
             'paid_amount': float(self.paid_amount),
             'due_amount': float(self.due_amount),
+            'change_amount': float(self.change_amount),
             'payment_status': self.payment_status,
             'payment_progress': self.payment_progress,
             'is_overpaid': self.is_overpaid,
+            'is_fully_paid': self.payment_status == 'paid',
+            'is_partially_paid': self.payment_status == 'partial',
+            'is_cancelled': self.payment_status == 'cancelled',
+            'remaining_balance': float(self.due_amount),
+            'overpayment_amount': float(self.change_amount) if self.is_overpaid else 0.0,
             'supplier_name': self.supplier.name,
-            'purchase_date': self.purchase_date.isoformat()
+            'purchase_date': self.purchase_date.isoformat(),
         }
+
+    def can_make_payment(self, amount=None):
+        """Check if payment can be made"""
+        if self.payment_status == 'cancelled':
+            return False, "Cannot make payment on cancelled purchase"
+            
+        if self.payment_status == 'paid' and not amount:
+            return False, "Purchase is already fully paid"
+        
+        if amount and amount <= 0:
+            return False, "Payment amount must be greater than 0"
+        
+        if amount and amount > (self.due_amount + Decimal('1000')):
+            return False, f"Payment amount exceeds reasonable overpayment limit"
+        
+        return True, "Payment can be processed"
+
+    def reset_payment(self):
+        """Reset all payment information (for testing/error recovery)"""
+        if self.payment_status == 'cancelled':
+            raise ValueError("Cannot reset payment for cancelled purchase")
+            
+        self.paid_amount = Decimal('0.00')
+        self.due_amount = self.grand_total
+        self.change_amount = Decimal('0.00')
+        self.payment_status = 'pending'
+        self.payment_method = None
+        self.account = None
+        
+        update_fields = [
+            "paid_amount", "due_amount", "change_amount", "payment_status",
+            "payment_method", "account", "date_updated"
+        ]
+        super().save(update_fields=update_fields)
+        
+        logger.info(f"🔄 Payment reset for purchase {self.invoice_no}")
 
     @property
     def is_overpaid(self):
@@ -428,10 +590,20 @@ class Purchase(models.Model):
         progress = (self.paid_amount / self.grand_total) * 100
         return float(min(100, progress))
 
+    @property
+    def item_count(self):
+        """Get total number of items in this purchase"""
+        return self.items.count()
+
+    @property
+    def total_quantity(self):
+        """Get total quantity of all items"""
+        return self.items.aggregate(total_qty=Sum('qty'))['total_qty'] or 0
+
     @classmethod
     def get_due_purchases(cls, supplier=None, company=None):
         """Get all due purchases for a supplier or company"""
-        queryset = cls.objects.filter(due_amount__gt=0)
+        queryset = cls.objects.filter(due_amount__gt=0, is_active=True)
         
         if supplier:
             queryset = queryset.filter(supplier=supplier)
@@ -443,7 +615,7 @@ class Purchase(models.Model):
     @classmethod
     def get_company_purchases(cls, company, start_date=None, end_date=None):
         """Get purchases for a company within date range"""
-        queryset = cls.objects.filter(company=company)
+        queryset = cls.objects.filter(company=company, is_active=True)
         
         if start_date:
             queryset = queryset.filter(purchase_date__gte=start_date)
@@ -461,7 +633,9 @@ class PurchaseItem(models.Model):
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percentage','Percentage')), default='fixed')
     
-    # ✅ Auto fields
+    batch_no = models.CharField(max_length=50, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    
     date_created = models.DateTimeField(auto_now_add=True)
     date_updated = models.DateTimeField(auto_now=True)
 
@@ -469,10 +643,23 @@ class PurchaseItem(models.Model):
         ordering = ['-date_created']
         indexes = [
             models.Index(fields=['purchase', 'product']),
+            models.Index(fields=['product', 'batch_no']),
+            models.Index(fields=['expiry_date']),
         ]
 
     def __str__(self):
         return f"{self.product.name} x {self.qty}"
+
+    def clean(self):
+        """Validate item data"""
+        if self.price < 0:
+            raise ValidationError("Price cannot be negative")
+        if self.qty <= 0:
+            raise ValidationError("Quantity must be greater than 0")
+        if self.discount < 0:
+            raise ValidationError("Discount cannot be negative")
+        if self.expiry_date and self.expiry_date < timezone.now().date():
+            raise ValidationError("Expiry date cannot be in the past")
 
     def subtotal(self):
         """Calculate item subtotal with proper rounding"""
@@ -486,33 +673,19 @@ class PurchaseItem(models.Model):
             else:
                 discount_amount = Decimal('0.00')
                 
-            # Don't allow negative subtotals
             final_total = max(Decimal('0.00'), total - discount_amount)
             return final_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         except Exception as e:
             logger.error(f"Error calculating subtotal: {str(e)}")
             return Decimal('0.00')
 
-    def clean(self):
-        """Validate item data"""
-        from django.core.exceptions import ValidationError
-        
-        if self.price < 0:
-            raise ValidationError("Price cannot be negative")
-        if self.qty <= 0:
-            raise ValidationError("Quantity must be greater than 0")
-        if self.discount < 0:
-            raise ValidationError("Discount cannot be negative")
-
     def save(self, *args, **kwargs):
         """Custom save with stock management - FIXED VERSION"""
         is_new = self.pk is None
         old_qty = 0
         
-        # Validate data
         self.clean()
         
-        # Get old quantity if updating
         if not is_new:
             try:
                 old_item = PurchaseItem.objects.get(pk=self.pk)
@@ -520,26 +693,22 @@ class PurchaseItem(models.Model):
             except PurchaseItem.DoesNotExist:
                 pass
         
-        # Save the item
         super().save(*args, **kwargs)
         
         try:
-            # Update product stock
-            product = self.product
-            if is_new:
-                # New item - increase stock
-                product.stock_qty += self.qty
-            else:
-                # Updated item - adjust stock based on quantity change
-                stock_change = self.qty - old_qty
-                product.stock_qty += stock_change
-            
-            # ✅ FIXED: Save product properly
-            product.save()
-            
-            # Update purchase totals
-            logger.info(f"🔄 PurchaseItem.save: Calling update_totals for purchase ID: {self.purchase.id}")
-            self.purchase.update_totals()
+            if self.price > 0:
+                product = self.product
+                if is_new:
+                    product.stock_qty += self.qty
+                else:
+                    stock_change = self.qty - old_qty
+                    product.stock_qty += stock_change
+                
+                # FIXED: Save without specifying update_fields to avoid field name issues
+                product.save()
+                
+                if not hasattr(self.purchase, '_updating_totals'):
+                    self.purchase.update_totals()
             
         except Exception as e:
             logger.error(f"❌ Error in PurchaseItem.save: {str(e)}")
@@ -547,19 +716,16 @@ class PurchaseItem(models.Model):
 
     def delete(self, *args, **kwargs):
         """Custom delete with stock management - FIXED VERSION"""
-        # Store purchase reference before deletion
         purchase = self.purchase
+        product = self.product
         
         try:
-            # Decrease stock when item is deleted
-            self.product.stock_qty -= self.qty
-            
-            # ✅ FIXED: Save product properly
-            self.product.save()
+            product.stock_qty -= self.qty
+            # FIXED: Save without specifying update_fields
+            product.save()
             
             super().delete(*args, **kwargs)
             
-            # Update purchase totals after deletion
             purchase.update_totals()
             
         except Exception as e:
@@ -576,11 +742,13 @@ class PurchaseItem(models.Model):
             'price': float(self.price),
             'discount': float(self.discount),
             'discount_type': self.discount_type,
-            'subtotal': float(self.subtotal())
+            'subtotal': float(self.subtotal()),
+            'batch_no': self.batch_no,
+            'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
         }
 
 
-# Signal handlers for better integration
+# Signal handlers
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 
@@ -588,7 +756,7 @@ from django.dispatch import receiver
 def purchase_item_post_save(sender, instance, created, **kwargs):
     """Signal to update purchase totals after item save"""
     try:
-        if not created:  # Only update if it's not a new purchase (purchase already handles new items)
+        if not created:
             instance.purchase.update_totals()
     except Exception as e:
         logger.error(f"Error updating purchase totals after item save: {e}")

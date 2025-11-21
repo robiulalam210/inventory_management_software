@@ -241,35 +241,27 @@ class AccountViewSet(BaseInventoryViewSet):
             if number == '':
                 number = None
 
-            # For Cash and Other accounts, number should be None
-            if ac_type in [Account.TYPE_CASH, Account.TYPE_OTHER]:
-                number = None
+            # REMOVED: The restriction that prevents Cash/Other accounts from having numbers
+            # Now Cash accounts can have numbers to distinguish between multiple counters
 
-            # Check for existing accounts based on type
-            if ac_type == Account.TYPE_CASH:
-                if Account.objects.filter(company=company, ac_type=Account.TYPE_CASH).exists():
-                    return custom_response(
-                        success=False,
-                        message="A Cash account already exists for your company. You can only have one Cash account.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            
-            elif ac_type == Account.TYPE_OTHER:
-                if Account.objects.filter(company=company, ac_type=Account.TYPE_OTHER).exists():
-                    return custom_response(
-                        success=False,
-                        message="An Other account already exists for your company. You can only have one Other account.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            
-            else:
-                # For Bank and Mobile banking, check by number
+            # Check for existing accounts based on type AND number
+            # For ALL account types, check if same type AND same number already exists
+            if number:
+                # If number is provided, check for duplicate (type + number)
                 if Account.objects.filter(company=company, ac_type=ac_type, number=number).exists():
                     return custom_response(
                         success=False,
                         message="An account with this type and number already exists.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                # If no number provided, check for duplicate (type + no number)
+                # This prevents multiple "generic" accounts of the same type without numbers
+                if Account.objects.filter(company=company, ac_type=ac_type, number__isnull=True).exists():
+                    return custom_response(
+                        success=False,
+                        message=f"A {ac_type} account without a number already exists. Please provide a unique account number.",
                         data=None,
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
@@ -280,11 +272,11 @@ class AccountViewSet(BaseInventoryViewSet):
                 created_by=request.user,
                 name=name,
                 ac_type=ac_type,
-                number=number,
+                number=number,  # This will now preserve your account numbers for Cash accounts
                 bank_name=serializer.validated_data.get('bank_name'),
                 branch=serializer.validated_data.get('branch'),
                 opening_balance=opening_balance,
-                balance=opening_balance,  # Set initial balance to opening_balance
+                balance=opening_balance,
                 is_active=True
             )
 
@@ -321,7 +313,216 @@ class AccountViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+  
+    def update(self, request, *args, **kwargs):
+        """
+        Update an existing account
+        """
+        try:
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=False)
+            serializer.is_valid(raise_exception=True)
+            
+            company = request.user.company
+            ac_type = serializer.validated_data.get('ac_type')
+            number = serializer.validated_data.get('number')
+            name = serializer.validated_data.get('name')
+            
+            # Handle empty string as None
+            if number == '':
+                number = None
+            
+            # REMOVED: The restriction that forces Cash/Other accounts to have null numbers
+            # Now Cash accounts can have numbers to distinguish between multiple counters
+            
+            # Check for duplicates (excluding current instance)
+            if number:
+                if Account.objects.filter(
+                    company=company, 
+                    ac_type=ac_type, 
+                    number=number
+                ).exclude(id=instance.id).exists():
+                    return custom_response(
+                        success=False,
+                        message="An account with this type and number already exists.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                # Check for other accounts of same type without number
+                if Account.objects.filter(
+                    company=company, 
+                    ac_type=ac_type, 
+                    number__isnull=True
+                ).exclude(id=instance.id).exists():
+                    return custom_response(
+                        success=False,
+                        message=f"A {ac_type} account without a number already exists.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Update the instance
+            instance.name = name
+            instance.ac_type = ac_type
+            instance.number = number  # This will now preserve the account number
+            instance.bank_name = serializer.validated_data.get('bank_name')
+            instance.branch = serializer.validated_data.get('branch')
+            
+            instance.save()
+            
+            # Return updated data
+            updated_serializer = self.get_serializer(instance)
+            data = self._process_account_data([updated_serializer.data])[0]
+            
+            return custom_response(
+                success=True,
+                message="Account updated successfully.",
+                data=data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Http404:
+            logger.warning(f"Account not found for update: {kwargs.get('pk')}")
+            return custom_response(
+                success=False,
+                message="Account not found.",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except serializers.ValidationError as e:
+            logger.warning(f"Account update validation error: {e.detail}")
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error updating account: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+    def partial_update(self, request, *args, **kwargs):
+        """
+        Partial update of an account
+        """
+        try:
+            instance = self.get_object()
+            logger.debug(f"=== PARTIAL UPDATE DEBUG ===")
+            logger.debug(f"Updating account ID: {instance.id}")
+            logger.debug(f"Current account data - Name: {instance.name}, Type: {instance.ac_type}, Number: {instance.number}")
+            logger.debug(f"Request data: {request.data}")
+            
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            
+            company = request.user.company
+            validated_data = serializer.validated_data
+            
+            logger.debug(f"Validated data: {validated_data}")
+            
+            # Handle number field
+            if 'number' in validated_data:
+                number = validated_data['number']
+                logger.debug(f"Number from request: '{number}'")
+                if number == '':
+                    number = None
+                validated_data['number'] = number
+                logger.debug(f"Number after processing: '{number}'")
+            
+            # Check for duplicates if type or number is being updated
+            ac_type = validated_data.get('ac_type', instance.ac_type)
+            number = validated_data.get('number', instance.number)
+            
+            logger.debug(f"Final values - Type: {ac_type}, Number: {number}")
+            
+            # REMOVED: The restriction that forces Cash/Other accounts to have null numbers
+            # Make sure this line is NOT in your code:
+            # if ac_type in [Account.TYPE_CASH, Account.TYPE_OTHER]: number = None
+            
+            # Check for duplicates (excluding current instance)
+            if number:
+                if Account.objects.filter(
+                    company=company, 
+                    ac_type=ac_type, 
+                    number=number
+                ).exclude(id=instance.id).exists():
+                    logger.debug("Duplicate account found with same type and number")
+                    return custom_response(
+                        success=False,
+                        message="An account with this type and number already exists.",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                if ac_type != instance.ac_type or 'ac_type' in validated_data:
+                    # Only check if type is changing or being set
+                    if Account.objects.filter(
+                        company=company, 
+                        ac_type=ac_type, 
+                        number__isnull=True
+                    ).exclude(id=instance.id).exists():
+                        logger.debug("Duplicate account found with same type and no number")
+                        return custom_response(
+                            success=False,
+                            message=f"A {ac_type} account without a number already exists.",
+                            data=None,
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
+            
+            # Update the instance
+            for attr, value in validated_data.items():
+                logger.debug(f"Setting {attr} = {value}")
+                setattr(instance, attr, value)
+            
+            logger.debug(f"Before save - Name: {instance.name}, Type: {instance.ac_type}, Number: {instance.number}")
+            instance.save()
+            logger.debug(f"After save - Name: {instance.name}, Type: {instance.ac_type}, Number: {instance.number}")
+            
+            # Return updated data
+            updated_serializer = self.get_serializer(instance)
+            data = self._process_account_data([updated_serializer.data])[0]
+            
+            logger.debug(f"=== END PARTIAL UPDATE DEBUG ===")
+            
+            return custom_response(
+                success=True,
+                message="Account updated successfully.",
+                data=data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Http404:
+            logger.warning(f"Account not found for update: {kwargs.get('pk')}")
+            return custom_response(
+                success=False,
+                message="Account not found.",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except serializers.ValidationError as e:
+            logger.warning(f"Account partial update validation error: {e.detail}")
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error partially updating account: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        
     @action(detail=False, methods=['get'])
     def active(self, request):
         """
