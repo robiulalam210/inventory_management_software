@@ -22,6 +22,8 @@ class MoneyReceiptCreateAPIView(APIView):
     def apply_filters(self, queryset, request):
         """Apply filters to the queryset"""
         params = request.GET
+
+
         
         # Date range filtering
         start_date = params.get('start_date')
@@ -60,7 +62,7 @@ class MoneyReceiptCreateAPIView(APIView):
             )
 
         # Order by
-        order_by = params.get('order_by', '-payment_date')
+        order_by = params.get('order_by', '-mr_no')
         if order_by.lstrip('-') in ['payment_date', 'amount', 'created_at', 'mr_no']:
             queryset = queryset.order_by(order_by)
         else:

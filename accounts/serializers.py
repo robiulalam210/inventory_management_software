@@ -1,19 +1,18 @@
-# accounts/serializers.py
 from rest_framework import serializers
 from .models import Account
 from decimal import Decimal
 
 class AccountSerializer(serializers.ModelSerializer):
-    ac_name = serializers.CharField(source='name')
+    ac_name = serializers.CharField(source='name', write_only=True)
     ac_number = serializers.CharField(source='number', required=False, allow_blank=True, allow_null=True)
     status = serializers.SerializerMethodField()
     
     class Meta:
         model = Account
         fields = ['id', 'ac_name', 'ac_type', 'ac_number', 'balance', 'bank_name', 'branch', 'opening_balance', 'company', 'status', 'ac_no']
+        # REMOVED read_only from opening_balance and balance
         extra_kwargs = {
-            'opening_balance': {'read_only': True},
-            'balance': {'read_only': True},
+            'balance': {'read_only': True},  # Keep balance read_only as it's calculated
         }
     
     def get_status(self, obj):
@@ -30,7 +29,14 @@ class AccountSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Enter a valid decimal number.")
         return value
     
-    # NO validation that prevents Cash/Other accounts from having numbers
+    def validate(self, data):
+        """Validate the entire data set"""
+        # Ensure opening_balance is included and valid
+        opening_balance = data.get('opening_balance', Decimal('0.00'))
+        if opening_balance is None:
+            data['opening_balance'] = Decimal('0.00')
+        
+        return data
 
     def create(self, validated_data):
         request = self.context.get('request')
@@ -58,7 +64,7 @@ class AccountSerializer(serializers.ModelSerializer):
             if Account.objects.filter(company=company, ac_type=ac_type, number__isnull=True).exists():
                 raise serializers.ValidationError(f"A {ac_type} account without a number already exists. Please provide a unique account number.")
 
-        # Create the account
+        # Create the account with ALL fields including opening_balance
         account = Account(
             company=company,
             name=name,
@@ -66,9 +72,10 @@ class AccountSerializer(serializers.ModelSerializer):
             number=number,
             bank_name=validated_data.get('bank_name'),
             branch=validated_data.get('branch'),
-            opening_balance=opening_balance,
-            balance=opening_balance,
-            is_active=True
+            opening_balance=opening_balance,  # This will now be saved
+            balance=opening_balance,  # Initial balance equals opening_balance
+            is_active=True,
+            created_by=user
         )
 
         # Save with the creating user

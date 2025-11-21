@@ -179,7 +179,7 @@ class SaleViewSet(BaseCompanyViewSet):
         Apply comprehensive filtering to sales queryset
         """
         params = self.request.GET
-        
+
         # Customer filter
         customer_id = params.get('customer')
         if customer_id:

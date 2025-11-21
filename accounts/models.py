@@ -16,11 +16,11 @@ class Account(models.Model):
     TYPE_OTHER = 'Other'
 
     ACCOUNT_TYPE_CHOICES = [
-    (TYPE_BANK, 'Bank'),
-    (TYPE_MOBILE, 'Mobile banking'),
-    (TYPE_CASH, 'Cash'),
-    (TYPE_OTHER, 'Other'),
-]
+        (TYPE_BANK, 'Bank'),
+        (TYPE_MOBILE, 'Mobile banking'),
+        (TYPE_CASH, 'Cash'),
+        (TYPE_OTHER, 'Other'),
+    ]
 
     ac_no = models.CharField(max_length=20, null=True, blank=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
@@ -111,14 +111,11 @@ class Account(models.Model):
     def save(self, *args, **kwargs):
         # Extract user from kwargs if provided
         user = kwargs.pop('creating_user', None)
-        if user and not self.pk:
-            self._creating_user = user
         
         is_new = self.pk is None
         creating_opening_balance = is_new and self.opening_balance and self.opening_balance > 0
         
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
-            # self.number = None
             self.bank_name = None
             self.branch = None
             
@@ -150,8 +147,8 @@ class Account(models.Model):
         super().save(*args, **kwargs)
         
         # Create opening balance transaction after saving (for record keeping only)
-        if creating_opening_balance and hasattr(self, '_creating_user'):
-            self.create_opening_balance_transaction(self._creating_user)
+        if creating_opening_balance and user:
+            self.create_opening_balance_transaction(user)
             
     def clean(self):
         from django.core.exceptions import ValidationError

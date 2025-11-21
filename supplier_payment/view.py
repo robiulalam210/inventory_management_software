@@ -1,14 +1,15 @@
+# supplier_payment/views.py
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db.models import Q, Sum
+from django.core.exceptions import ValidationError
 from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
 from .serializers import SupplierPaymentSerializer
 from .model import SupplierPayment
 from purchases.models import Purchase
 import logging
-from rest_framework import serializers
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,36 @@ class SupplierPaymentListCreateAPIView(APIView):
 
     def apply_filters(self, queryset, request):
         """Apply filters to the queryset"""
-        # ... your existing filter logic ...
+        # Filter by supplier
+        supplier_id = request.query_params.get('supplier_id')
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
+            
+        # Filter by payment method
+        payment_method = request.query_params.get('payment_method')
+        if payment_method:
+            queryset = queryset.filter(payment_method=payment_method)
+            
+        # Filter by status
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+            
+        # Filter by date range
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        if start_date and end_date:
+            queryset = queryset.filter(payment_date__range=[start_date, end_date])
+            
+        # Search
+        search = request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(sp_no__icontains=search) |
+                Q(supplier__name__icontains=search) |
+                Q(reference_no__icontains=search)
+            )
+            
         return queryset
 
     def get(self, request):
@@ -69,22 +99,20 @@ class SupplierPaymentListCreateAPIView(APIView):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        # supplier_payment/views.py - FIXED VERSION
     def post(self, request):
-        """Create a new supplier payment"""
+        """Create a new supplier payment with PROPER error handling"""
         try:
-            # Log the incoming data for debugging
             logger.info(f"=== SUPPLIER PAYMENT CREATION DEBUG ===")
             logger.info(f"Raw request data: {request.data}")
             
             # Create a mutable copy of the data
             data = request.data.copy()
             
-            # ✅ FIXED: Map seller_id to created_by (not prepared_by)
+            # Field mappings
             field_mappings = {
                 'account_id': 'account',
                 'supplier_id': 'supplier', 
-                'seller_id': 'created_by',  # ✅ FIXED: seller_id -> created_by
+                'seller_id': 'created_by',
                 'purchase_id': 'purchase',
             }
             
@@ -117,43 +145,136 @@ class SupplierPaymentListCreateAPIView(APIView):
             
             logger.info(f"Final data before serializer: {data}")
             
+            # Validate with serializer
             serializer = SupplierPaymentSerializer(data=data, context={'request': request})
-            serializer.is_valid(raise_exception=True)
             
-            # ✅ FIXED: Use created_by (matching the model field)
-            payment = serializer.save(
-                company=request.user.company,
-                created_by=request.user  # ✅ CORRECT: created_by matches model
-            )
+            if not serializer.is_valid():
+                logger.warning(f"Serializer validation errors: {serializer.errors}")
+                
+                # ✅ PROPER ERROR MESSAGE FORMATTING
+                error_message = self._format_validation_errors(serializer.errors)
+                
+                return custom_response(
+                    success=False,
+                    message=error_message,
+                    data=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
-            logger.info(f"Supplier payment created successfully: {payment.sp_no}")
-            logger.info("=== SUPPLIER PAYMENT CREATION COMPLETE ===")
+            # ✅ MANUALLY VALIDATE MODEL CONSTRAINTS
+            try:
+                # Create instance for validation
+                payment_instance = SupplierPayment(**serializer.validated_data)
+                payment_instance.company = request.user.company
+                payment_instance.created_by = request.user
+                
+                # This triggers model.clean() method
+                payment_instance.full_clean()
+                
+            except ValidationError as e:
+                logger.warning(f"Model validation error: {e.message_dict}")
+                
+                # ✅ FORMAT MODEL VALIDATION ERRORS
+                model_error_message = self._format_validation_errors(e.message_dict)
+                
+                return custom_response(
+                    success=False,
+                    message=model_error_message,
+                    data=e.message_dict,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
-            return custom_response(
-                success=True,
-                message="Supplier payment created successfully",
-                data=SupplierPaymentSerializer(payment, context={'request': request}).data,
-                status_code=status.HTTP_201_CREATED
-            )
+            # ✅ SAVE THE PAYMENT
+            try:
+                payment = serializer.save(
+                    company=request.user.company,
+                    created_by=request.user
+                )
+                
+                logger.info(f"✅ Supplier payment created successfully: {payment.sp_no}")
+                logger.info(f"💰 Payment amount: {payment.amount}, Status: {payment.status}")
+                logger.info("=== SUPPLIER PAYMENT CREATION COMPLETE ===")
+                
+                return custom_response(
+                    success=True,
+                    message="Supplier payment created successfully",
+                    data=SupplierPaymentSerializer(payment, context={'request': request}).data,
+                    status_code=status.HTTP_201_CREATED
+                )
+                
+            except Exception as save_error:
+                logger.error(f"Error during payment save: {str(save_error)}", exc_info=True)
+                return custom_response(
+                    success=False,
+                    message=f"Error saving payment: {str(save_error)}",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
-        except serializers.ValidationError as e:
-            logger.warning(f"Supplier payment validation error: {e.detail}")
-            return custom_response(
-                success=False,
-                message="Validation error",
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
         except Exception as e:
-            logger.error(f"Error creating supplier payment: {str(e)}", exc_info=True)
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Unexpected error creating supplier payment: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message="Internal server error",
-                data=None,
+                message="Internal server error occurred",
+                data={"debug_info": str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def _format_validation_errors(self, errors):
+        """Convert validation errors dictionary to user-friendly string message"""
+        if not errors:
+            return "Validation error occurred"
+        
+        error_messages = []
+        
+        for field, field_errors in errors.items():
+            if isinstance(field_errors, list):
+                # Handle list of errors for a field
+                for error in field_errors:
+                    if field == 'non_field_errors':
+                        error_messages.append(str(error))
+                    else:
+                        # Convert field name to readable format
+                        readable_field = self._get_field_display_name(field)
+                        error_messages.append(f"{readable_field}: {error}")
+            elif isinstance(field_errors, dict):
+                # Handle nested errors
+                for nested_field, nested_errors in field_errors.items():
+                    readable_field = self._get_field_display_name(f"{field}.{nested_field}")
+                    if isinstance(nested_errors, list):
+                        for nested_error in nested_errors:
+                            error_messages.append(f"{readable_field}: {nested_error}")
+                    else:
+                        error_messages.append(f"{readable_field}: {nested_errors}")
+            else:
+                # Handle single error string
+                readable_field = self._get_field_display_name(field)
+                error_messages.append(f"{readable_field}: {field_errors}")
+        
+        # Join all error messages
+        if error_messages:
+            return " • ".join(error_messages)
+        else:
+            return "Please check your input and try again"
+
+    def _get_field_display_name(self, field_name):
+        """Convert field names to user-friendly display names"""
+        field_display_names = {
+            'account': 'Payment Account',
+            'supplier': 'Supplier',
+            'amount': 'Payment Amount',
+            'payment_date': 'Payment Date',
+            'payment_method': 'Payment Method',
+            'created_by': 'Prepared By',
+            'purchase': 'Purchase Invoice',
+            'reference_no': 'Reference Number',
+            'description': 'Description',
+            'use_advance': 'Use Advance',
+            'advance_amount_used': 'Advance Amount Used',
+        }
+        
+        return field_display_names.get(field_name, field_name.replace('_', ' ').title())
+
 
 class SupplierPaymentDetailAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -228,6 +349,21 @@ class SupplierPaymentDetailAPIView(APIView):
             )
             
             if serializer.is_valid():
+                # Validate model constraints for update
+                try:
+                    update_instance = SupplierPayment(**serializer.validated_data)
+                    update_instance.id = payment.id
+                    update_instance.company = request.user.company
+                    update_instance.full_clean()
+                except ValidationError as e:
+                    error_message = self._format_validation_errors(e.message_dict)
+                    return custom_response(
+                        success=False,
+                        message=error_message,
+                        data=e.message_dict,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                
                 instance = serializer.save()
                 logger.info(f"Supplier payment updated successfully: {instance.id}")
                 
@@ -239,9 +375,10 @@ class SupplierPaymentDetailAPIView(APIView):
                 )
             else:
                 logger.warning(f"Supplier payment update validation errors: {serializer.errors}")
+                error_message = self._format_validation_errors(serializer.errors)
                 return custom_response(
                     success=False,
-                    message="Validation error occurred.",
+                    message=error_message,
                     data=serializer.errors,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
@@ -268,8 +405,9 @@ class SupplierPaymentDetailAPIView(APIView):
                 )
             
             payment_id = payment.id
+            sp_no = payment.sp_no
             payment.delete()
-            logger.info(f"Supplier payment deleted successfully: {payment_id}")
+            logger.info(f"Supplier payment deleted successfully: {sp_no} (ID: {payment_id})")
             
             return custom_response(
                 success=True,
@@ -285,3 +423,24 @@ class SupplierPaymentDetailAPIView(APIView):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def _format_validation_errors(self, errors):
+        """Helper method to format validation errors (same as above)"""
+        if not errors:
+            return "Validation error occurred"
+        
+        error_messages = []
+        
+        for field, field_errors in errors.items():
+            if isinstance(field_errors, list):
+                for error in field_errors:
+                    if field == 'non_field_errors':
+                        error_messages.append(str(error))
+                    else:
+                        readable_field = field.replace('_', ' ').title()
+                        error_messages.append(f"{readable_field}: {error}")
+            else:
+                readable_field = field.replace('_', ' ').title()
+                error_messages.append(f"{readable_field}: {field_errors}")
+        
+        return " • ".join(error_messages) if error_messages else "Validation error occurred"
