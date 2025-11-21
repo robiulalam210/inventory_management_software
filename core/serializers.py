@@ -62,6 +62,46 @@ class CompanySerializer(serializers.ModelSerializer):
         read_only_fields = ["company_code", "days_until_expiry", "active_user_count", "product_count"]
 
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    company_info = CompanySerializer(source='company', read_only=True)
+    full_name = serializers.CharField(read_only=True)
+    permissions = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'full_name',
+            'role', 'company', 'company_info', 'phone', 'profile_picture',
+            'date_of_birth', 'is_verified', 'last_login', 'date_joined',
+            'permissions', 'is_active'
+        ]
+        read_only_fields = [
+            'id', 'role', 'company', 'company_info', 'is_verified', 
+            'last_login', 'date_joined', 'permissions', 'is_active'
+        ]
+    
+    def get_permissions(self, obj):
+        return obj.get_permissions()
+
+class StaffProfileSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    role_name = serializers.CharField(source='role.name', read_only=True)
+    
+    class Meta:
+        model = Staff
+        fields = [
+            'id', 'user_name', 'user_email', 'role', 'role_name',
+            'phone', 'alternate_phone', 'image', 'designation',
+            'employment_type', 'employee_id', 'department',
+            'salary', 'commission', 'bonus', 'is_main_user',
+            'status', 'joining_date', 'leaving_date', 'contract_end_date',
+            'address', 'emergency_contact', 'emergency_phone',
+            'is_currently_active', 'employment_duration', 'total_compensation'
+        ]
+        read_only_fields = ['id', 'employee_id', 'is_currently_active', 
+                          'employment_duration', 'total_compensation']
+
 class StaffRoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = StaffRole

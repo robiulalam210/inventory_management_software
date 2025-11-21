@@ -9,6 +9,16 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework.decorators import api_view, permission_classes
+from django.utils import timezone
+from django.db import models
+import logging
+logger = logging.getLogger(__name__)
+from rest_framework import permissions
+from .serializers import UserProfileSerializer, StaffProfileSerializer
+from django.contrib.auth import get_user_model
+User = get_user_model()
+
 
 from .models import Company, User, StaffRole, Staff
 from .serializers import (
@@ -78,22 +88,6 @@ class CustomLoginView(APIView):
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
-
-    
-class TestView(APIView):
-    """
-    Test view to verify URL routing
-    """
-    def get(self, request):
-        return Response({
-            "message": "✅ Test endpoint is working!",
-            "endpoints": {
-                "api_login": "POST /api/auth/login/",
-                "api_test": "GET /api/test/",
-                "admin_login": "GET /admin/login/",
-                "django_admin": "GET /admin/"
-            }
-        })
 
 
 class BaseCompanyViewSet(viewsets.ModelViewSet):
@@ -222,8 +216,266 @@ class StaffRoleViewSet(viewsets.ModelViewSet):
 class StaffViewSet(BaseCompanyViewSet):
     queryset = Staff.objects.all()
     serializer_class = StaffSerializer
+class ChangePasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            user = request.user
+            current_password = request.data.get('current_password')
+            new_password = request.data.get('new_password')
+
+            if not current_password or not new_password:
+                return custom_response(
+                    success=False,
+                    message="Current password and new password are required",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Verify current password
+            if not user.check_password(current_password):
+                return custom_response(
+                    success=False,
+                    message="Current password is incorrect",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate new password
+            if len(new_password) < 8:
+                return custom_response(
+                    success=False,
+                    message="New password must be at least 8 characters long",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Set new password
+            user.set_password(new_password)
+            user.save()
+
+            logger.info(f"Password changed for user: {user.username}")
+
+            return custom_response(
+                success=True,
+                message="Password changed successfully",
+                data=None,
+                status_code=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Password change failed: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Password change failed",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+class ProfileAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get current user profile"""
+        try:
+            user = request.user
+            
+            # Check if user has staff profile
+            has_staff_profile = hasattr(user, 'staff_profile')
+            
+            # Prepare response data
+            profile_data = {
+                'user': UserProfileSerializer(user).data,
+                'staff_profile': StaffProfileSerializer(user.staff_profile).data if has_staff_profile else None,
+                'permissions': user.get_permissions(),
+                'company_info': {
+                    'id': user.company.id if user.company else None,
+                    'name': user.company.name if user.company else None,
+                    'plan_type': user.company.plan_type if user.company else None,
+                    'is_active': user.company.is_active if user.company else None,
+                } if user.company else None
+            }
+            
+            logger.info(f"User profile fetched for: {user.username}")
+            
+            return custom_response(
+                success=True,
+                message="User profile fetched successfully",
+                data=profile_data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching user profile: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Error fetching user profile",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def patch(self, request):
+        """Update user profile with PATCH"""
+        try:
+            user = request.user
+            data = request.data.copy()
+            
+            print(f"PATCH request received for user: {user.username}")
+            print(f"Request data: {data}")
+            
+            # Remove sensitive fields that shouldn't be updated via this endpoint
+            sensitive_fields = ['password', 'is_superuser', 'is_staff', 'role', 'company', 'username']
+            for field in sensitive_fields:
+                data.pop(field, None)
+            
+            print(f"Data after filtering: {data}")
+            
+            serializer = UserProfileSerializer(
+                user, 
+                data=data, 
+                partial=True,  # This allows partial updates
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                print("Profile updated successfully")
+                
+                # Return full updated profile data
+                has_staff_profile = hasattr(user, 'staff_profile')
+                updated_profile_data = {
+                    'user': UserProfileSerializer(user).data,
+                    'staff_profile': StaffProfileSerializer(user.staff_profile).data if has_staff_profile else None,
+                    'permissions': user.get_permissions(),
+                    'company_info': {
+                        'id': user.company.id if user.company else None,
+                        'name': user.company.name if user.company else None,
+                        'plan_type': user.company.plan_type if user.company else None,
+                        'is_active': user.company.is_active if user.company else None,
+                    } if user.company else None
+                }
+                
+                logger.info(f"User profile updated for: {user.username}")
+                
+                return custom_response(
+                    success=True,
+                    message="Profile updated successfully",
+                    data=updated_profile_data,
+                    status_code=status.HTTP_200_OK
+                )
+            else:
+                print(f"Validation errors: {serializer.errors}")
+                logger.warning(f"Profile update validation errors: {serializer.errors}")
+                return custom_response(
+                    success=False,
+                    message="Validation error",
+                    data=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            logger.error(f"Error updating user profile: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Error updating profile",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+class UserPermissionsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get user permissions"""
+        try:
+            user = request.user
+            
+            permissions_data = {
+                'role': user.role,
+                'is_superuser': user.is_superuser,
+                'is_staff': user.is_staff,
+                'permissions': user.get_permissions(),
+                'can_manage_company': user.role in [user.Role.SUPER_ADMIN, user.Role.ADMIN],
+            }
+            
+            return custom_response(
+                success=True,
+                message="User permissions fetched successfully",
+                data=permissions_data,
+                status_code=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            logger.error(f"Error fetching user permissions: {str(e)}")
+            return custom_response(
+                success=False,
+                message="Error fetching permissions",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def user_dashboard_stats(request):
+    """Get user dashboard statistics"""
+    try:
+        user = request.user
+        company = user.company
+        
+        # Import models here to avoid circular imports
+        from sales.models import Sale
+        from purchases.models import Purchase
+        from products.models import Product
+        from customers.models import Customer
+        from suppliers.models import Supplier
+        
+        stats = {
+            'today_sales': Sale.objects.filter(
+                company=company,
+                sale_date__date=timezone.now().date()
+            ).aggregate(total=models.Sum('grand_total'))['total'] or 0,
+            
+            'today_orders': Sale.objects.filter(
+                company=company,
+                sale_date__date=timezone.now().date()
+            ).count(),
+            
+            'total_products': Product.objects.filter(company=company, is_active=True).count(),
+            'total_customers': Customer.objects.filter(company=company, is_active=True).count(),
+            'total_suppliers': Supplier.objects.filter(company=company, is_active=True).count(),
+            
+            'pending_purchases': Purchase.objects.filter(
+                company=company,
+                status='pending'
+            ).count(),
+            
+            'due_sales': Sale.objects.filter(
+                company=company,
+                due_amount__gt=0
+            ).aggregate(total_due=models.Sum('due_amount'))['total_due'] or 0,
+        }
+        
+        # Convert Decimal to float for JSON serialization
+        for key, value in stats.items():
+            if hasattr(value, '__float__'):
+                stats[key] = float(value)
+        
+        return custom_response(
+            success=True,
+            message="Dashboard stats fetched successfully",
+            data=stats,
+            status_code=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"Error fetching dashboard stats: {str(e)}", exc_info=True)
+        return custom_response(
+            success=False,
+            message="Error fetching dashboard statistics",
+            data=None,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 def company_admin_signup(request):
     if CompanyAdminSignupForm is None:
         return render(request, 'error.html', {'error': 'Forms module not available'})

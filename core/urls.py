@@ -20,6 +20,8 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, HttpRes
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
+from core.views import ProfileAPIView, UserPermissionsAPIView, user_dashboard_stats, ChangePasswordAPIView
+
 # Remove this import since we're importing functions directly above
 # from . import views
 from transactions.views import TransactionViewSet
@@ -59,6 +61,7 @@ router.register(r'purchase-returns', PurchaseReturnViewSet, basename='purchase-r
 router.register(r'bad-stocks', BadStockViewSet, basename='bad-stock')
 router.register(r'accounts', AccountViewSet, basename='account')
 router.register(r'transactions', TransactionViewSet, basename='transaction')
+# router.register(r'profile', UserProfileViewSet, basename='profile')
 
 
 
@@ -72,6 +75,12 @@ urlpatterns = [
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
+        path('profile/', ProfileAPIView.as_view(), name='profile'),
+
+    path('profile/permissions/', UserPermissionsAPIView.as_view(), name='user-permissions'),
+    path('dashboard/stats/', user_dashboard_stats, name='user-dashboard-stats'),
+  
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
     path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),
@@ -93,16 +102,6 @@ urlpatterns = [
     path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
     path('api/products/filters/', ProductViewSet.as_view({'get': 'filters'}), name='product-filters'),
     
-# GET /api/products/stock-info/?status=0  # Out of stock
-# GET /api/products/stock-info/?status=1  # Low stock  
-# GET /api/products/stock-info/?status=2  # In stock
-
-# GET /api/products/?stock_status=0  # Using filter class
-# GET /api/products/?stock_status=1  # Using filter class
-# GET /api/products/?stock_status=2  # Using filter class
-# GET /api/products/?category=1&stock_status=1&product_name=laptop
-# GET /api/products/search/?q=laptop&category_id=1&stock_status=2
-# GET /api/products/low-stock/  # Only low stock products
 
     # Admin UI
     path('admin/signup/', company_admin_signup, name='company_admin_signup'),
