@@ -3,6 +3,9 @@ from .models import Company, User, StaffRole, Staff
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers as drf_serializers
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken    
+# -----------------------------
 # Custom Token Serializer (TokenObtainPair)
 # -----------------------------
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -64,7 +67,7 @@ class CompanySerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     company_info = CompanySerializer(source='company', read_only=True)
-    full_name = serializers.CharField(read_only=True)
+    full_name = serializers.SerializerMethodField()  # <-- Use SerializerMethodField
     permissions = serializers.SerializerMethodField()
     
     class Meta:
@@ -79,7 +82,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'id', 'role', 'company', 'company_info', 'is_verified', 
             'last_login', 'date_joined', 'permissions', 'is_active'
         ]
-    
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+
     def get_permissions(self, obj):
         return obj.get_permissions()
 

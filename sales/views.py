@@ -15,7 +15,7 @@ from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination    
 from core.base_viewsets import BaseCompanyViewSet
 from sales.models import Sale, SaleItem
-from .serializers import SaleSerializer, SaleItemSerializer, DueSaleSerializer
+from .serializers import SaleSerializer, SaleItemSerializer
 from customers.models import Customer
 from accounts.models import Account
 
@@ -80,85 +80,6 @@ def get_due_sales(request):
             "data": []
         }, status=500)
 
-# -----------------------------
-# Sale Payment API
-# -----------------------------
-class SalePaymentView(APIView):
-    permission_classes = [IsAuthenticated]
-    
-    def post(self, request, sale_id):
-        """
-        Add payment to existing sale
-        POST /api/sales/{sale_id}/add-payment/
-        {
-            "amount": 100.00,
-            "payment_method": "Cash",
-            "account_id": 12,
-            "create_receipt": true
-        }
-        """
-        try:
-            sale = Sale.objects.get(id=sale_id, company=request.user.company)
-            
-            amount = Decimal(request.data.get('amount', 0))
-            payment_method = request.data.get('payment_method')
-            account_id = request.data.get('account_id')
-            create_receipt = request.data.get('create_receipt', True)
-            
-            if amount <= 0:
-                return Response({
-                    "status": False,
-                    "message": "Payment amount must be greater than 0"
-                }, status=400)
-            
-            # Get account if provided
-            account = None
-            if account_id:
-                try:
-                    account = Account.objects.get(id=account_id, company=request.user.company)
-                except Account.DoesNotExist:
-                    return Response({
-                        "status": False,
-                        "message": "Account not found"
-                    }, status=404)
-            
-            # Add payment using the model method
-            new_paid_amount = sale.add_payment(
-                amount=amount,
-                payment_method=payment_method,
-                account=account
-            )
-            
-            # Create money receipt if requested
-            if create_receipt and sale.with_money_receipt == 'Yes':
-                sale.create_money_receipt()
-            
-            # Refresh sale data
-            sale.refresh_from_db()
-            
-            return Response({
-                "status": True,
-                "message": f"Payment of {amount} added successfully",
-                "data": {
-                    "sale_id": sale.id,
-                    "invoice_no": sale.invoice_no,
-                    "paid_amount": float(sale.paid_amount),
-                    "due_amount": float(sale.due_amount),
-                    "payment_status": sale.payment_status,
-                    "remaining_balance": float(max(0, sale.payable_amount - sale.paid_amount))
-                }
-            })
-            
-        except Sale.DoesNotExist:
-            return Response({
-                "status": False,
-                "message": "Sale not found"
-            }, status=404)
-        except Exception as e:
-            return Response({
-                "status": False,
-                "message": f"Error adding payment: {str(e)}"
-            }, status=400)
 
 # -----------------------------
 # Sale ViewSet

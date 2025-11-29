@@ -9,15 +9,25 @@ class CustomerSerializer(serializers.ModelSerializer):
     amount_type = serializers.SerializerMethodField()
     client_no = serializers.SerializerMethodField()
     total_sales = serializers.SerializerMethodField()
+    advance_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = Customer
         fields = [
-            'id', 'name', 'phone', 'email', 'address', 'is_active', 
-            'client_no', 'total_due', 'total_paid', 'amount_type', 'company', 
-            'total_sales', 'date_created', 'created_by'
+            'id', 'name', 'phone', 'email', 'address', 'is_active',
+            'client_no', 'total_due', 'total_paid', 'amount_type',
+            'company', 'total_sales', 'date_created', 'created_by',
+            'advance_balance'  # 👈 Also added in the fields list
         ]
         read_only_fields = ['date_created', 'created_by']
+
+    def get_advance_balance(self, obj):
+        """Return stored advance directly from DB"""
+        try:
+            return float(obj.advance_balance) if obj.advance_balance is not None else 0.00
+        except:
+            return 0.00
+
 
     def get_client_no(self, obj):
         """Get client number - use existing or generate if missing"""

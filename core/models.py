@@ -140,6 +140,8 @@ class User(AbstractUser):
     
     # ===== DASHBOARD PERMISSIONS =====
     can_access_dashboard = models.BooleanField(default=False)
+    can_manage_products = models.BooleanField(default=False)
+
     
     # ===== SALES MODULE PERMISSIONS =====
     sales_view = models.BooleanField(default=False)

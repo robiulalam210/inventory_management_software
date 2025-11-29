@@ -148,7 +148,8 @@ class CompanyAdmin(SuperUserAdmin):
         if request.user.is_superuser:
             return qs.prefetch_related('users', 'products')
         return qs.filter(users=request.user)
-    
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     fieldsets = BaseUserAdmin.fieldsets + (
@@ -157,19 +158,63 @@ class UserAdmin(BaseUserAdmin):
                 "role", 
                 "company",
                 "phone",
-                "profile_picture"
+                "profile_picture",
+                "date_of_birth"
             )
         }),
-        ("Permissions", {
+        ("Dashboard & Product Permissions", {
             "fields": (
+                "can_access_dashboard",
                 "can_manage_products",
-                "can_manage_sales", 
-                "can_manage_purchases",
-                "can_manage_customers",
-                "can_manage_suppliers", 
-                "can_view_reports",
-                "can_manage_users",
-                "is_verified"
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Sales & Money Receipt Permissions", {
+            "fields": (
+                "sales_view", "sales_create", "sales_edit", "sales_delete",
+                "money_receipt_view", "money_receipt_create", "money_receipt_edit", "money_receipt_delete",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Purchases & Products Permissions", {
+            "fields": (
+                "purchases_view", "purchases_create", "purchases_edit", "purchases_delete",
+                "products_view", "products_create", "products_edit", "products_delete",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Accounts & Customers Permissions", {
+            "fields": (
+                "accounts_view", "accounts_create", "accounts_edit", "accounts_delete",
+                "customers_view", "customers_create", "customers_edit", "customers_delete",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Suppliers & Expense Permissions", {
+            "fields": (
+                "suppliers_view", "suppliers_create", "suppliers_edit", "suppliers_delete",
+                "expense_view", "expense_create", "expense_edit", "expense_delete",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Return & Reports Permissions", {
+            "fields": (
+                "return_view", "return_create", "return_edit", "return_delete",
+                "reports_view", "reports_create", "reports_export",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Users & Administration Permissions", {
+            "fields": (
+                "users_view", "users_create", "users_edit", "users_delete",
+                "administration_view", "administration_create", "administration_edit", "administration_delete",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Settings & Verification", {
+            "fields": (
+                "settings_view", "settings_edit",
+                "is_verified", "last_login_ip"
             ),
             "classes": ("collapse",)
         })
@@ -236,19 +281,40 @@ class UserAdmin(BaseUserAdmin):
         if obj.is_superuser:
             return format_html('<span style="color: green; font-weight: bold;">SUPERUSER (All Permissions)</span>')
         
-        perms = []
-        if obj.can_manage_products:
-            perms.append("Products")
-        if obj.can_manage_sales:
-            perms.append("Sales")
-        if obj.can_manage_purchases:
-            perms.append("Purchases")
-        if obj.can_view_reports:
-            perms.append("Reports")
-        if obj.can_manage_users:
-            perms.append("Users")
-            
-        return ", ".join(perms) if perms else "View Only"
+        # Count active permissions based on your actual field names
+        perms_count = 0
+        modules = []
+        
+        # Check each module for any permission
+        permission_methods = [
+            ('Dashboard', obj.can_access_dashboard),
+            ('Sales', obj.sales_view or obj.sales_create or obj.sales_edit or obj.sales_delete),
+            ('Money Receipt', obj.money_receipt_view or obj.money_receipt_create or obj.money_receipt_edit or obj.money_receipt_delete),
+            ('Purchases', obj.purchases_view or obj.purchases_create or obj.purchases_edit or obj.purchases_delete),
+            ('Products', obj.products_view or obj.products_create or obj.products_edit or obj.products_delete),
+            ('Accounts', obj.accounts_view or obj.accounts_create or obj.accounts_edit or obj.accounts_delete),
+            ('Customers', obj.customers_view or obj.customers_create or obj.customers_edit or obj.customers_delete),
+            ('Suppliers', obj.suppliers_view or obj.suppliers_create or obj.suppliers_edit or obj.suppliers_delete),
+            ('Expense', obj.expense_view or obj.expense_create or obj.expense_edit or obj.expense_delete),
+            ('Return', obj.return_view or obj.return_create or obj.return_edit or obj.return_delete),
+            ('Reports', obj.reports_view or obj.reports_create or obj.reports_export),
+            ('Users', obj.users_view or obj.users_create or obj.users_edit or obj.users_delete),
+            ('Admin', obj.administration_view or obj.administration_create or obj.administration_edit or obj.administration_delete),
+            ('Settings', obj.settings_view or obj.settings_edit),
+        ]
+        
+        for module_name, has_perm in permission_methods:
+            if has_perm:
+                modules.append(module_name)
+                perms_count += 1
+        
+        if perms_count == 0:
+            return format_html('<span style="color: orange;">No Permissions</span>')
+        elif perms_count <= 3:
+            return ", ".join(modules)
+        else:
+            return format_html('<span style="color: blue;">{} modules</span>', perms_count)
+    
     permissions_summary.short_description = "Permissions"
     
     def get_queryset(self, request):

@@ -71,12 +71,11 @@ urlpatterns = [
     
     
     
-    
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
-        path('profile/', ProfileAPIView.as_view(), name='profile'),
+    path('profile/', ProfileAPIView.as_view(), name='profile'),
 
     path('profile/permissions/', UserPermissionsAPIView.as_view(), name='user-permissions'),
     path('dashboard/stats/', user_dashboard_stats, name='user-dashboard-stats'),
