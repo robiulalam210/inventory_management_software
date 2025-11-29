@@ -9,9 +9,8 @@ class AccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = Account
         fields = ['id', 'name', 'ac_type', 'ac_number', 'balance', 'bank_name', 'branch', 'opening_balance', 'company', 'status', 'ac_no']
-        # REMOVED read_only from opening_balance and balance
         extra_kwargs = {
-            'balance': {'read_only': True},  # Keep balance read_only as it's calculated
+            'balance': {'read_only': True},
         }
     
     def get_status(self, obj):
@@ -45,15 +44,20 @@ class AccountSerializer(serializers.ModelSerializer):
         if not company:
             raise serializers.ValidationError("User must be associated with a company.")
 
-        # Extract the data
+        # ✅ FIXED: Extract number from the source mapping
+        # The 'number' field comes from 'ac_number' in the request
+        number_source = validated_data.get('number')  # This comes from 'ac_number' source mapping
+        
+        # Handle the number field properly
+        if number_source == '' or number_source is None:
+            number = None
+        else:
+            number = number_source
+
+        # Extract other data
         ac_type = validated_data.get('ac_type')
-        number = validated_data.get('number')
         name = validated_data.get('name')
         opening_balance = validated_data.get('opening_balance', Decimal('0.00'))
-
-        # Handle empty string as None
-        if number == '':
-            number = None
 
         # Check for duplicates
         if number:
@@ -63,16 +67,16 @@ class AccountSerializer(serializers.ModelSerializer):
             if Account.objects.filter(company=company, ac_type=ac_type, number__isnull=True).exists():
                 raise serializers.ValidationError(f"A {ac_type} account without a number already exists. Please provide a unique account number.")
 
-        # Create the account with ALL fields including opening_balance
+        # Create the account
         account = Account(
             company=company,
             name=name,
             ac_type=ac_type,
-            number=number,
+            number=number,  # Use the properly handled number
             bank_name=validated_data.get('bank_name'),
             branch=validated_data.get('branch'),
-            opening_balance=opening_balance,  # This will now be saved
-            balance=opening_balance,  # Initial balance equals opening_balance
+            opening_balance=opening_balance,
+            balance=opening_balance,
             is_active=True,
             created_by=user
         )

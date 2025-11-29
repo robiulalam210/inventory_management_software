@@ -253,7 +253,6 @@ class Sale(models.Model):
         except Exception as e:
             logger.error(f"Error creating sale transaction for {self.invoice_no}: {e}")
         return None
-
     def update_totals(self):
         """Update all calculated totals for the sale - FIXED PAYMENT LOGIC"""
         try:
@@ -320,8 +319,8 @@ class Sale(models.Model):
             self.grand_total = min(self._safe_decimal(grand_total), max_amount)
             self.payable_amount = min(self._safe_decimal(grand_total), max_amount)
             
-            # ✅ FIXED: CORRECT PAYMENT CALCULATION
-            paid = self._safe_decimal(self.paid_amount)
+            # ✅ FIXED: Use the actual paid_amount from the model
+            paid = self._safe_decimal(self.paid_amount)  # This now uses the saved paid_amount
             payable = self._safe_decimal(self.payable_amount)
             
             # Calculate due amount and change
@@ -337,20 +336,7 @@ class Sale(models.Model):
             # Update payment status
             self._update_payment_status()
 
-            # ✅ FIXED: Handle advance balance for saved customers only
-            if (self.customer and 
-                self.customer_type == 'saved_customer' and 
-                self.change_amount > 0):
-                # For saved customers, excess goes to advance balance
-                try:
-                    self.customer.advance_balance += self.change_amount
-                    self.customer.save(update_fields=['advance_balance'])
-                    logger.info(f"Added {self.change_amount} to advance balance for {self.customer.name}")
-                    self.change_amount = Decimal('0.00')  # Reset change since it's now advance
-                except Exception as e:
-                    logger.error(f"Error updating customer advance balance: {e}")
-            
-            # Save totals without triggering recursion
+            # Save totals
             update_fields = [
                 "gross_total", "net_total", "grand_total", 
                 "payable_amount", "due_amount", "change_amount",
@@ -372,6 +358,8 @@ class Sale(models.Model):
             logger.error(f"Error updating totals for {self.invoice_no}: {str(e)}")
         finally:
             self._updating_totals = False
+
+
 
     def _safe_decimal(self, value):
         """Convert value to Decimal safely"""

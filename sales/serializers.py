@@ -59,7 +59,14 @@ class SaleSerializer(serializers.ModelSerializer):
     invoice_no = serializers.CharField(read_only=True)
     sale_date = serializers.DateTimeField(read_only=True)
     grand_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
-    paid_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    
+    # ✅ FIXED: Make paid_amount writable
+    paid_amount = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        required=False, 
+        default=0
+    )
 
     class Meta:
         model = Sale
@@ -80,7 +87,7 @@ class SaleSerializer(serializers.ModelSerializer):
             'id', 'invoice_no', 'gross_total', 'net_total', 'grand_total',
             'payable_amount', 'due_amount', 'change_amount',
             'overall_delivery_charge', 'overall_service_charge', 'overall_vat_amount',
-            'created_by_name', 'sale_by_name'
+            'created_by_name', 'sale_by_name', 'payment_status'
         ]
 
     def get_due_amount(self, obj):
@@ -90,6 +97,8 @@ class SaleSerializer(serializers.ModelSerializer):
         customer_type = attrs.get('customer_type', 'walk_in')
         paid_amount = attrs.get('paid_amount', 0)
         items = attrs.get('items', [])
+        payment_method = attrs.get('payment_method')
+        account = attrs.get('account')
 
         if not items:
             raise serializers.ValidationError({'items': 'At least one item is required.'})
@@ -97,14 +106,25 @@ class SaleSerializer(serializers.ModelSerializer):
         if customer_type == 'saved_customer' and not attrs.get('customer'):
             raise serializers.ValidationError({'customer': 'Saved customer must have a record.'})
 
-        if customer_type == 'walk_in' and paid_amount and paid_amount < 0:
-            raise serializers.ValidationError({'paid_amount': 'Paid amount must be positive.'})
+        # ✅ FIXED: Validate payment details when payment is made
+        if paid_amount and paid_amount > 0:
+            if not payment_method:
+                raise serializers.ValidationError({
+                    'payment_method': 'Payment method is required when making a payment.'
+                })
+            if not account:
+                raise serializers.ValidationError({
+                    'account': 'Account is required when making a payment.'
+                })
 
         return attrs
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
         sale_by_data = validated_data.pop('sale_by', None)
+        
+        # ✅ FIXED: Extract paid_amount before creating sale
+        paid_amount = validated_data.get('paid_amount', 0)
 
         request = self.context.get('request')
         if request and request.user.is_authenticated:
@@ -117,11 +137,19 @@ class SaleSerializer(serializers.ModelSerializer):
             validated_data['customer'] = None
             validated_data.setdefault('customer_name', "Walk-in Customer")
 
-        # Set sale charges defaults if missing
-        for field in ['vat', 'service_charge', 'delivery_charge']:
-            validated_data[f'overall_{field if field != "vat" else "vat_amount"}'] = validated_data.pop(field, 0)
+        # ✅ FIXED: Handle charge fields properly
+        charge_fields_mapping = {
+            'vat': 'overall_vat_amount',
+            'service_charge': 'overall_service_charge', 
+            'delivery_charge': 'overall_delivery_charge'
+        }
+        
+        for source_field, target_field in charge_fields_mapping.items():
+            if source_field in validated_data:
+                validated_data[target_field] = validated_data.pop(source_field)
 
         with transaction.atomic():
+            # ✅ FIXED: Create sale with paid_amount
             sale = Sale.objects.create(**validated_data)
 
             # Create sale items
@@ -136,21 +164,44 @@ class SaleSerializer(serializers.ModelSerializer):
                 ) for i in items_data
             ]
             SaleItem.objects.bulk_create(sale_items)
+            
+            # ✅ FIXED: Update totals to calculate correct amounts
             sale.update_totals()
-
-            # Handle account payment
+            
+            # ✅ FIXED: Handle payment and money receipt
             account = validated_data.get('account')
-            if account and sale.paid_amount > 0:
-                account.balance += sale.paid_amount
+            if account and paid_amount > 0:
+                # Update account balance
+                account.balance += paid_amount
                 account.save(update_fields=['balance'])
+                
+                logger.info(f"💰 Account {account.name} balance updated: +{paid_amount}")
 
+                # Create money receipt if requested
                 if validated_data.get('with_money_receipt') == 'Yes':
-                    sale.create_money_receipt()
+                    money_receipt = sale.create_money_receipt()
+                    if money_receipt:
+                        logger.info(f"🧾 Money receipt created: {money_receipt.mr_no}")
+                else:
+                    # Create direct transaction
+                    transaction_obj = sale.create_transaction()
+                    if transaction_obj:
+                        logger.info(f"💳 Direct transaction created: {transaction_obj.transaction_no}")
 
+            # ✅ FIXED: Refresh sale to get updated totals
+            sale.refresh_from_db()
+            
             return sale
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         rep['items'] = SaleItemSerializer(instance.items.all(), many=True).data
         rep['customer_name'] = instance.customer.name if instance.customer else "Walk-in Customer"
+        
+        # ✅ FIXED: Ensure correct payment amounts are shown
+        rep['paid_amount'] = float(instance.paid_amount)
+        rep['due_amount'] = float(instance.due_amount)
+        rep['change_amount'] = float(instance.change_amount)
+        rep['grand_total'] = float(instance.grand_total)
+        
         return rep

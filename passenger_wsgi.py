@@ -1,4 +1,14 @@
-import os
 import sys
+import os
 
-from inventory_api.wsgi import application 
+# Project base directory
+project_home = '/home/meherinm/inventory'
+
+# Add project to system path
+if project_home not in sys.path:
+    sys.path.insert(0, project_home)
+
+os.environ['DJANGO_SETTINGS_MODULE'] = 'inventory_api.settings'
+
+from django.core.wsgi import get_wsgi_application
+application = get_wsgi_application()

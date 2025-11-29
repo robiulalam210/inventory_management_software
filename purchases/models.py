@@ -9,6 +9,7 @@ from django.db import transaction as db_transaction
 
 logger = logging.getLogger(__name__)
 
+
 class Purchase(models.Model):
     PAYMENT_STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -91,15 +92,15 @@ class Purchase(models.Model):
 
     def _update_payment_status(self):
         """Update payment status based on paid amount"""
-        logger.info(f"🔄 Updating payment status: Paid={self.paid_amount}, Grand Total={self.grand_total}, Due={self.due_amount}")
+        logger.info(f"UPDATING: Updating payment status: Paid={self.paid_amount}, Grand Total={self.grand_total}, Due={self.due_amount}")
         
         if self.payment_status == 'cancelled':
-            logger.info("📝 Purchase is cancelled, status unchanged")
+            logger.info("INFO: Purchase is cancelled, status unchanged")
             return
             
         # Don't check items if purchase doesn't have PK yet (during initial creation)
         if not self.pk:
-            logger.info("📝 Purchase not saved yet, using basic status calculation")
+            logger.info("INFO: Purchase not saved yet, using basic status calculation")
             if self.paid_amount <= 0:
                 self.payment_status = 'pending'
             elif self.paid_amount >= self.grand_total:
@@ -115,34 +116,34 @@ class Purchase(models.Model):
                 # If grand total is zero but we have items, this might be a calculation issue
                 try:
                     if self.items.exists():
-                        logger.warning("⚠️ Grand total is 0 but purchase has items - recalculating totals")
+                        logger.warning("WARNING: Grand total is 0 but purchase has items - recalculating totals")
                         self.update_totals(force_update=True)
                 except ValueError:
                     # This can happen if purchase doesn't have PK yet
-                    logger.warning("⚠️ Cannot check items - purchase not fully saved")
+                    logger.warning("WARNING: Cannot check items - purchase not fully saved")
         
         # Standard payment status logic (applies to both new and existing purchases)
         if self.paid_amount <= 0:
             self.payment_status = 'pending'
-            logger.info("📝 Status set to: pending")
+            logger.info("INFO: Status set to: pending")
         
         elif self.paid_amount >= self.grand_total:
             self.payment_status = 'paid'
             self.due_amount = Decimal('0.00')  # Ensure due is zero when paid
-            logger.info("✅ Status set to: paid")
+            logger.info("SUCCESS: Status set to: paid")
         
         elif self.paid_amount > 0 and self.paid_amount < self.grand_total:
             self.payment_status = 'partial'
-            logger.info("🔄 Status set to: partial")
+            logger.info("INFO: Status set to: partial")
         
         else:
             self.payment_status = 'pending'
-            logger.info("📝 Status set to: pending (fallback)")
+            logger.info("INFO: Status set to: pending (fallback)")
         
         # Calculate change amount
         if self.paid_amount > self.grand_total:
             self.change_amount = self.paid_amount - self.grand_total
-            logger.info(f"💰 Change amount updated: {self.change_amount}")
+            logger.info(f"INFO: Change amount updated: {self.change_amount}")
         else:
             self.change_amount = Decimal('0.00')
 
@@ -184,7 +185,7 @@ class Purchase(models.Model):
             return f"PO-{current_year}-{new_number:04d}"
             
         except Exception as e:
-            logger.error(f"Error generating invoice number: {str(e)}")
+            logger.error(f"ERROR: Error generating invoice number: {str(e)}")
             existing_count = Purchase.objects.filter(company=self.company).count()
             return f"PO-{1001 + existing_count}"
     
@@ -194,7 +195,7 @@ class Purchase(models.Model):
             return True
             
         self._updating_totals = True
-        logger.info(f"🔄 Purchase.update_totals called for purchase ID: {self.id}")
+        logger.info(f"UPDATING: Purchase.update_totals called for purchase ID: {self.id}")
         
         try:
             items_aggregate = self.items.aggregate(
@@ -203,7 +204,7 @@ class Purchase(models.Model):
             subtotal = items_aggregate['total_subtotal'] or Decimal('0.00')
             subtotal = self._round_decimal(subtotal)
 
-            logger.info(f"📦 Calculated subtotal from items: {subtotal}")
+            logger.info(f"INFO: Calculated subtotal from items: {subtotal}")
 
             discount_amount = Decimal('0.00')
             if self.overall_discount_type == 'percentage':
@@ -251,7 +252,7 @@ class Purchase(models.Model):
                 self.change_amount = max(Decimal('0.00'), self.paid_amount - grand_total)
                 self._update_payment_status()
 
-                logger.info(f"📊 Purchase totals updated: Subtotal={subtotal}, Grand Total={grand_total}, Paid={self.paid_amount}, Due={self.due_amount}, Change={self.change_amount}")
+                logger.info(f"INFO: Purchase totals updated: Subtotal={subtotal}, Grand Total={grand_total}, Paid={self.paid_amount}, Due={self.due_amount}, Change={self.change_amount}")
                 
                 if self.pk:
                     update_fields = [
@@ -263,7 +264,7 @@ class Purchase(models.Model):
             return True
                 
         except Exception as e:
-            logger.error(f"❌ Error updating purchase totals: {str(e)}")
+            logger.error(f"ERROR: Error updating purchase totals: {str(e)}")
             return False
         finally:
             self._updating_totals = False
@@ -299,7 +300,7 @@ class Purchase(models.Model):
                 new_due_amount = max(Decimal('0.00'), self.grand_total - new_paid_amount)
                 new_change_amount = max(Decimal('0.00'), new_paid_amount - self.grand_total)
                 
-                logger.info(f"🔄 Payment Calculation:")
+                logger.info(f"UPDATING: Payment Calculation:")
                 logger.info(f"  Current: Paid={self.paid_amount}, Due={self.due_amount}, Grand Total={self.grand_total}")
                 logger.info(f"  Payment: Amount={amount}")
                 logger.info(f"  New: Paid={new_paid_amount}, Due={new_due_amount}, Change={new_change_amount}")
@@ -348,19 +349,19 @@ class Purchase(models.Model):
                         )
                         
                         if transaction_obj:
-                            logger.info(f"✅ Debit transaction created for purchase payment: {transaction_obj.transaction_no}")
+                            logger.info(f"SUCCESS: Debit transaction created for purchase payment: {transaction_obj.transaction_no}")
                         else:
-                            logger.error(f"❌ Transaction creation returned None")
+                            logger.error(f"ERROR: Transaction creation returned None")
                             
                     except Exception as e:
-                        logger.error(f"❌ Transaction creation failed: {e}")
+                        logger.error(f"ERROR: Transaction creation failed: {e}")
                         # Don't fail the payment if transaction creation fails
             
-            logger.info(f"✅ Payment of {amount} applied to purchase {self.invoice_no}")
+            logger.info(f"SUCCESS: Payment of {amount} applied to purchase {self.invoice_no}")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error in make_payment: {e}")
+            logger.error(f"ERROR: Error in make_payment: {e}")
             raise
 
     def create_initial_payment_transaction(self):
@@ -382,11 +383,11 @@ class Purchase(models.Model):
                 )
                 
                 if transaction_obj:
-                    logger.info(f"✅ Initial debit transaction created: {transaction_obj.transaction_no}")
+                    logger.info(f"SUCCESS: Initial debit transaction created: {transaction_obj.transaction_no}")
                     return transaction_obj
                     
             except Exception as e:
-                logger.error(f"❌ Error creating initial transaction: {e}")
+                logger.error(f"ERROR: Error creating initial transaction: {e}")
         
         return None
 
@@ -421,17 +422,17 @@ class Purchase(models.Model):
                         self.account.balance += self.paid_amount
                         self.account.save(update_fields=['balance', 'updated_at'])
                     except Exception as e:
-                        logger.error(f"Error reversing payment during cancellation: {e}")
+                        logger.error(f"ERROR: Error reversing payment during cancellation: {e}")
                 
                 self.payment_status = 'cancelled'
                 self.is_active = False
                 self.save(update_fields=['payment_status', 'is_active', 'date_updated'])
                 
-            logger.info(f"✅ Purchase {self.invoice_no} cancelled successfully")
+            logger.info(f"SUCCESS: Purchase {self.invoice_no} cancelled successfully")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error cancelling purchase: {e}")
+            logger.error(f"ERROR: Error cancelling purchase: {e}")
             raise
 
     def add_items(self, items_data):
@@ -447,7 +448,7 @@ class Purchase(models.Model):
                 )
                 created_items.append(item)
             except Exception as e:
-                logger.error(f"Error creating purchase item: {e}")
+                logger.error(f"ERROR: Error creating purchase item: {e}")
                 continue
         
         self.update_totals()
@@ -461,7 +462,7 @@ class Purchase(models.Model):
             paid_amount = self.due_amount
         
         if paid_amount > 0 and account and payment_method:
-            logger.info(f"💳 Processing instant payment: {paid_amount} via {payment_method}")
+            logger.info(f"INFO: Processing instant payment: {paid_amount} via {payment_method}")
             try:
                 from transactions.models import Transaction
                 transaction = Transaction.create_for_purchase_payment(
@@ -473,19 +474,19 @@ class Purchase(models.Model):
                 )
                 
                 if transaction:
-                    logger.info(f"✅ Instant payment transaction created: {transaction.transaction_no}")
+                    logger.info(f"SUCCESS: Instant payment transaction created: {transaction.transaction_no}")
                     # Refresh purchase to get updated paid_amount
                     self.refresh_from_db()
                     return transaction
                 else:
-                    logger.error("❌ Transaction creation returned None")
+                    logger.error("ERROR: Transaction creation returned None")
                     return None
                     
             except Exception as e:
-                logger.error(f"❌ Error in instant_pay: {str(e)}")
+                logger.error(f"ERROR: Error in instant_pay: {str(e)}")
                 raise
         else:
-            logger.warning(f"⚠️ Instant pay skipped - paid_amount: {paid_amount}, account: {account}, payment_method: {payment_method}")
+            logger.warning(f"WARNING: Instant pay skipped - paid_amount: {paid_amount}, account: {account}, payment_method: {payment_method}")
             return None
 
     def apply_partial_payment(self, amount, payment_method=None, account=None):
@@ -497,7 +498,7 @@ class Purchase(models.Model):
         
         if amount > self.due_amount:
             amount = self.due_amount
-            logger.info(f"⚠️ Payment amount adjusted to due amount: {amount}")
+            logger.info(f"WARNING: Payment amount adjusted to due amount: {amount}")
         
         return self.make_payment(amount, payment_method, account)
 
@@ -506,7 +507,7 @@ class Purchase(models.Model):
         if self.due_amount > 0:
             return self.make_payment(self.due_amount, payment_method, account)
         else:
-            logger.info(f"⚠️ No due amount for full payment on purchase {self.invoice_no}")
+            logger.info(f"WARNING: No due amount for full payment on purchase {self.invoice_no}")
             return False
 
     def apply_overpayment(self, amount, payment_method=None, account=None):
@@ -518,7 +519,7 @@ class Purchase(models.Model):
         
         if amount > self.due_amount:
             overpayment_amount = amount - self.due_amount
-            logger.info(f"💰 Overpayment detected: {overpayment_amount} on purchase {self.invoice_no}")
+            logger.info(f"INFO: Overpayment detected: {overpayment_amount} on purchase {self.invoice_no}")
         
         return self.make_payment(amount, payment_method, account)
 
@@ -576,7 +577,7 @@ class Purchase(models.Model):
         ]
         super().save(update_fields=update_fields)
         
-        logger.info(f"🔄 Payment reset for purchase {self.invoice_no}")
+        logger.info(f"INFO: Payment reset for purchase {self.invoice_no}")
 
     @property
     def is_overpaid(self):
@@ -676,7 +677,7 @@ class PurchaseItem(models.Model):
             final_total = max(Decimal('0.00'), total - discount_amount)
             return final_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         except Exception as e:
-            logger.error(f"Error calculating subtotal: {str(e)}")
+            logger.error(f"ERROR: Error calculating subtotal: {str(e)}")
             return Decimal('0.00')
 
     def save(self, *args, **kwargs):
@@ -711,7 +712,7 @@ class PurchaseItem(models.Model):
                     self.purchase.update_totals()
             
         except Exception as e:
-            logger.error(f"❌ Error in PurchaseItem.save: {str(e)}")
+            logger.error(f"ERROR: Error in PurchaseItem.save: {str(e)}")
             raise
 
     def delete(self, *args, **kwargs):
@@ -729,7 +730,7 @@ class PurchaseItem(models.Model):
             purchase.update_totals()
             
         except Exception as e:
-            logger.error(f"❌ Error in PurchaseItem.delete: {str(e)}")
+            logger.error(f"ERROR: Error in PurchaseItem.delete: {str(e)}")
             raise
 
     def get_item_summary(self):
@@ -759,7 +760,7 @@ def purchase_item_post_save(sender, instance, created, **kwargs):
         if not created:
             instance.purchase.update_totals()
     except Exception as e:
-        logger.error(f"Error updating purchase totals after item save: {e}")
+        logger.error(f"ERROR: Error updating purchase totals after item save: {e}")
 
 @receiver(post_delete, sender=PurchaseItem)
 def purchase_item_post_delete(sender, instance, **kwargs):
@@ -767,4 +768,4 @@ def purchase_item_post_delete(sender, instance, **kwargs):
     try:
         instance.purchase.update_totals()
     except Exception as e:
-        logger.error(f"Error updating purchase totals after item delete: {e}")
+        logger.error(f"ERROR: Error updating purchase totals after item delete: {e}")

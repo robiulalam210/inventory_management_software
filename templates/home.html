@@ -1,68 +1,277 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="bn">
 <head>
-    <meta charset="UTF-8">
-    <title>Inventory Management System</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #f6f8fa;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            max-width: 480px;
-            margin: 120px auto;
-            background: #fff;
-            border-radius: 8px;
-            box-shadow: 0 6px 24px rgba(0,0,0,0.08);
-            padding: 32px 24px;
-            text-align: center;
-        }
-        h1 {
-            color: #2d3a4b;
-            margin-bottom: 16px;
-        }
-        p {
-            color: #444;
-            margin-bottom: 24px;
-        }
-        a.button {
-            background: #1a73e8;
-            color: #fff;
-            padding: 12px 32px;
-            border-radius: 4px;
-            text-decoration: none;
-            font-weight: bold;
-            transition: background .2s;
-            display: inline-block;
-            margin: 8px 0;
-        }
-        a.button:hover {
-            background: #155ab6;
-        }
-        a.create-user {
-            background: #f39c12;
-        }
-        a.create-user:hover {
-            background: #d35400;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>Meherin Mart – স্মার্ট ব্যবসায়িক ব্যবস্থাপনা</title>
+<style>
+body { margin:0; font-family:sans-serif; background:#f5f7fa; }
+
+/* NAVBAR */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: white;
+    padding: 15px 40px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+}
+.logo img { height: 55px; }
+.btn-start {
+    background: #007BFF;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 8px;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+.btn-start:hover { background: #0056b3; }
+
+/* HERO */
+.hero {
+    background: linear-gradient(120deg, #4A90E2, #007BFF);
+    color: white;
+    padding: 120px 20px;
+    text-align: center;
+    border-radius: 0 0 25px 25px;
+}
+.hero h1 { font-size: 52px; margin-bottom: 15px; }
+.hero p { font-size: 22px; margin-bottom: 20px; opacity: 0.9; }
+
+/* SECTION TITLES */
+.section-title { text-align:center; margin-top:60px; font-size:34px; font-weight:bold; color:#333; }
+
+/* GRID */
+.module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap:25px;
+    padding:40px;
+    max-width:1100px;
+    margin:auto;
+}
+.card {
+    background:white;
+    padding:25px;
+    border-radius:15px;
+    box-shadow:0 5px 12px rgba(0,0,0,0.1);
+    text-align:center;
+    transition:0.3s;
+}
+.card:hover { transform:translateY(-8px); box-shadow:0 12px 25px rgba(0,0,0,0.2);}
+.card h3 { font-size:24px; margin-bottom:10px;}
+.card p { font-size:16px; opacity:0.8; }
+.card img { width:100%; border-radius:10px; margin-bottom:15px; }
+
+/* SLIDER */
+.slider-container {
+    width:90%;
+    max-width:900px;
+    margin:40px auto;
+    position:relative;
+    overflow:hidden;
+    border-radius:15px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.3);
+}
+.slider-track {
+    display:flex;
+    transition: transform 0.6s ease-in-out;
+}
+.slide { min-width:100%; box-sizing:border-box; }
+.slide img { width:100%; display:block; border-radius:10px; }
+
+/* SLIDER BUTTONS */
+.slider-btn {
+    position:absolute;
+    top:50%;
+    transform:translateY(-50%);
+    background:rgba(0,0,0,0.4);
+    color:white;
+    font-size:32px;
+    padding:10px 20px;
+    cursor:pointer;
+    border-radius:10px;
+    border:none;
+    z-index:10;
+    transition:0.3s;
+}
+.slider-btn:hover { background: rgba(0,0,0,0.7);}
+.left-btn { left:10px;}
+.right-btn { right:10px;}
+
+/* DOTS */
+.dots { text-align:center; margin-top:10px;}
+.dot {
+    height:12px;
+    width:12px;
+    margin:0 6px;
+    display:inline-block;
+    background:#bbb;
+    border-radius:50%;
+    cursor:pointer;
+}
+.active-dot { background:#007BFF; }
+
+/* INFO SECTION */
+.info-section {
+    max-width:900px;
+    margin:40px auto;
+    background:white;
+    padding:30px;
+    border-radius:15px;
+    box-shadow:0 6px 15px rgba(0,0,0,0.1);
+}
+.info-section h3 { font-size:28px; margin-bottom:15px; }
+
+/* FOOTER */
+footer {
+    margin-top:50px;
+    background:#1c1c1c;
+    color:white;
+    padding:25px;
+    text-align:center;
+}
+.founder { margin-top:10px; font-size:18px; opacity:0.8; }
+
+</style>
 </head>
 <body>
-    <div class="container">
-        <h1>Welcome to Inventory Management System</h1>
-        <p>
-            Efficiently manage your products, sales, purchases, and more.
-        </p>
-        <a href="/admin/" class="button">Go to Admin Panel</a>
-        <br><br>
-        <a href="/api/" class="button" style="background:#22a06b;">View API Docs</a>
-        <br><br>
-        <!-- <a href="{% url 'company_admin_login' %}" class="button create-user">Create New User</a> -->
 
-        <a href="{% url 'company_admin_login' %}" class="button create-user">Login as Admin</a>
-        
+<!-- NAVBAR -->
+<div class="navbar">
+    <div class="logo"><img src="/static/img/logo.png" alt="Meherin Mart Logo"></div>
+    <button class="btn-start" onclick="window.location.href='/admin/'">ড্যাশবোর্ড</button>
+</div>
+
+<!-- HERO -->
+<div class="hero">
+    <h1>আপনার ব্যবসার জন্য স্মার্ট ম্যানেজমেন্ট</h1>
+    <p>ওয়েব, মোবাইল ও ডেস্কটপ – সব একসাথে</p>
+    <button class="btn-start" onclick="window.location.href='/admin/'">ড্যাশবোর্ডে প্রবেশ করুন</button>
+</div>
+
+<!-- SYSTEM MODULES -->
+<h2 class="section-title">💼 সিস্টেম মডিউলসমূহ</h2>
+<div class="module-grid">
+    <div class="card"><h3>📊 ড্যাশবোর্ড</h3></div>
+    <div class="card"><h3>🛒 বিক্রয়</h3></div>
+    <div class="card"><h3>📦 পণ্য</h3></div>
+    <div class="card"><h3>📥 ক্রয়</h3></div>
+    <div class="card"><h3>💸 খরচ</h3></div>
+    <div class="card"><h3>↩ ফেরত</h3></div>
+    <div class="card"><h3>📑 রিপোর্ট</h3></div>
+    <div class="card"><h3>⚙ সেটআপ</h3></div>
+    <div class="card"><h3>🧾 মানি রিসিপ্ট</h3></div>
+    <div class="card"><h3>🚚 সরবরাহকারী</h3></div>
+    <div class="card"><h3>👤 গ্রাহক</h3></div>
+    <div class="card"><h3>📁 অন্যান্য</h3></div>
+</div>
+
+<!-- DESKTOP SLIDER -->
+<h2 class="section-title">🖥 ডেস্কটপ অ্যাপ স্ক্রিনশট</h2>
+<div class="slider-container">
+    <button class="slider-btn left-btn" onclick="prevSlide('desktop')">❮</button>
+    <div class="slider-track" id="desktop-slider">
+        <div class="slide"><img src="/static/img/desktop/desk1.PNG" alt="Desk1"></div>
+        <div class="slide"><img src="/static/img/desktop/desk2.PNG" alt="Desk2"></div>
+        <div class="slide"><img src="/static/img/desktop/desk3.PNG" alt="Desk3"></div>
+        <div class="slide"><img src="/static/img/b3.png" alt="Extra"></div>
     </div>
+    <button class="slider-btn right-btn" onclick="nextSlide('desktop')">❯</button>
+    <div class="dots" id="desktop-dots"></div>
+</div>
+
+<!-- MOBILE SLIDER -->
+<h2 class="section-title">📱 মোবাইল অ্যাপ স্ক্রিনশট</h2>
+<div class="slider-container">
+    <button class="slider-btn left-btn" onclick="prevSlide('mobile')">❮</button>
+    <div class="slider-track" id="mobile-slider">
+        <div class="slide"><img src="/static/img/mobile/mob1.png" alt="Mob1"></div>
+        <div class="slide"><img src="/static/img/mobile/mob2.png" alt="Mob2"></div>
+        <div class="slide"><img src="/static/img/mobile/mob3.png" alt="Mob3"></div>
+    </div>
+    <button class="slider-btn right-btn" onclick="nextSlide('mobile')">❯</button>
+    <div class="dots" id="mobile-dots"></div>
+</div>
+
+<!-- INFO SECTIONS -->
+<div class="info-section">
+    <h3>✨ কেন Meherin Mart?</h3>
+    <p>✔ দ্রুত বিক্রয় প্রক্রিয়াকরণ</p>
+    <p>✔ একাধিক শাখার সমর্থন</p>
+    <p>✔ বাস্তব সময় রিপোর্টিং</p>
+    <p>✔ ডেস্কটপ + মোবাইল + ওয়েব = সব একসাথে</p>
+    <p>✔ সম্পূর্ণ স্বয়ংক্রিয় ইনভেন্টরি ও হিসাব</p>
+</div>
+
+<div class="info-section">
+    <h3>📞 যোগাযোগ ও সাপোর্ট</h3>
+    <p><b>ডেভেলপার:</b> Md Robiul Alam</p>
+    <p><b>ইমেইল:</b> support@meherinmart.com</p>
+    <p><b>ফোন:</b> +880 1700-000000</p>
+</div>
+
+<!-- FOOTER -->
+<footer>
+    <h3>Meherin Mart – ব্যবসায়িক ব্যবস্থাপনা সফটওয়্যার</h3>
+    <p>ওয়েব অ্যাপ | মোবাইল অ্যাপ | ডেস্কটপ সফটওয়্যার</p>
+    <div class="founder">
+        ডেভেলপার ও প্রতিষ্ঠাতা: <strong>Md Robiul Alam</strong><br>
+        © 2025 সর্বস্বত্ব সংরক্ষিত
+    </div>
+</footer>
+
+<script>
+const sliders = {
+    desktop: { index: 0, track: document.getElementById('desktop-slider'), dots: document.getElementById('desktop-dots') },
+    mobile: { index: 0, track: document.getElementById('mobile-slider'), dots: document.getElementById('mobile-dots') }
+};
+
+// Initialize dots
+for (let key in sliders) {
+    const slider = sliders[key];
+    for (let i = 0; i < slider.track.children.length; i++) {
+        const dot = document.createElement('span');
+        dot.classList.add('dot');
+        dot.onclick = () => goToSlide(key, i);
+        slider.dots.appendChild(dot);
+    }
+    updateDots(key);
+}
+
+function updateDots(key) {
+    const slider = sliders[key];
+    const dots = slider.dots.children;
+    for (let i = 0; i < dots.length; i++) dots[i].classList.remove('active-dot');
+    dots[slider.index].classList.add('active-dot');
+}
+
+function goToSlide(key, i) {
+    sliders[key].index = i;
+    sliders[key].track.style.transform = `translateX(-${i*100}%)`;
+    updateDots(key);
+}
+
+function nextSlide(key) {
+    sliders[key].index = (sliders[key].index + 1) % sliders[key].track.children.length;
+    sliders[key].track.style.transform = `translateX(-${sliders[key].index*100}%)`;
+    updateDots(key);
+}
+
+function prevSlide(key) {
+    sliders[key].index = (sliders[key].index - 1 + sliders[key].track.children.length) % sliders[key].track.children.length;
+    sliders[key].track.style.transform = `translateX(-${sliders[key].index*100}%)`;
+    updateDots(key);
+}
+
+// Auto-slide
+setInterval(() => nextSlide('desktop'), 4000);
+setInterval(() => nextSlide('mobile'), 4000);
+</script>
+
 </body>
 </html>

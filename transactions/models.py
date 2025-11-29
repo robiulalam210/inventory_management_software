@@ -139,50 +139,61 @@ class Transaction(models.Model):
             logger.info(f"⏸️  Skipping balance update")
 
     def _generate_transaction_no(self):
-        """Generate unique transaction number that is company-specific"""
+        """Generate unique transaction number that is company-specific in format: TXN-{company_id}-{sequential_number}"""
         if not self.company:
             # Fallback if no company
             timestamp = int(timezone.now().timestamp())
-            return f"TXN-{timestamp}"
+            return f"TXN-0-{timestamp}"  # Default format
         
-        # Get the last transaction number for this company
-        last_transaction = Transaction.objects.filter(
-            company=self.company
-        ).order_by('-id').first()
-        
-        company_prefix = self.company.name[:3].upper()
-        
-        if last_transaction and last_transaction.transaction_no:
-            try:
-                # Try to extract sequential number
-                last_number_str = last_transaction.transaction_no.split('-')[-1]
-                last_number = int(last_number_str)
-                new_number = last_number + 1
-            except (ValueError, IndexError):
-                # If parsing fails, use timestamp-based approach
-                timestamp = int(timezone.now().timestamp())
-                random_str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-                new_number = f"{timestamp}{random_str}"
-        else:
-            # First transaction for this company
-            new_number = 1001
-        
-        transaction_no = f"{company_prefix}-TXN-{new_number}"
-        
-        # Ensure uniqueness
-        counter = 1
-        base_no = transaction_no
-        while Transaction.objects.filter(transaction_no=transaction_no).exists():
-            transaction_no = f"{base_no}-{counter}"
-            counter += 1
-            if counter > 100:
-                # Ultimate fallback
-                timestamp = int(timezone.now().timestamp())
-                transaction_no = f"{company_prefix}-TXN-{timestamp}"
-                break
-        
-        return transaction_no
-
+        try:
+            # Get the last transaction for this company
+            last_transaction = Transaction.objects.filter(
+                company=self.company
+            ).order_by('-id').first()
+            
+            if last_transaction and last_transaction.transaction_no:
+                try:
+                    # Extract the numeric part after the last dash
+                    # Format: TXN-1-100001 -> we want 100001
+                    parts = last_transaction.transaction_no.split('-')
+                    if len(parts) >= 3:
+                        last_number = int(parts[2])  # Third part is the sequential number
+                        new_number = last_number + 1
+                    else:
+                        # If format is different, start from 100001
+                        new_number = 100001
+                except (ValueError, IndexError):
+                    # If parsing fails, start from 100001
+                    new_number = 100001
+            else:
+                # First transaction for this company - start from 100001
+                new_number = 100001
+            
+            # Format: TXN-{company_id}-{sequential_number}
+            transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
+            
+            # Ensure uniqueness
+            counter = 1
+            while Transaction.objects.filter(transaction_no=transaction_no).exists():
+                # If duplicate, increment the sequential number
+                new_number += 1
+                transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
+                counter += 1
+                if counter > 100:
+                    # Ultimate fallback - use timestamp
+                    timestamp = int(timezone.now().timestamp())
+                    transaction_no = f"TXN-{self.company.id}-{timestamp}"
+                    break
+            
+            return transaction_no
+            
+        except Exception as e:
+            logger.error(f"ERROR: Error generating transaction number: {str(e)}")
+            # Fallback generation
+            timestamp = int(timezone.now().timestamp())
+            return f"TXN-{self.company.id if self.company else 0}-{timestamp}"
+  
+  
     def _update_account_balance(self):
         """Update account balance based on transaction"""
         try:
@@ -223,11 +234,11 @@ class Transaction(models.Model):
                     # Sufficient funds
                     new_balance = old_balance - self.amount
                     account.balance = new_balance
-                    logger.info(f"💸 DEBIT: Account {account.name} balance updated from {old_balance} to {new_balance} (-{self.amount})")
+                    logger.info(f"DEBIT: Account {account.name} balance updated from {old_balance} to {new_balance} (-{self.amount})")
             
             # Save the updated account balance
             account.save(update_fields=['balance', 'updated_at'])
-            logger.info(f"✅ Account balance saved successfully")
+            logger.info(f" Account balance saved successfully")
             
             # Update transaction status if it was successful
             if self.status != 'failed':
@@ -235,7 +246,7 @@ class Transaction(models.Model):
                 super().save(update_fields=['status'])
             
         except Exception as e:
-            logger.error(f"❌ Error updating account balance: {e}")
+            logger.error(f"Error updating account balance: {e}")
             # Mark transaction as failed
             if self.pk:
                 self.status = 'failed'
@@ -289,7 +300,7 @@ class Transaction(models.Model):
             self.status = 'cancelled'
             self.save(update_fields=['status'])
             
-            logger.info(f"🔄 Transaction {self.transaction_no} reversed by {reversal.transaction_no}")
+            logger.info(f"Transaction {self.transaction_no} reversed by {reversal.transaction_no}")
             return reversal
 
     @property
@@ -335,10 +346,7 @@ class Transaction(models.Model):
     def create_for_purchase_payment(cls, purchase, amount, payment_method, account, created_by):
         """Create transaction for purchase payment - SIMPLIFIED VERSION"""
         try:
-            logger.info(f"🔄 Creating purchase payment transaction:")
-            logger.info(f"  - Purchase: {purchase.invoice_no}")
-            logger.info(f"  - Amount: {amount}")
-            logger.info(f"  - Account: {account.name}")
+          
             
             transaction_obj = cls(
                 company=purchase.company,
@@ -358,11 +366,11 @@ class Transaction(models.Model):
             transaction_obj.transaction_no = transaction_obj._generate_transaction_no()
             transaction_obj.save()
             
-            logger.info(f"✅ Debit transaction created: {transaction_obj.transaction_no}")
+            logger.info(f" Debit transaction created: {transaction_obj.transaction_no}")
             return transaction_obj
             
         except Exception as e:
-            logger.error(f"❌ Error creating transaction for purchase payment: {e}")
+            logger.error(f" Error creating transaction for purchase payment: {e}")
             return None
 
     @classmethod
@@ -389,28 +397,28 @@ class Transaction(models.Model):
                     is_opening_balance=False
                 )
                 
-                logger.info(f"✅ Debit transaction created for expense: {transaction_obj.transaction_no}")
+                logger.info(f"Debit transaction created for expense: {transaction_obj.transaction_no}")
                 return transaction_obj
             
         except Exception as e:
-            logger.error(f"❌ Error creating transaction for expense: {e}")
+            logger.error(f" Error creating transaction for expense: {e}")
             return None
 
     @classmethod
     def create_for_supplier_payment(cls, supplier_payment, cash_amount):
         """Create transaction for supplier payment - ENHANCED VERSION"""
         try:
-            logger.info(f"🔄 Attempting to create transaction for supplier payment: {supplier_payment.sp_no}")
+            logger.info(f"Attempting to create transaction for supplier payment: {supplier_payment.sp_no}")
             logger.info(f"  - Cash Amount: {cash_amount}")
             logger.info(f"  - Account: {supplier_payment.account}")
             logger.info(f"  - Payment Method: {supplier_payment.payment_method}")
             
             if not supplier_payment.account:
-                logger.error(f"❌ No account set for supplier payment {supplier_payment.sp_no}")
+                logger.error(f" No account set for supplier payment {supplier_payment.sp_no}")
                 return None
             
             if cash_amount <= 0:
-                logger.info(f"⏩ No cash portion for supplier payment {supplier_payment.sp_no}, skipping transaction")
+                logger.info(f"No cash portion for supplier payment {supplier_payment.sp_no}, skipping transaction")
                 return None
             
             # Supplier payments are DEBIT transactions (money going out)
@@ -430,14 +438,14 @@ class Transaction(models.Model):
                     is_opening_balance=False
                 )
                 
-                logger.info(f"✅ Debit transaction created for supplier payment: {transaction_obj.transaction_no}")
-                logger.info(f"🔗 Transaction {transaction_obj.transaction_no} linked to supplier payment {supplier_payment.sp_no}")
+                logger.info(f" Debit transaction created for supplier payment: {transaction_obj.transaction_no}")
+                logger.info(f" Transaction {transaction_obj.transaction_no} linked to supplier payment {supplier_payment.sp_no}")
                 return transaction_obj
             
         except Exception as e:
-            logger.error(f"❌ Error creating transaction for supplier payment {supplier_payment.sp_no}: {e}")
+            logger.error(f" Error creating transaction for supplier payment {supplier_payment.sp_no}: {e}")
             import traceback
-            logger.error(f"📋 Traceback: {traceback.format_exc()}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
 
     @classmethod
@@ -487,7 +495,7 @@ class Transaction(models.Model):
             
             total_balance = (credits + opening_credits) - (debits + opening_debits)
             
-            logger.info(f"📊 Account Balance Calculation for {account.name}:")
+            logger.info(f" Account Balance Calculation for {account.name}:")
             logger.info(f"  - Regular Credits: {credits}")
             logger.info(f"  - Regular Debits: {debits}")
             logger.info(f"  - Opening Credits: {opening_credits}")
@@ -498,7 +506,7 @@ class Transaction(models.Model):
             return total_balance
             
         except Exception as e:
-            logger.error(f"❌ Error calculating account balance: {e}")
+            logger.error(f" Error calculating account balance: {e}")
             return Decimal('0.00')
 
     def get_transaction_details(self):
