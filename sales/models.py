@@ -253,109 +253,128 @@ class Sale(models.Model):
         except Exception as e:
             logger.error(f"Error creating sale transaction for {self.invoice_no}: {e}")
         return None
-    def update_totals(self):
-        """Update all calculated totals for the sale - FIXED PAYMENT LOGIC"""
-        try:
-            if getattr(self, '_updating_totals', False):
-                return
-                
-            self._updating_totals = True
+    
+    def update_totals(self, force_update=False):
+        """Update purchase totals from items - FIXED VERSION"""
+        if hasattr(self, '_updating_totals') and self._updating_totals:
+            return True
             
-            # Calculate from items
-            items = self.items.all()
-            gross = Decimal('0.00')
-            for item in items:
-                try:
-                    gross += Decimal(str(item.subtotal()))
-                except:
-                    gross += Decimal('0.00')
+        self._updating_totals = True
+        logger.info(f"UPDATING: Purchase.update_totals called for purchase ID: {self.id}")
+        
+        try:
+            # Calculate subtotal from items (item price * qty)
+            items_aggregate = self.items.aggregate(
+                total_subtotal=Sum(F('qty') * F('price'))
+            )
+            subtotal = items_aggregate['total_subtotal'] or Decimal('0.00')
+            subtotal = self._round_decimal(subtotal)
+            logger.info(f"INFO: Calculated subtotal from items (before item discount): {subtotal}")
 
-            # Calculate discounts and charges safely
-            discount_amount = Decimal('0.00')
-            try:
-                if self.overall_discount_type == 'percent' and self.overall_discount:
-                    discount_amount = gross * (Decimal(str(self.overall_discount)) / Decimal('100.00'))
-                elif self.overall_discount_type == 'fixed' and self.overall_discount:
-                    discount_amount = Decimal(str(self.overall_discount))
-            except:
-                discount_amount = Decimal('0.00')
+            # Calculate item discounts
+            total_item_discount = Decimal('0.00')
+            for item in self.items.all():
+                item_subtotal = item.qty * item.price
+                if item.discount_type == 'percentage':
+                    item_discount = item_subtotal * (item.discount / Decimal('100.00'))
+                else:
+                    item_discount = item.discount
+                total_item_discount += min(item_discount, item_subtotal)
+            
+            total_item_discount = self._round_decimal(total_item_discount)
+            logger.info(f"INFO: Total item discounts: {total_item_discount}")
 
+            # Calculate total after item discounts
+            total_after_item_discounts = max(Decimal('0.00'), subtotal - total_item_discount)
+            logger.info(f"INFO: Total after item discounts: {total_after_item_discounts}")
+
+            # Apply overall discount to the total after item discounts
+            overall_discount_amount = Decimal('0.00')
+            if self.overall_discount_type == 'percentage':
+                overall_discount_amount = total_after_item_discounts * (self.overall_discount / Decimal('100.00'))
+            elif self.overall_discount_type == 'fixed':
+                # FIXED: Overall discount should be limited to the remaining amount
+                overall_discount_amount = min(self.overall_discount, total_after_item_discounts)
+            
+            overall_discount_amount = self._round_decimal(overall_discount_amount)
+            logger.info(f"INFO: Overall discount amount: {overall_discount_amount}")
+
+            # Calculate total after all discounts
+            total_after_all_discounts = max(Decimal('0.00'), total_after_item_discounts - overall_discount_amount)
+            logger.info(f"INFO: Total after all discounts: {total_after_all_discounts}")
+
+            # Add charges (VAT, service, delivery)
             vat_amount = Decimal('0.00')
-            try:
-                if self.overall_vat_type == 'percent' and self.overall_vat_amount:
-                    vat_amount = gross * (Decimal(str(self.overall_vat_amount)) / Decimal('100.00'))
-                elif self.overall_vat_type == 'fixed' and self.overall_vat_amount:
-                    vat_amount = Decimal(str(self.overall_vat_amount))
-            except:
-                vat_amount = Decimal('0.00')
+            if self.vat_type == 'percentage':
+                vat_amount = total_after_all_discounts * (self.vat / Decimal('100.00'))
+            elif self.vat_type == 'fixed':
+                vat_amount = self.vat
+            vat_amount = self._round_decimal(vat_amount)
+            logger.info(f"INFO: VAT amount: {vat_amount}")
 
             service_amount = Decimal('0.00')
-            try:
-                if self.overall_service_type == 'percent' and self.overall_service_charge:
-                    service_amount = gross * (Decimal(str(self.overall_service_charge)) / Decimal('100.00'))
-                elif self.overall_service_type == 'fixed' and self.overall_service_charge:
-                    service_amount = Decimal(str(self.overall_service_charge))
-            except:
-                service_amount = Decimal('0.00')
+            if self.overall_service_charge_type == 'percentage':
+                service_amount = total_after_all_discounts * (self.overall_service_charge / Decimal('100.00'))
+            elif self.overall_service_charge_type == 'fixed':
+                service_amount = self.overall_service_charge
+            service_amount = self._round_decimal(service_amount)
+            logger.info(f"INFO: Service charge amount: {service_amount}")
 
             delivery_amount = Decimal('0.00')
-            try:
-                if self.overall_delivery_type == 'percent' and self.overall_delivery_charge:
-                    delivery_amount = gross * (Decimal(str(self.overall_delivery_charge)) / Decimal('100.00'))
-                elif self.overall_delivery_type == 'fixed' and self.overall_delivery_charge:
-                    delivery_amount = Decimal(str(self.overall_delivery_charge))
-            except:
-                delivery_amount = Decimal('0.00')
+            if self.overall_delivery_charge_type == 'percentage':
+                delivery_amount = total_after_all_discounts * (self.overall_delivery_charge / Decimal('100.00'))
+            elif self.overall_delivery_charge_type == 'fixed':
+                delivery_amount = self.overall_delivery_charge
+            delivery_amount = self._round_decimal(delivery_amount)
+            logger.info(f"INFO: Delivery charge amount: {delivery_amount}")
 
-            # Calculate totals with safety limits
-            max_amount = Decimal('9999999.99')
+            # Calculate grand total
+            grand_total = max(Decimal('0.00'), 
+                            total_after_all_discounts + 
+                            vat_amount + 
+                            service_amount + 
+                            delivery_amount)
             
-            net_total = gross - discount_amount + vat_amount + service_amount
-            grand_total = net_total + delivery_amount
+            logger.info(f"INFO: Final grand total: {grand_total}")
 
-            # Set amounts safely
-            self.gross_total = min(self._safe_decimal(gross), max_amount)
-            self.net_total = min(self._safe_decimal(net_total), max_amount)
-            self.grand_total = min(self._safe_decimal(grand_total), max_amount)
-            self.payable_amount = min(self._safe_decimal(grand_total), max_amount)
-            
-            # ✅ FIXED: Use the actual paid_amount from the model
-            paid = self._safe_decimal(self.paid_amount)  # This now uses the saved paid_amount
-            payable = self._safe_decimal(self.payable_amount)
-            
-            # Calculate due amount and change
-            if paid > payable:
-                # Overpayment - customer paid more than required
-                self.due_amount = Decimal('0.00')
-                self.change_amount = paid - payable
-            else:
-                # Normal payment or partial payment
-                self.due_amount = payable - paid
-                self.change_amount = Decimal('0.00')
-            
-            # Update payment status
-            self._update_payment_status()
-
-            # Save totals
-            update_fields = [
-                "gross_total", "net_total", "grand_total", 
-                "payable_amount", "due_amount", "change_amount",
-                "payment_status"
-            ]
-            
-            # Use update to avoid recursion
-            Sale.objects.filter(pk=self.pk).update(
-                gross_total=self.gross_total,
-                net_total=self.net_total,
-                grand_total=self.grand_total,
-                payable_amount=self.payable_amount,
-                due_amount=self.due_amount,
-                change_amount=self.change_amount,
-                payment_status=self.payment_status
+            # Check if values have changed
+            needs_save = (
+                self.total != total_after_item_discounts or
+                self.grand_total != grand_total or
+                force_update
             )
-            
+
+            if needs_save:
+                self.total = total_after_item_discounts  # This should be the total after item discounts
+                self.grand_total = grand_total
+                
+                # Calculate due and change amounts
+                self.due_amount = max(Decimal('0.00'), grand_total - self.paid_amount)
+                self.change_amount = max(Decimal('0.00'), self.paid_amount - grand_total)
+                
+                # Update payment status
+                self._update_payment_status()
+
+                logger.info(f"INFO: Purchase totals updated:")
+                logger.info(f"  Total (after item discounts): {self.total}")
+                logger.info(f"  Grand Total: {self.grand_total}")
+                logger.info(f"  Paid: {self.paid_amount}")
+                logger.info(f"  Due: {self.due_amount}")
+                logger.info(f"  Change: {self.change_amount}")
+                
+                # Save if purchase exists
+                if self.pk:
+                    update_fields = [
+                        "total", "grand_total", "due_amount", "change_amount", 
+                        "payment_status", "date_updated"
+                    ]
+                    super().save(update_fields=update_fields)
+                    
+            return True
+                
         except Exception as e:
-            logger.error(f"Error updating totals for {self.invoice_no}: {str(e)}")
+            logger.error(f"ERROR: Error updating purchase totals: {str(e)}", exc_info=True)
+            return False
         finally:
             self._updating_totals = False
 
@@ -377,6 +396,10 @@ class Sale(models.Model):
         try:
             paid = self._safe_decimal(self.paid_amount)
             payable = self._safe_decimal(self.payable_amount)
+            
+            # ✅ FIXED: Ensure payable is never negative
+            if payable < Decimal('0.00'):
+                payable = Decimal('0.00')
             
             if paid >= payable:
                 self.payment_status = 'paid'
@@ -541,18 +564,25 @@ class SaleItem(models.Model):
         ordering = ['id']
 
     def subtotal(self):
-        """Calculate subtotal for this item"""
+        """Calculate item subtotal with proper rounding - FIXED VERSION"""
         try:
-            total = Decimal(str(self.unit_price)) * self.quantity
+            total = self.qty * self.price
             
-            if self.discount_type == 'percent' and self.discount:
-                total -= total * (Decimal(str(self.discount)) / Decimal('100.00'))
-            elif self.discount_type == 'fixed' and self.discount:
-                total -= Decimal(str(self.discount))
+            if self.discount_type == 'percentage':
+                discount_amount = total * (self.discount / Decimal('100.00'))
+            elif self.discount_type == 'fixed':
+                discount_amount = min(self.discount, total)  # Ensure discount doesn't exceed total
+            else:
+                discount_amount = Decimal('0.00')
                 
-            return round(max(total, Decimal('0.00')), 2)
-        except:
+            final_total = max(Decimal('0.00'), total - discount_amount)
+            return final_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        except Exception as e:
+            logger.error(f"ERROR: Error calculating subtotal: {str(e)}")
             return Decimal('0.00')
+
+
+
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None

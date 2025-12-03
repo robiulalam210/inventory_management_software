@@ -39,21 +39,24 @@ class Account(models.Model):
     class Meta:
         ordering = ['-id']
         constraints = [
+            # Keep Bank and Mobile banking constraints as-is
             models.UniqueConstraint(
                 fields=['company', 'ac_type', 'number'], 
                 name='unique_company_ac_type_number',
                 condition=Q(ac_type__in=['Bank', 'Mobile banking']) & Q(number__isnull=False)
             ),
-            models.UniqueConstraint(
-                fields=['company', 'ac_type'],
-                name='unique_company_cash_account',
-                condition=Q(ac_type='Cash')
-            ),
-            models.UniqueConstraint(
-                fields=['company', 'ac_type'],
-                name='unique_company_other_account',
-                condition=Q(ac_type='Other')
-            ),
+            # REMOVE or COMMENT OUT the Cash constraint
+            # models.UniqueConstraint(
+            #     fields=['company', 'ac_type'],
+            #     name='unique_company_cash_account',
+            #     condition=Q(ac_type='Cash')
+            # ),
+            # REMOVE or COMMENT OUT the Other constraint if you want multiple Other accounts
+            # models.UniqueConstraint(
+            #     fields=['company', 'ac_type'],
+            #     name='unique_company_other_account',
+            #     condition=Q(ac_type='Other')
+            # ),
         ]
 
     def __str__(self):
@@ -153,10 +156,28 @@ class Account(models.Model):
     def clean(self):
         from django.core.exceptions import ValidationError
         
-        if self.ac_type == self.TYPE_CASH and self.pk is None:
-            if Account.objects.filter(company=self.company, ac_type=self.TYPE_CASH).exists():
-                raise ValidationError("A Cash account already exists for this company.")
+        # REMOVE the restriction for single Cash account
+        # if self.ac_type == self.TYPE_CASH and self.pk is None:
+        #     if Account.objects.filter(company=self.company, ac_type=self.TYPE_CASH).exists():
+        #         raise ValidationError("A Cash account already exists for this company.")
                 
-        if self.ac_type == self.TYPE_OTHER and self.pk is None:
-            if Account.objects.filter(company=self.company, ac_type=self.TYPE_OTHER).exists():
-                raise ValidationError("An Other account already exists for this company.")
+        # REMOVE the restriction for single Other account
+        # if self.ac_type == self.TYPE_OTHER and self.pk is None:
+        #     if Account.objects.filter(company=self.company, ac_type=self.TYPE_OTHER).exists():
+        #         raise ValidationError("An Other account already exists for this company.")
+        
+        # NEW: Check for duplicate type+number combinations for ALL account types
+        if self.number:  # Only check if a number is provided
+            existing_account = Account.objects.filter(
+                company=self.company,
+                ac_type=self.ac_type,
+                number=self.number
+            ).exclude(pk=self.pk).first()
+            
+            if existing_account:
+                raise ValidationError(
+                    f"A {self.ac_type} account with number '{self.number}' already exists."
+                )
+        
+        # For accounts without numbers, check if we should allow multiple
+        # You can add logic here if needed

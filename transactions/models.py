@@ -143,10 +143,10 @@ class Transaction(models.Model):
         if not self.company:
             # Fallback if no company
             timestamp = int(timezone.now().timestamp())
-            return f"TXN-0-{timestamp}"  # Default format
+            return f"TXN-0-{timestamp}"
         
         try:
-            # Get the last transaction for this company
+            # ✅ FIXED: Filter by company to get the last transaction for THIS company
             last_transaction = Transaction.objects.filter(
                 company=self.company
             ).order_by('-id').first()
@@ -157,8 +157,24 @@ class Transaction(models.Model):
                     # Format: TXN-1-100001 -> we want 100001
                     parts = last_transaction.transaction_no.split('-')
                     if len(parts) >= 3:
-                        last_number = int(parts[2])  # Third part is the sequential number
-                        new_number = last_number + 1
+                        # ✅ FIXED: Check if this transaction belongs to the same company
+                        if parts[1] == str(self.company.id):
+                            last_number = int(parts[2])  # Third part is the sequential number
+                            new_number = last_number + 1
+                        else:
+                            # This transaction number doesn't belong to our company
+                            # Get the last sequential number for our company
+                            last_company_transaction = Transaction.objects.filter(
+                                company=self.company,
+                                transaction_no__regex=r'^TXN-' + str(self.company.id) + r'-\d+$'
+                            ).order_by('-id').first()
+                            
+                            if last_company_transaction:
+                                parts = last_company_transaction.transaction_no.split('-')
+                                last_number = int(parts[2])
+                                new_number = last_number + 1
+                            else:
+                                new_number = 100001  # First transaction for this company
                     else:
                         # If format is different, start from 100001
                         new_number = 100001
@@ -172,27 +188,78 @@ class Transaction(models.Model):
             # Format: TXN-{company_id}-{sequential_number}
             transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
             
-            # Ensure uniqueness
-            counter = 1
-            while Transaction.objects.filter(transaction_no=transaction_no).exists():
-                # If duplicate, increment the sequential number
+            # ✅ FIXED: Check for duplicates within the same company
+            while Transaction.objects.filter(
+                company=self.company,
+                transaction_no=transaction_no
+            ).exists():
                 new_number += 1
                 transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
-                counter += 1
-                if counter > 100:
-                    # Ultimate fallback - use timestamp
-                    timestamp = int(timezone.now().timestamp())
-                    transaction_no = f"TXN-{self.company.id}-{timestamp}"
-                    break
             
             return transaction_no
             
         except Exception as e:
-            logger.error(f"ERROR: Error generating transaction number: {str(e)}")
+            logger.error(f"ERROR: Error generating transaction number: {str(e)}", exc_info=True)
             # Fallback generation
             timestamp = int(timezone.now().timestamp())
             return f"TXN-{self.company.id if self.company else 0}-{timestamp}"
+    
+    # def _generate_transaction_no(self):
+    #     """Generate unique transaction number that is company-specific in format: TXN-{company_id}-{sequential_number}"""
+    #     if not self.company:
+    #         # Fallback if no company
+    #         timestamp = int(timezone.now().timestamp())
+    #         return f"TXN-0-{timestamp}"  # Default format
+        
+    #     try:
+    #         # Get the last transaction for this company
+    #         last_transaction = Transaction.objects.filter(
+    #             company=self.company
+    #         ).order_by('-id').first()
+            
+    #         if last_transaction and last_transaction.transaction_no:
+    #             try:
+    #                 # Extract the numeric part after the last dash
+    #                 # Format: TXN-1-100001 -> we want 100001
+    #                 parts = last_transaction.transaction_no.split('-')
+    #                 if len(parts) >= 3:
+    #                     last_number = int(parts[2])  # Third part is the sequential number
+    #                     new_number = last_number + 1
+    #                 else:
+    #                     # If format is different, start from 100001
+    #                     new_number = 100001
+    #             except (ValueError, IndexError):
+    #                 # If parsing fails, start from 100001
+    #                 new_number = 100001
+    #         else:
+    #             # First transaction for this company - start from 100001
+    #             new_number = 100001
+            
+    #         # Format: TXN-{company_id}-{sequential_number}
+    #         transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
+            
+    #         # Ensure uniqueness
+    #         counter = 1
+    #         while Transaction.objects.filter(transaction_no=transaction_no).exists():
+    #             # If duplicate, increment the sequential number
+    #             new_number += 1
+    #             transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
+    #             counter += 1
+    #             if counter > 100:
+    #                 # Ultimate fallback - use timestamp
+    #                 timestamp = int(timezone.now().timestamp())
+    #                 transaction_no = f"TXN-{self.company.id}-{timestamp}"
+    #                 break
+            
+    #         return transaction_no
+            
+    #     except Exception as e:
+    #         logger.error(f"ERROR: Error generating transaction number: {str(e)}")
+    #         # Fallback generation
+    #         timestamp = int(timezone.now().timestamp())
+    #         return f"TXN-{self.company.id if self.company else 0}-{timestamp}"
   
+
   
     def _update_account_balance(self):
         """Update account balance based on transaction"""

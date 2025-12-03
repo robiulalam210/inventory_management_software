@@ -4,8 +4,10 @@ from products.models import Product
 from accounts.models import Account
 from django.db import transaction
 from django.contrib.auth import get_user_model
+import logging  # ADD THIS IMPORT
 
 User = get_user_model()
+logger = logging.getLogger(__name__)  # ADD THIS LINE
 
 
 class SaleItemSerializer(serializers.ModelSerializer):
