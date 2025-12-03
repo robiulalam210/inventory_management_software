@@ -40,6 +40,7 @@ class Transaction(models.Model):
     transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     is_opening_balance = models.BooleanField(default=False)
+    balance_already_updated = models.BooleanField(default=False)
 
     # Account
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='transactions')
@@ -53,13 +54,12 @@ class Transaction(models.Model):
     transaction_date = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    date_updated = models.DateTimeField(auto_now=True)  # Add this field
-
+    date_updated = models.DateTimeField(auto_now=True)
 
     # Flags
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='completed')
 
-    # Links
+    # Links to other models
     money_receipt = models.ForeignKey(
         'money_receipts.MoneyReceipt', 
         on_delete=models.SET_NULL,
@@ -84,14 +84,14 @@ class Transaction(models.Model):
         null=True, blank=True, 
         related_name='transactions'
     )
-    # ✅ FIXED: OneToOneField with matching related_name
-   
+    
     supplier_payment = models.ForeignKey(
         'supplier_payment.SupplierPayment',
         on_delete=models.SET_NULL,
         null=True, blank=True,
-        related_name='transactions'  # CHANGED: Different related_name
-    )   
+        related_name='transactions'
+    )
+    
     # Extra
     description = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
@@ -109,6 +109,18 @@ class Transaction(models.Model):
         return f"{self.transaction_no} - {self.transaction_type} - {self.amount}"
 
     def save(self, *args, **kwargs):
+        # Skip balance update if already done (for transfer transactions)
+        if self.balance_already_updated:
+            # Just save the transaction without updating balance
+            is_new = self.pk is None
+            if is_new and not self.transaction_no:
+                self.transaction_no = self._generate_transaction_no()
+            
+            self.clean()
+            super().save(*args, **kwargs)
+            return
+        
+        # Original logic for non-transfer transactions
         is_new = self.pk is None
 
         # Generate transaction number if new
@@ -146,7 +158,7 @@ class Transaction(models.Model):
             return f"TXN-0-{timestamp}"
         
         try:
-            # ✅ FIXED: Filter by company to get the last transaction for THIS company
+            # Filter by company to get the last transaction for THIS company
             last_transaction = Transaction.objects.filter(
                 company=self.company
             ).order_by('-id').first()
@@ -157,7 +169,7 @@ class Transaction(models.Model):
                     # Format: TXN-1-100001 -> we want 100001
                     parts = last_transaction.transaction_no.split('-')
                     if len(parts) >= 3:
-                        # ✅ FIXED: Check if this transaction belongs to the same company
+                        # Check if this transaction belongs to the same company
                         if parts[1] == str(self.company.id):
                             last_number = int(parts[2])  # Third part is the sequential number
                             new_number = last_number + 1
@@ -188,7 +200,7 @@ class Transaction(models.Model):
             # Format: TXN-{company_id}-{sequential_number}
             transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
             
-            # ✅ FIXED: Check for duplicates within the same company
+            # Check for duplicates within the same company
             while Transaction.objects.filter(
                 company=self.company,
                 transaction_no=transaction_no
@@ -203,64 +215,7 @@ class Transaction(models.Model):
             # Fallback generation
             timestamp = int(timezone.now().timestamp())
             return f"TXN-{self.company.id if self.company else 0}-{timestamp}"
-    
-    # def _generate_transaction_no(self):
-    #     """Generate unique transaction number that is company-specific in format: TXN-{company_id}-{sequential_number}"""
-    #     if not self.company:
-    #         # Fallback if no company
-    #         timestamp = int(timezone.now().timestamp())
-    #         return f"TXN-0-{timestamp}"  # Default format
-        
-    #     try:
-    #         # Get the last transaction for this company
-    #         last_transaction = Transaction.objects.filter(
-    #             company=self.company
-    #         ).order_by('-id').first()
-            
-    #         if last_transaction and last_transaction.transaction_no:
-    #             try:
-    #                 # Extract the numeric part after the last dash
-    #                 # Format: TXN-1-100001 -> we want 100001
-    #                 parts = last_transaction.transaction_no.split('-')
-    #                 if len(parts) >= 3:
-    #                     last_number = int(parts[2])  # Third part is the sequential number
-    #                     new_number = last_number + 1
-    #                 else:
-    #                     # If format is different, start from 100001
-    #                     new_number = 100001
-    #             except (ValueError, IndexError):
-    #                 # If parsing fails, start from 100001
-    #                 new_number = 100001
-    #         else:
-    #             # First transaction for this company - start from 100001
-    #             new_number = 100001
-            
-    #         # Format: TXN-{company_id}-{sequential_number}
-    #         transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
-            
-    #         # Ensure uniqueness
-    #         counter = 1
-    #         while Transaction.objects.filter(transaction_no=transaction_no).exists():
-    #             # If duplicate, increment the sequential number
-    #             new_number += 1
-    #             transaction_no = f"TXN-{self.company.id}-{new_number:06d}"
-    #             counter += 1
-    #             if counter > 100:
-    #                 # Ultimate fallback - use timestamp
-    #                 timestamp = int(timezone.now().timestamp())
-    #                 transaction_no = f"TXN-{self.company.id}-{timestamp}"
-    #                 break
-            
-    #         return transaction_no
-            
-    #     except Exception as e:
-    #         logger.error(f"ERROR: Error generating transaction number: {str(e)}")
-    #         # Fallback generation
-    #         timestamp = int(timezone.now().timestamp())
-    #         return f"TXN-{self.company.id if self.company else 0}-{timestamp}"
-  
 
-  
     def _update_account_balance(self):
         """Update account balance based on transaction"""
         try:
@@ -413,8 +368,6 @@ class Transaction(models.Model):
     def create_for_purchase_payment(cls, purchase, amount, payment_method, account, created_by):
         """Create transaction for purchase payment - SIMPLIFIED VERSION"""
         try:
-          
-            
             transaction_obj = cls(
                 company=purchase.company,
                 transaction_type='debit',
