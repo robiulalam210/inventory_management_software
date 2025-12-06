@@ -25,6 +25,8 @@ DEBUG = True  # Set to False in production
 ALLOWED_HOSTS = [
     'inventory.meherinmart.xyz',
     'www.inventory.meherinmart.xyz',
+    'robi.meherinmart.xyz',
+    'www.robi.meherinmart.xyz',
     'localhost',
     '127.0.0.1',
     '0.0.0.0',
