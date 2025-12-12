@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 import random
 import string
 
+
 class Account(models.Model):
     TYPE_BANK = 'Bank'
     TYPE_MOBILE = 'Mobile banking'
@@ -22,7 +23,7 @@ class Account(models.Model):
         (TYPE_OTHER, 'Other'),
     ]
 
-    ac_no = models.CharField(max_length=20, null=True, blank=True)
+    ac_no = models.CharField(max_length=20, null=True, blank=True, unique=True)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=150)
     ac_type = models.CharField(max_length=30, choices=ACCOUNT_TYPE_CHOICES, default=TYPE_OTHER)
@@ -39,28 +40,19 @@ class Account(models.Model):
     class Meta:
         ordering = ['-id']
         constraints = [
-            # Keep Bank and Mobile banking constraints as-is
+            # Bank and Mobile banking must have unique numbers
             models.UniqueConstraint(
                 fields=['company', 'ac_type', 'number'], 
                 name='unique_company_ac_type_number',
                 condition=Q(ac_type__in=['Bank', 'Mobile banking']) & Q(number__isnull=False)
             ),
-            # REMOVE or COMMENT OUT the Cash constraint
-            # models.UniqueConstraint(
-            #     fields=['company', 'ac_type'],
-            #     name='unique_company_cash_account',
-            #     condition=Q(ac_type='Cash')
-            # ),
-            # REMOVE or COMMENT OUT the Other constraint if you want multiple Other accounts
-            # models.UniqueConstraint(
-            #     fields=['company', 'ac_type'],
-            #     name='unique_company_other_account',
-            #     condition=Q(ac_type='Other')
-            # ),
+            # Cash and Other accounts can have multiple entries, even without numbers
         ]
+        verbose_name = "Account"
+        verbose_name_plural = "Accounts"
 
     def __str__(self):
-        return f"{self.name} ({self.ac_type})"
+        return f"{self.name} ({self.ac_type}) - {self.company}"
 
     @property
     def status(self):
@@ -104,10 +96,8 @@ class Account(models.Model):
                     is_opening_balance=True
                 )
                 
-                print(f"✅ Opening balance transaction created: {transaction.transaction_no} for account {self.name}")
                 return transaction
             except Exception as e:
-                print(f"❌ Error creating opening balance transaction: {e}")
                 return None
         return None
 
@@ -118,33 +108,37 @@ class Account(models.Model):
         is_new = self.pk is None
         creating_opening_balance = is_new and self.opening_balance and self.opening_balance > 0
         
+        # Clean up fields based on account type
         if self.ac_type in [self.TYPE_CASH, self.TYPE_OTHER]:
             self.bank_name = None
             self.branch = None
-            
+            # For Cash accounts without number, generate a default name-based number
+            if self.ac_type == self.TYPE_CASH and not self.number:
+                self.number = f"CASH-{self.name.upper().replace(' ', '-')}"
+        
         # Set initial balance to opening_balance for new accounts
         if is_new:
             self.balance = self.opening_balance
         
         # Generate company-specific AC_NO
         if is_new and not self.ac_no:
-            # Get the last AC_NO for this company and increment
+            company_prefix = self.company.name[:3].upper() if self.company else "COM"
             last_account = Account.objects.filter(
                 company=self.company, 
                 ac_no__isnull=False,
-                ac_no__startswith='ACC-'
+                ac_no__startswith=f'{company_prefix}-ACC-'
             ).order_by('-ac_no').first()
             
             if last_account and last_account.ac_no:
                 try:
-                    last_number = int(last_account.ac_no.split('-')[1])
+                    last_number = int(last_account.ac_no.split('-')[-1])
                     new_number = last_number + 1
                 except (ValueError, IndexError):
                     new_number = 1001
             else:
                 new_number = 1001
                 
-            self.ac_no = f"ACC-{new_number}"
+            self.ac_no = f"{company_prefix}-ACC-{new_number}"
         
         # Save the account first
         super().save(*args, **kwargs)
@@ -154,20 +148,18 @@ class Account(models.Model):
             self.create_opening_balance_transaction(user)
             
     def clean(self):
+        """Validate account data"""
         from django.core.exceptions import ValidationError
         
-        # REMOVE the restriction for single Cash account
-        # if self.ac_type == self.TYPE_CASH and self.pk is None:
-        #     if Account.objects.filter(company=self.company, ac_type=self.TYPE_CASH).exists():
-        #         raise ValidationError("A Cash account already exists for this company.")
-                
-        # REMOVE the restriction for single Other account
-        # if self.ac_type == self.TYPE_OTHER and self.pk is None:
-        #     if Account.objects.filter(company=self.company, ac_type=self.TYPE_OTHER).exists():
-        #         raise ValidationError("An Other account already exists for this company.")
+        # Bank and Mobile banking must have numbers
+        if self.ac_type in [self.TYPE_BANK, self.TYPE_MOBILE]:
+            if not self.number or self.number.strip() == '':
+                raise ValidationError({
+                    'number': f"{self.ac_type} accounts must have an account number."
+                })
         
-        # NEW: Check for duplicate type+number combinations for ALL account types
-        if self.number:  # Only check if a number is provided
+        # Check for duplicates (only for Bank and Mobile banking with numbers)
+        if self.ac_type in [self.TYPE_BANK, self.TYPE_MOBILE] and self.number:
             existing_account = Account.objects.filter(
                 company=self.company,
                 ac_type=self.ac_type,
@@ -179,5 +171,6 @@ class Account(models.Model):
                     f"A {self.ac_type} account with number '{self.number}' already exists."
                 )
         
-        # For accounts without numbers, check if we should allow multiple
-        # You can add logic here if needed
+        # Validate opening balance
+        if self.opening_balance is None:
+            self.opening_balance = Decimal('0.00')

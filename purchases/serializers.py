@@ -204,7 +204,6 @@ class PurchaseSerializer(serializers.ModelSerializer):
             with db_transaction.atomic():
                 # Create purchase first (without items)
                 purchase = Purchase.objects.create(**validated_data)
-                logger.info(f"SUCCESS: Created purchase ID: {purchase.id} for supplier ID: {purchase.supplier_id}")
 
                 # Create purchase items
                 created_items = []
@@ -214,18 +213,15 @@ class PurchaseSerializer(serializers.ModelSerializer):
                     logger.info(f"INFO: Created item: {item.product.name} x {item.qty} @ {item.price}")
 
                 # Update totals to calculate the actual totals
-                logger.info(f"UPDATING: Calling update_totals for purchase {purchase.id}")
                 purchase.update_totals(force_update=True)
                 
                 # Refresh from database to get updated values
                 purchase.refresh_from_db()
-                logger.info(f"INFO: Final purchase totals - Total: {purchase.total}, Grand Total: {purchase.grand_total}, Paid: {purchase.paid_amount}")
 
                 # Handle payments properly
                 if instant_pay and account and payment_method:
                     if paid_amount > 0:
                         # Create transaction directly without calling instant_pay
-                        logger.info(f"INFO: Creating instant payment transaction: {paid_amount}")
                         from transactions.models import Transaction
                         transaction_obj = Transaction.create_for_purchase_payment(
                             purchase=purchase,
@@ -242,7 +238,6 @@ class PurchaseSerializer(serializers.ModelSerializer):
                         purchase.instant_pay(payment_method, account)
                 elif paid_amount > 0 and account and payment_method:
                     # If not instant_pay but paid_amount provided, create single transaction
-                    logger.info(f"INFO: Creating payment transaction: {paid_amount}")
                     from transactions.models import Transaction
                     transaction_obj = Transaction.create_for_purchase_payment(
                         purchase=purchase,

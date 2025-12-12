@@ -3,15 +3,10 @@ import os
 from datetime import timedelta
 
 # -----------------------------
-# BASE DIR - FIXED VERSION
+# BASE DIR
 # -----------------------------
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Alternative method if Path doesn't work:
-# BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
+TEMPLATES_DIR = BASE_DIR / 'templates'
 
 print(f"BASE_DIR is set to: {BASE_DIR}")
 print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
@@ -20,8 +15,7 @@ print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
 # SECURITY
 # -----------------------------
 SECRET_KEY = "django-insecure-meherinmart-xyz-2024-secret-key-change-this-in-production"
-DEBUG = True  # Set to False in production
-
+DEBUG = True  # Set False in production
 ALLOWED_HOSTS = [
     'inventory.meherinmart.xyz',
     'www.inventory.meherinmart.xyz',
@@ -59,7 +53,7 @@ INSTALLED_APPS = [
     'sales',
     'company',
     'returns',
-    "branch_warehouse",
+    'branch_warehouse',
     'accounts',
     'reports',
     'expenses',
@@ -68,8 +62,8 @@ INSTALLED_APPS = [
     'money_receipts',
     'transactions',
     'supplier_payment',
-    'account_transfer', 
-    "core.apps.CoreConfig",
+    'account_transfer',
+    'core.apps.CoreConfig',
 ]
 
 # -----------------------------
@@ -110,27 +104,29 @@ WSGI_APPLICATION = 'inventory_api.wsgi.application'
 # -----------------------------
 # DATABASE CONFIGURATION
 # -----------------------------
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'meherinm_meherinm_meherinmart_db',  # database name
-#         'USER': 'meherinm_robi',                     # MySQL user
-#         'PASSWORD': 'meherinmart@123',                     # MySQL password
-#         'HOST': 'localhost',                         # often localhost on cPanel
-#         'PORT': '3306',
-#         'OPTIONS': {
-#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-#         },
-#     }
-# }
-
-
+# SQLite (development)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+# If you use MySQL in production, enable utf8mb4 for emojis:
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'your_db_name',
+#         'USER': 'your_db_user',
+#         'PASSWORD': 'your_db_password',
+#         'HOST': 'localhost',
+#         'PORT': '3306',
+#         'OPTIONS': {
+#             'charset': 'utf8mb4',
+#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+#         },
+#     }
+# }
 
 # -----------------------------
 # AUTH
@@ -182,34 +178,25 @@ USE_I18N = True
 USE_TZ = True
 
 # -----------------------------
-# STATIC FILES - FIXED VERSION
+# STATIC & MEDIA FILES
 # -----------------------------
 STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
-# Create the static directory if it doesn't exist
-static_dir = os.path.join(BASE_DIR, 'static')
-if not os.path.exists(static_dir):
-    os.makedirs(static_dir)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
-STATICFILES_DIRS = [
-    static_dir,
-]
+# Create dirs if missing
+os.makedirs(STATICFILES_DIRS[0], exist_ok=True)
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 # Only use Whitenoise in production
 if not DEBUG:
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Media files
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-
-# Create media directory if it doesn't exist
-if not os.path.exists(MEDIA_ROOT):
-    os.makedirs(MEDIA_ROOT)
-
 # -----------------------------
-# CORS (development-friendly)
+# CORS
 # -----------------------------
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
@@ -220,13 +207,12 @@ else:
     ]
 
 # -----------------------------
-# SECURITY SETTINGS (production only)
+# SECURITY (production)
 # -----------------------------
-# Default development-safe values
 SECURE_SSL_REDIRECT = False
-SECURE_PROXY_SSL_HEADER = None
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
+SECURE_PROXY_SSL_HEADER = None
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
@@ -240,4 +226,3 @@ if not DEBUG:
 # DEFAULT AUTO FIELD
 # -----------------------------
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-

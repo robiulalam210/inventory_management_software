@@ -5,9 +5,8 @@ from core.base_viewsets import BaseCompanyViewSet, BaseInventoryViewSet
 from core.pagination import CustomPageNumberPagination
 from core.utils import custom_response
 from .models import Account
-from .serializers import AccountSerializer  # Fixed import
+from .serializers import AccountSerializer
 import logging
-# Add these imports at the top of your views.py file
 from rest_framework import viewsets, status, serializers, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -20,10 +19,8 @@ from django.utils import timezone
 from core.utils import custom_response
 from django.http import Http404
 
-
-
-
 logger = logging.getLogger(__name__)
+
 
 class AccountViewSet(BaseInventoryViewSet):
     """CRUD API for accounts with company-based filtering, pagination control, and search."""
@@ -31,74 +28,66 @@ class AccountViewSet(BaseInventoryViewSet):
     serializer_class = AccountSerializer
     search_fields = ['name', 'number', 'bank_name', 'branch', 'ac_type']
     ordering_fields = ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch']
-    ordering = ['ac_no']
+    ordering = ['-created_at']
     
     def get_queryset(self):
         """Apply filters and search to the queryset"""
         # Start with base queryset
         queryset = super().get_queryset()
         
-        # Debug: Log initial state
-        logger.debug(f"=== ACCOUNT FILTER DEBUG ===")
-        logger.debug(f"Initial queryset count: {queryset.count()}")
-        logger.debug(f"All account types in DB: {list(queryset.values_list('ac_type', flat=True).distinct())}")
-        
-        # Get filter parameters
-        ac_type = self.request.query_params.get('ac_type')
-        logger.debug(f"Requested ac_type filter: '{ac_type}'")
+        # Always filter by company
         user = self.request.user
         if hasattr(user, 'company') and user.company:
             queryset = queryset.filter(company=user.company)
         else:
             return Account.objects.none()
-        # Apply company filtering (CRITICAL - add this)
-        if hasattr(self.request, 'user') and hasattr(self.request.user, 'company'):
-            queryset = queryset.filter(company=self.request.user.company)
-            logger.debug(f"After company filter count: {queryset.count()}")
-            logger.debug(f"Account types after company filter: {list(queryset.values_list('ac_type', flat=True).distinct())}")
         
-        # Apply filters - FIX: Use case-insensitive filtering
+        # Apply account type filter
+        ac_type = self.request.query_params.get('ac_type')
         if ac_type:
-            logger.debug(f"Applying ac_type filter: '{ac_type}'")
-            # Case-insensitive filter
             queryset = queryset.filter(ac_type__iexact=ac_type)
-            logger.debug(f"After ac_type filter count: {queryset.count()}")
-            
-        # ... rest of your existing filtering code ...
         
+        # Apply search
         search = self.request.query_params.get('search')
-        min_balance = self.request.query_params.get('min_balance')
-        max_balance = self.request.query_params.get('max_balance')
-            
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) |
                 Q(number__icontains=search) |
                 Q(bank_name__icontains=search) |
-                Q(branch__icontains=search)
+                Q(branch__icontains=search) |
+                Q(ac_no__icontains=search)
             )
-            
+        
+        # Apply balance filters
+        min_balance = self.request.query_params.get('min_balance')
+        max_balance = self.request.query_params.get('max_balance')
+        
         if min_balance:
             try:
                 queryset = queryset.filter(balance__gte=Decimal(min_balance))
             except (ValueError, TypeError):
                 pass
-            
+        
         if max_balance:
             try:
                 queryset = queryset.filter(balance__lte=Decimal(max_balance))
             except (ValueError, TypeError):
                 pass
         
-        # Order by name by default
-        order_by = self.request.query_params.get('order_by', 'name')
-        if order_by.lstrip('-') in ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch']:
+        # Apply status filter
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            if status_filter.lower() == 'active':
+                queryset = queryset.filter(is_active=True)
+            elif status_filter.lower() == 'inactive':
+                queryset = queryset.filter(is_active=False)
+        
+        # Ordering
+        order_by = self.request.query_params.get('order_by', '-created_at')
+        if order_by.lstrip('-') in ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch', 'ac_no']:
             queryset = queryset.order_by(order_by)
         else:
-            queryset = queryset.order_by('name')
-            
-        logger.debug(f"Final queryset count: {queryset.count()}")
-        logger.debug(f"=== END DEBUG ===")
+            queryset = queryset.order_by('-created_at')
             
         return queryset
 
@@ -120,21 +109,24 @@ class AccountViewSet(BaseInventoryViewSet):
                 return custom_response(
                     success=True,
                     message=f"Accounts fetched successfully (no pagination). Total: {queryset.count()}",
-                    data=serializer.data,
+                    data={
+                        'results': data,
+                        'count': queryset.count(),
+                        'pagination': 'disabled'
+                    },
                     status_code=status.HTTP_200_OK
                 )
             
-            # Apply pagination (use DRF's built-in pagination)
+            # Apply pagination
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
                 data = self._process_account_data(serializer.data)
                 
-                # Get the paginated response and extract data
+                # Get the paginated response
                 paginated_response = self.get_paginated_response(data)
-                
-                # Convert to your custom response format with pagination metadata
                 response_data = paginated_response.data
+                
                 return custom_response(
                     success=True,
                     message=f"Accounts fetched successfully. Total: {response_data.get('count', 0)}",
@@ -178,16 +170,13 @@ class AccountViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
     def _process_account_data(self, data):
         """Process account data to ensure consistent format"""
         for item in data:
             # Ensure number is None if blank or empty string
             if item.get('ac_number') in ('', None):
                 item['ac_number'] = None
-            elif item.get('number') in ('', None):
-                item['number'] = None
-                
+            
             # Ensure balance is float
             if 'balance' in item and item['balance'] is not None:
                 item['balance'] = float(item['balance'])
@@ -202,6 +191,10 @@ class AccountViewSet(BaseInventoryViewSet):
                 
             if item.get('branch') in ('', None):
                 item['branch'] = None
+                
+            # Add status field
+            if 'is_active' in item:
+                item['status'] = 'Active' if item['is_active'] else 'Inactive'
                 
         return data
 
@@ -227,74 +220,21 @@ class AccountViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
-            company = self.request.user.company
-            ac_type = serializer.validated_data.get('ac_type')
-            number = serializer.validated_data.get('number')
-            name = serializer.validated_data.get('name')
-            opening_balance = serializer.validated_data.get('opening_balance', Decimal('0.00'))
-
-            # Handle empty string as None for uniqueness check
-            if number == '':
-                number = None
-
-            # REMOVED: The restriction that prevents Cash/Other accounts from having numbers
-            # Now Cash accounts can have numbers to distinguish between multiple counters
-
-            # Check for existing accounts based on type AND number
-            # For ALL account types, check if same type AND same number already exists
-            if number:
-                # If number is provided, check for duplicate (type + number)
-                if Account.objects.filter(company=company, ac_type=ac_type, number=number).exists():
-                    return custom_response(
-                        success=False,
-                        message="An account with this type and number already exists.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            else:
-                # If no number provided, check for duplicate (type + no number)
-                # This prevents multiple "generic" accounts of the same type without numbers
-                if Account.objects.filter(company=company, ac_type=ac_type, number__isnull=True).exists():
-                    return custom_response(
-                        success=False,
-                        message=f"A {ac_type} account without a number already exists. Please provide a unique account number.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-
-            # Create the account instance - set balance to opening_balance
-            account = Account(
-                company=company,
-                created_by=request.user,
-                name=name,
-                ac_type=ac_type,
-                number=number,  # This will now preserve your account numbers for Cash accounts
-                bank_name=serializer.validated_data.get('bank_name'),
-                branch=serializer.validated_data.get('branch'),
-                opening_balance=opening_balance,
-                balance=opening_balance,
-                is_active=True
-            )
-
-            # Validate and save the account with the creating user
-            account.full_clean()
-            account.save(creating_user=request.user)
-
-            # Get the complete account data with serialized response
-            serializer = self.get_serializer(account)
+            account = serializer.save()
             
-            logger.info(f"✅ Account created successfully: {account.id} with opening balance: {opening_balance}")
-            logger.info(f"✅ Account '{account.name}' final balance: {account.balance}")
+            
+            # Get the serialized data
+            response_serializer = self.get_serializer(account)
+            data = self._process_account_data([response_serializer.data])[0]
             
             return custom_response(
                 success=True,
-                message="Account created successfully." + (f" Opening balance transaction created." if opening_balance > 0 else ""),
-                data=serializer.data,
+                message="Account created successfully." + (f" Opening balance transaction created." if account.opening_balance > 0 else ""),
+                data=data,
                 status_code=status.HTTP_201_CREATED
             )
 
@@ -324,53 +264,8 @@ class AccountViewSet(BaseInventoryViewSet):
             serializer = self.get_serializer(instance, data=request.data, partial=False)
             serializer.is_valid(raise_exception=True)
             
-            company = request.user.company
-            ac_type = serializer.validated_data.get('ac_type')
-            number = serializer.validated_data.get('number')
-            name = serializer.validated_data.get('name')
-            
-            # Handle empty string as None
-            if number == '':
-                number = None
-            
-            # REMOVED: The restriction that forces Cash/Other accounts to have null numbers
-            # Now Cash accounts can have numbers to distinguish between multiple counters
-            
-            # Check for duplicates (excluding current instance)
-            if number:
-                if Account.objects.filter(
-                    company=company, 
-                    ac_type=ac_type, 
-                    number=number
-                ).exclude(id=instance.id).exists():
-                    return custom_response(
-                        success=False,
-                        message="An account with this type and number already exists.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            else:
-                # Check for other accounts of same type without number
-                if Account.objects.filter(
-                    company=company, 
-                    ac_type=ac_type, 
-                    number__isnull=True
-                ).exclude(id=instance.id).exists():
-                    return custom_response(
-                        success=False,
-                        message=f"A {ac_type} account without a number already exists.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            
             # Update the instance
-            instance.name = name
-            instance.ac_type = ac_type
-            instance.number = number  # This will now preserve the account number
-            instance.bank_name = serializer.validated_data.get('bank_name')
-            instance.branch = serializer.validated_data.get('branch')
-            
-            instance.save()
+            serializer.save()
             
             # Return updated data
             updated_serializer = self.get_serializer(instance)
@@ -414,82 +309,15 @@ class AccountViewSet(BaseInventoryViewSet):
         """
         try:
             instance = self.get_object()
-            logger.debug(f"=== PARTIAL UPDATE DEBUG ===")
-            logger.debug(f"Updating account ID: {instance.id}")
-            logger.debug(f"Current account data - Name: {instance.name}, Type: {instance.ac_type}, Number: {instance.number}")
-            logger.debug(f"Request data: {request.data}")
-            
             serializer = self.get_serializer(instance, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
             
-            company = request.user.company
-            validated_data = serializer.validated_data
-            
-            logger.debug(f"Validated data: {validated_data}")
-            
-            # Handle number field
-            if 'number' in validated_data:
-                number = validated_data['number']
-                logger.debug(f"Number from request: '{number}'")
-                if number == '':
-                    number = None
-                validated_data['number'] = number
-                logger.debug(f"Number after processing: '{number}'")
-            
-            # Check for duplicates if type or number is being updated
-            ac_type = validated_data.get('ac_type', instance.ac_type)
-            number = validated_data.get('number', instance.number)
-            
-            logger.debug(f"Final values - Type: {ac_type}, Number: {number}")
-            
-            # REMOVED: The restriction that forces Cash/Other accounts to have null numbers
-            # Make sure this line is NOT in your code:
-            # if ac_type in [Account.TYPE_CASH, Account.TYPE_OTHER]: number = None
-            
-            # Check for duplicates (excluding current instance)
-            if number:
-                if Account.objects.filter(
-                    company=company, 
-                    ac_type=ac_type, 
-                    number=number
-                ).exclude(id=instance.id).exists():
-                    logger.debug("Duplicate account found with same type and number")
-                    return custom_response(
-                        success=False,
-                        message="An account with this type and number already exists.",
-                        data=None,
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
-            else:
-                if ac_type != instance.ac_type or 'ac_type' in validated_data:
-                    # Only check if type is changing or being set
-                    if Account.objects.filter(
-                        company=company, 
-                        ac_type=ac_type, 
-                        number__isnull=True
-                    ).exclude(id=instance.id).exists():
-                        logger.debug("Duplicate account found with same type and no number")
-                        return custom_response(
-                            success=False,
-                            message=f"A {ac_type} account without a number already exists.",
-                            data=None,
-                            status_code=status.HTTP_400_BAD_REQUEST
-                        )
-            
             # Update the instance
-            for attr, value in validated_data.items():
-                logger.debug(f"Setting {attr} = {value}")
-                setattr(instance, attr, value)
-            
-            logger.debug(f"Before save - Name: {instance.name}, Type: {instance.ac_type}, Number: {instance.number}")
-            instance.save()
-            logger.debug(f"After save - Name: {instance.name}, Type: {instance.ac_type}, Number: {instance.number}")
+            serializer.save()
             
             # Return updated data
             updated_serializer = self.get_serializer(instance)
             data = self._process_account_data([updated_serializer.data])[0]
-            
-            logger.debug(f"=== END PARTIAL UPDATE DEBUG ===")
             
             return custom_response(
                 success=True,
@@ -522,122 +350,58 @@ class AccountViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        
-    @action(detail=False, methods=['get'])
-    def active(self, request):
-        """
-        Get only active accounts with pagination control
-        """
+    
+    @action(detail=True, methods=['post'])
+    def toggle_active(self, request, pk=None):
+        """Toggle account active status"""
         try:
-            # Check if pagination should be disabled
-            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
+            instance = self.get_object()
+            instance.is_active = not instance.is_active
+            instance.save()
             
-            queryset = self.get_queryset().filter(is_active=True)
-            queryset = self.filter_queryset(queryset)
-            
-            # Handle non-paginated response
-            if no_pagination:
-                serializer = self.get_serializer(queryset, many=True)
-                data = self._process_account_data(serializer.data)
-                
-                return custom_response(
-                    success=True,
-                    message=f"Active accounts fetched successfully (no pagination). Total: {queryset.count()}",
-                    data={
-                        'results': data,
-                        'count': queryset.count(),
-                        'pagination': 'disabled'
-                    },
-                    status_code=status.HTTP_200_OK
-                )
-            
-            # Paginated response
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                data = self._process_account_data(serializer.data)
-                return self.get_paginated_response(data)
-                
-            serializer = self.get_serializer(queryset, many=True)
-            data = self._process_account_data(serializer.data)
+            status_text = "activated" if instance.is_active else "deactivated"
             
             return custom_response(
                 success=True,
-                message="Active accounts fetched successfully.",
-                data={
-                    'results': data,
-                    'count': len(data),
-                    'pagination': 'not_applied'
-                },
+                message=f"Account {status_text} successfully.",
+                data={'id': instance.id, 'is_active': instance.is_active},
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
-            logger.error(f"Error fetching active accounts: {str(e)}", exc_info=True)
+            logger.error(f"Error toggling account status: {str(e)}")
             return custom_response(
                 success=False,
                 message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+    
     @action(detail=False, methods=['get'])
-    def inactive(self, request):
-        """
-        Get only inactive accounts with pagination control
-        """
+    def types(self, request):
+        """Get available account types"""
         try:
-            # Check if pagination should be disabled
-            no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
-            
-            queryset = self.get_queryset().filter(is_active=False)
-            queryset = self.filter_queryset(queryset)
-            
-            # Handle non-paginated response
-            if no_pagination:
-                serializer = self.get_serializer(queryset, many=True)
-                data = self._process_account_data(serializer.data)
-                
-                return custom_response(
-                    success=True,
-                    message=f"Inactive accounts fetched successfully (no pagination). Total: {queryset.count()}",
-                    data={
-                        'results': data,
-                        'count': queryset.count(),
-                        'pagination': 'disabled'
-                    },
-                    status_code=status.HTTP_200_OK
-                )
-            
-            # Paginated response
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                data = self._process_account_data(serializer.data)
-                return self.get_paginated_response(data)
-                
-            serializer = self.get_serializer(queryset, many=True)
-            data = self._process_account_data(serializer.data)
+            types_list = [
+                {'value': Account.TYPE_BANK, 'label': 'Bank'},
+                {'value': Account.TYPE_MOBILE, 'label': 'Mobile banking'},
+                {'value': Account.TYPE_CASH, 'label': 'Cash'},
+                {'value': Account.TYPE_OTHER, 'label': 'Other'}
+            ]
             
             return custom_response(
                 success=True,
-                message="Inactive accounts fetched successfully.",
-                data={
-                    'results': data,
-                    'count': len(data),
-                    'pagination': 'not_applied'
-                },
+                message="Account types fetched successfully.",
+                data=types_list,
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
-            logger.error(f"Error fetching inactive accounts: {str(e)}", exc_info=True)
+            logger.error(f"Error fetching account types: {str(e)}")
             return custom_response(
                 success=False,
                 message="Internal server error",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+    
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Get account summary statistics"""
@@ -645,32 +409,33 @@ class AccountViewSet(BaseInventoryViewSet):
             queryset = self.filter_queryset(self.get_queryset())
             
             total_accounts = queryset.count()
-            total_balance = queryset.aggregate(total=Sum('balance'))['total'] or 0
+            total_balance = queryset.aggregate(total=Sum('balance'))['total'] or Decimal('0.00')
             
             # Count by account type
             type_count = queryset.values('ac_type').annotate(
                 count=Count('id'),
                 total_balance=Sum('balance')
-            )
+            ).order_by('ac_type')
             
-            # Count by status (using is_active field)
-            status_count = queryset.values('is_active').annotate(
-                count=Count('id')
-            )
-            
-            # Convert status count to more readable format
-            status_breakdown = []
-            for item in status_count:
-                status_breakdown.append({
-                    'status': 'Active' if item['is_active'] else 'Inactive',
-                    'count': item['count']
-                })
+            # Count by status
+            active_count = queryset.filter(is_active=True).count()
+            inactive_count = total_accounts - active_count
             
             summary_data = {
                 'total_accounts': total_accounts,
                 'total_balance': float(total_balance),
-                'account_type_breakdown': list(type_count),
-                'status_breakdown': status_breakdown
+                'account_type_breakdown': [
+                    {
+                        'ac_type': item['ac_type'],
+                        'count': item['count'],
+                        'total_balance': float(item['total_balance'] or Decimal('0.00'))
+                    }
+                    for item in type_count
+                ],
+                'status_breakdown': [
+                    {'status': 'Active', 'count': active_count},
+                    {'status': 'Inactive', 'count': inactive_count}
+                ]
             }
             
             return custom_response(
@@ -687,6 +452,3 @@ class AccountViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-
