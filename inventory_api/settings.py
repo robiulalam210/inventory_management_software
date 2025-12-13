@@ -116,7 +116,7 @@ WSGI_APPLICATION = 'inventory_api.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-         'NAME': 'meherinm_meherinm_meherinmart_db',
+         'NAME': 'meherinm_meherinmart_db',
         'USER': 'meherinm_robi',
         'PASSWORD': 'meherinmart@123',
         'HOST': 'localhost',

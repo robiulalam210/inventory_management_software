@@ -1,4 +1,5 @@
-# branch_warehouse/models.py
+# branch_warehouse/models.py - MINIMAL FIXES ONLY
+
 from django.db import models
 from django.db.models import Sum, F, Q
 from django.conf import settings
@@ -199,13 +200,12 @@ class Purchase(models.Model):
         logger.info(f"UPDATING: Purchase.update_totals called for purchase ID: {self.id}")
         
         try:
-            items_aggregate = self.items.aggregate(
-                total_subtotal=Sum(F('qty') * F('price'))
-            )
-            subtotal = items_aggregate['total_subtotal'] or Decimal('0.00')
+            # FIXED: Use item.subtotal() which includes item discounts
+            items_subtotal = sum(item.subtotal() for item in self.items.all())
+            subtotal = items_subtotal or Decimal('0.00')
             subtotal = self._round_decimal(subtotal)
 
-            logger.info(f"INFO: Calculated subtotal from items: {subtotal}")
+            logger.info(f"INFO: Calculated subtotal from items (WITH item discounts): {subtotal}")
 
             discount_amount = Decimal('0.00')
             if self.overall_discount_type == 'percentage':
@@ -674,7 +674,10 @@ class PurchaseItem(models.Model):
                 discount_amount = self.discount
             else:
                 discount_amount = Decimal('0.00')
-                
+            
+            # Ensure discount doesn't exceed total
+            discount_amount = min(discount_amount, total)
+            
             final_total = max(Decimal('0.00'), total - discount_amount)
             return final_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         except Exception as e:
