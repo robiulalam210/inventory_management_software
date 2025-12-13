@@ -118,12 +118,12 @@ class Expense(models.Model):
     #             self.update_account_balance()
     #             transaction = self.create_expense_transaction()
     #             if transaction:
-    #                 logger.info(f"✅ Transaction created successfully: {transaction.id}")
+    #                 logger.info(f"SUCCESS: Transaction created successfully: {transaction.id}")
     #             else:
-    #                 logger.error(f"❌ Transaction creation returned None for expense {self.invoice_number}")
+    #                 logger.error(f"ERROR:Transaction creation returned None for expense {self.invoice_number}")
     #         except Exception as e:
-    #             logger.error(f"❌ Error in transaction creation process: {str(e)}")
-    #             logger.error(f"❌ Traceback: {traceback.format_exc()}")
+    #             logger.error(f"ERROR:Error in transaction creation process: {str(e)}")
+    #             logger.error(f"ERROR:Traceback: {traceback.format_exc()}")
     #     else:
     #         if not is_new:
     #             logger.info(f"ℹ️ Expense update - no transaction created for {self.invoice_number}")
@@ -150,15 +150,15 @@ class Expense(models.Model):
                 # The transaction's save() method will handle balance update
                 transaction = self.create_expense_transaction()
                 if transaction:
-                    logger.info(f"✅ Transaction created successfully: {transaction.id}")
+                    logger.info(f"SUCCESS: Transaction created successfully: {transaction.id}")
                     # Verify account balance after transaction
                     self.account.refresh_from_db()
                     logger.info(f"💰 Account balance after transaction: {self.account.balance}")
                 else:
-                    logger.error(f"❌ Transaction creation returned None for expense {self.invoice_number}")
+                    logger.error(f"ERROR:Transaction creation returned None for expense {self.invoice_number}")
             except Exception as e:
-                logger.error(f"❌ Error in transaction creation process: {str(e)}")
-                logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                logger.error(f"ERROR:Error in transaction creation process: {str(e)}")
+                logger.error(f"ERROR:Traceback: {traceback.format_exc()}")
         else:
             if not is_new:
                 logger.info(f"ℹ️ Expense update - no transaction created for {self.invoice_number}")
@@ -258,7 +258,7 @@ class Expense(models.Model):
             # Import inside method to avoid circular imports
             logger.info("🔍 Importing Transaction model...")
             from transactions.models import Transaction
-            logger.info("✅ Transaction model imported successfully")
+            logger.info("SUCCESS: Transaction model imported successfully")
             
             # Create description
             description_parts = [f"Expense: {self.head.name}"]
@@ -305,34 +305,34 @@ class Expense(models.Model):
             
             # Save the transaction
             transaction.save()
-            logger.info(f"✅ TRANSACTION SAVED SUCCESSFULLY! ID: {transaction.id}")
+            logger.info(f"SUCCESS: TRANSACTION SAVED SUCCESSFULLY! ID: {transaction.id}")
             
             # Verify the transaction was created
             if Transaction.objects.filter(id=transaction.id).exists():
-                logger.info(f"✅ Transaction verified in database: {transaction.id}")
+                logger.info(f"SUCCESS: Transaction verified in database: {transaction.id}")
                 
                 # Check if transaction_no exists
                 if hasattr(transaction, 'transaction_no'):
-                    logger.info(f"✅ Transaction number: {transaction.transaction_no}")
+                    logger.info(f"SUCCESS: Transaction number: {transaction.transaction_no}")
                 else:
                     logger.info("ℹ️ No transaction_no field found")
                     
             else:
-                logger.error("❌ Transaction not found in database after save!")
+                logger.error("ERROR:Transaction not found in database after save!")
                 
             return transaction
             
         except ImportError as e:
-            logger.error(f"❌ FAILED TO IMPORT TRANSACTION MODEL: {e}")
-            logger.error("❌ Please check:")
+            logger.error(f"ERROR:FAILED TO IMPORT TRANSACTION MODEL: {e}")
+            logger.error("ERROR:Please check:")
             logger.error("  1. 'transactions' app is in INSTALLED_APPS")
             logger.error("  2. Transaction model exists in transactions/models.py")
             logger.error("  3. No circular imports")
             return None
             
         except Exception as e:
-            logger.error(f"❌ CRITICAL ERROR CREATING TRANSACTION: {str(e)}")
-            logger.error(f"❌ FULL TRACEBACK: {traceback.format_exc()}")
+            logger.error(f"ERROR:CRITICAL ERROR CREATING TRANSACTION: {str(e)}")
+            logger.error(f"ERROR:FULL TRACEBACK: {traceback.format_exc()}")
             
             # Try alternative approach - create with minimal fields
             try:
@@ -348,11 +348,11 @@ class Expense(models.Model):
                     description=f"Expense: {self.head.name}",
                     status='completed'
                 )
-                logger.info(f"✅ Alternative transaction created: {minimal_transaction.id}")
+                logger.info(f"SUCCESS: Alternative transaction created: {minimal_transaction.id}")
                 return minimal_transaction
                 
             except Exception as alt_error:
-                logger.error(f"❌ Alternative approach also failed: {alt_error}")
+                logger.error(f"ERROR:Alternative approach also failed: {alt_error}")
                 return None
 
     def force_create_transaction(self):
@@ -370,7 +370,7 @@ class Expense(models.Model):
             return self.create_expense_transaction()
             
         except Exception as e:
-            logger.error(f"❌ Error in force_create_transaction: {e}")
+            logger.error(f"ERROR:Error in force_create_transaction: {e}")
             return None
 
     def delete(self, *args, **kwargs):
@@ -383,7 +383,7 @@ class Expense(models.Model):
                 self.account.save(update_fields=['balance', 'updated_at'])
                 logger.info(f"🔄 Account balance restored after deleting expense {self.invoice_number}: {old_balance} -> {self.account.balance}")
             except Exception as e:
-                logger.error(f"❌ Error restoring account balance for deleted expense {self.invoice_number}: {str(e)}")
+                logger.error(f"ERROR:Error restoring account balance for deleted expense {self.invoice_number}: {str(e)}")
         
         # Delete associated transaction if exists
         try:
@@ -396,7 +396,7 @@ class Expense(models.Model):
             else:
                 logger.info(f"ℹ️ No associated transactions found for expense {self.invoice_number}")
         except Exception as e:
-            logger.error(f"❌ Error deleting associated transactions: {e}")
+            logger.error(f"ERROR:Error deleting associated transactions: {e}")
         
         # Delete the expense
         super().delete(*args, **kwargs)
@@ -431,7 +431,7 @@ class Expense(models.Model):
             return reversal_transaction
             
         except Exception as e:
-            logger.error(f"❌ Error reversing expense {self.invoice_number}: {e}")
+            logger.error(f"ERROR:Error reversing expense {self.invoice_number}: {e}")
             return False
 
     @property
@@ -552,10 +552,10 @@ class Expense(models.Model):
                 logger.info(f"🔍 No associated transaction found for expense {self.id}")
             return transaction
         except ImportError:
-            logger.error("❌ Cannot import Transaction model")
+            logger.error("ERROR:Cannot import Transaction model")
             return None
         except Exception as e:
-            logger.error(f"❌ Error getting associated transaction: {e}")
+            logger.error(f"ERROR:Error getting associated transaction: {e}")
             return None
 
     def has_transaction(self):
@@ -581,10 +581,10 @@ class Command(BaseCommand):
                 self.stdout.write(f"Creating transaction for expense {expense.invoice_number}...")
                 transaction = expense.force_create_transaction()
                 if transaction:
-                    self.stdout.write(self.style.SUCCESS(f"✅ Created transaction {transaction.id}"))
+                    self.stdout.write(self.style.SUCCESS(f"SUCCESS: Created transaction {transaction.id}"))
                     expenses_without_transactions.append(expense.invoice_number)
                 else:
-                    self.stdout.write(self.style.ERROR(f"❌ Failed to create transaction"))
+                    self.stdout.write(self.style.ERROR(f"ERROR:Failed to create transaction"))
         
         if expenses_without_transactions:
             self.stdout.write(self.style.SUCCESS(f"Fixed {len(expenses_without_transactions)} expenses"))

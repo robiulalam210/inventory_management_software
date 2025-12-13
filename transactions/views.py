@@ -51,7 +51,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
             logger.info(f"  - Transactions before filter: {super().get_queryset().count()}")
             logger.info(f"  - Transactions after company filter: {queryset.count()}")
         else:
-            logger.warning(f"❌ No company found for user: {user}")
+            logger.warning(f"ERROR:No company found for user: {user}")
             return Transaction.objects.none()
         
         if account_id:
@@ -142,7 +142,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 created_by=user
             )
             
-            logger.info(f"✅ TRANSACTION CREATED SUCCESSFULLY:")
+            logger.info(f"SUCCESS: TRANSACTION CREATED SUCCESSFULLY:")
             logger.info(f"  - Transaction ID: {transaction.id}")
             logger.info(f"  - Transaction No: {transaction.transaction_no}")
             logger.info(f"  - Amount: {transaction.amount}")
@@ -161,7 +161,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
             )
             
         except serializers.ValidationError as e:
-            logger.error(f"❌ Transaction validation error: {e.detail}")
+            logger.error(f"ERROR:Transaction validation error: {e.detail}")
             return custom_response(
                 success=False,
                 message="Validation error",
@@ -169,7 +169,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.error(f"❌ Transaction creation error: {str(e)}", exc_info=True)
+            logger.error(f"ERROR:Transaction creation error: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message="Internal server error",

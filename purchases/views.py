@@ -1,3 +1,4 @@
+# branch_warehouse/views.py
 from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
@@ -9,8 +10,10 @@ from core.pagination import CustomPageNumberPagination
 from .models import Purchase, PurchaseItem
 from .serializers import PurchaseSerializer, PurchaseItemSerializer
 from suppliers.models import Supplier
+from accounts.models import Account  # Added missing import
 from django.db import models
 from rest_framework import filters
+from decimal import Decimal  # Added missing import
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +490,86 @@ class PurchaseItemViewSet(BaseCompanyViewSet):
             )
         except Exception as e:
             logger.error(f"Error in purchase item retrieve: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def create(self, request, *args, **kwargs):
+        """Create a purchase item"""
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+            return custom_response(
+                success=True,
+                message="Purchase item created successfully.",
+                data=self.get_serializer(instance).data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            logger.warning(f"Purchase item validation error: {e.detail}")
+            return custom_response(
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error in purchase item create: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def update(self, request, *args, **kwargs):
+        """Update a purchase item"""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        try:
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+            return custom_response(
+                success=True,
+                message="Purchase item updated successfully.",
+                data=self.get_serializer(instance).data,
+                status_code=status.HTTP_200_OK
+            )
+        except serializers.ValidationError as e:
+            logger.warning(f"Purchase item update validation error: {e.detail}")
+            return custom_response(
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error in purchase item update: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete a purchase item"""
+        try:
+            instance = self.get_object()
+            instance.delete()
+            return custom_response(
+                success=True,
+                message="Purchase item deleted successfully.",
+                data=None,
+                status_code=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            logger.error(f"Error in purchase item delete: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message="Internal server error",

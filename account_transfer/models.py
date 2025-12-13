@@ -182,7 +182,7 @@ class AccountTransfer(models.Model):
             
             # Use atomic transaction to ensure data consistency
             with transaction.atomic():
-                # ✅ FIXED: Update account balances using F() expressions
+                # SUCCESS: FIXED: Update account balances using F() expressions
                 Account.objects.filter(id=self.from_account.id).update(
                     balance=F('balance') - self.amount
                 )
@@ -194,7 +194,7 @@ class AccountTransfer(models.Model):
                 self.from_account.refresh_from_db()
                 self.to_account.refresh_from_db()
                 
-                logger.info(f"✅ Account balances updated: "
+                logger.info(f"SUCCESS: Account balances updated: "
                           f"From {self.from_account.name}: {self.from_account.balance}, "
                           f"To {self.to_account.name}: {self.to_account.balance}")
                 
@@ -210,7 +210,7 @@ class AccountTransfer(models.Model):
                     status='completed',
                     transaction_date=self.transfer_date,
                     is_opening_balance=False,
-                    balance_already_updated=True  # ✅ Prevents double balance update
+                    balance_already_updated=True  # SUCCESS: Prevents double balance update
                 )
                 
                 # Create credit transaction
@@ -225,7 +225,7 @@ class AccountTransfer(models.Model):
                     status='completed',
                     transaction_date=self.transfer_date,
                     is_opening_balance=False,
-                    balance_already_updated=True  # ✅ Prevents double balance update
+                    balance_already_updated=True  # SUCCESS: Prevents double balance update
                 )
                 
                 # Update transfer status and link transactions
@@ -243,11 +243,11 @@ class AccountTransfer(models.Model):
                     'updated_at'
                 ])
             
-            logger.info(f"✅ Transfer {self.transfer_no} executed successfully")
+            logger.info(f"SUCCESS: Transfer {self.transfer_no} executed successfully")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error executing transfer {self.transfer_no}: {str(e)}")
+            logger.error(f"ERROR:Error executing transfer {self.transfer_no}: {str(e)}")
             self.status = 'failed'
             self.save(update_fields=['status', 'updated_at'])
             raise ValidationError(f"Failed to execute transfer: {str(e)}")
@@ -300,11 +300,11 @@ class AccountTransfer(models.Model):
                 self.remarks = f"Reversed by {reversal.transfer_no}. Reason: {reason}"
                 self.save()
             
-            logger.info(f"✅ Transfer {self.transfer_no} reversed by {reversal.transfer_no}")
+            logger.info(f"SUCCESS: Transfer {self.transfer_no} reversed by {reversal.transfer_no}")
             return reversal
             
         except Exception as e:
-            logger.error(f"❌ Error reversing transfer {self.transfer_no}: {str(e)}")
+            logger.error(f"ERROR:Error reversing transfer {self.transfer_no}: {str(e)}")
             raise ValidationError(f"Failed to reverse transfer: {str(e)}")
 
     def get_transfer_summary(self):

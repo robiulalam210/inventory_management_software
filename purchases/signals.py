@@ -11,7 +11,7 @@ def update_supplier_on_purchase_save(sender, instance, **kwargs):
             print(f"🔄 Signal: Updating supplier '{instance.supplier.name}' after purchase save")
             instance.supplier.update_purchase_totals()
     except Exception as e:
-        print(f"❌ Error updating supplier on purchase save: {e}")
+        print(f"ERROR:Error updating supplier on purchase save: {e}")
 
 @receiver(post_delete, sender=Purchase)
 def update_supplier_on_purchase_delete(sender, instance, **kwargs):
@@ -21,4 +21,4 @@ def update_supplier_on_purchase_delete(sender, instance, **kwargs):
             print(f"🔄 Signal: Updating supplier '{instance.supplier.name}' after purchase delete")
             instance.supplier.update_purchase_totals()
     except Exception as e:
-        print(f"❌ Error updating supplier on purchase delete: {e}")
+        print(f"ERROR:Error updating supplier on purchase delete: {e}")

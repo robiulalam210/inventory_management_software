@@ -232,7 +232,7 @@ class SupplierPayment(models.Model):
                 transaction_obj = self._create_transaction()
                 
                 if transaction_obj:
-                    logger.info(f"✅ Payment {self.sp_no} completed with transaction: {transaction_obj.transaction_no}")
+                    logger.info(f"SUCCESS: Payment {self.sp_no} completed with transaction: {transaction_obj.transaction_no}")
                 else:
                     logger.warning(f"⚠️  Payment {self.sp_no} completed but no transaction was created")
 
@@ -248,10 +248,10 @@ class SupplierPayment(models.Model):
             else:  # overall
                 self._process_overall_payment()
                 
-            logger.info(f"✅ Successfully processed payment: {self.sp_no}")
+            logger.info(f"SUCCESS: Successfully processed payment: {self.sp_no}")
             
         except Exception as e:
-            logger.error(f"❌ Error processing payment {self.sp_no}: {e}")
+            logger.error(f"ERROR:Error processing payment {self.sp_no}: {e}")
             self.status = 'failed'
             super().save(update_fields=['status', 'updated_at'])
             raise
@@ -280,21 +280,21 @@ class SupplierPayment(models.Model):
                 transaction_obj = Transaction.create_for_supplier_payment(self, cash_amount)
                 
                 if transaction_obj:
-                    logger.info(f"✅ Transaction created successfully: {transaction_obj.transaction_no}")
+                    logger.info(f"SUCCESS: Transaction created successfully: {transaction_obj.transaction_no}")
                     logger.info(f"🔗 Transaction linked to supplier payment: {self.sp_no}")
                     return transaction_obj
                 else:
-                    logger.error(f"❌ Failed to create transaction for supplier payment {self.sp_no}")
+                    logger.error(f"ERROR:Failed to create transaction for supplier payment {self.sp_no}")
                     return None
             else:
                 logger.info(f"⏩ No transaction created - Cash amount: {cash_amount}, Account: {self.account}")
                 return None
                 
         except ImportError as e:
-            logger.error(f"❌ Failed to import Transaction model: {e}")
+            logger.error(f"ERROR:Failed to import Transaction model: {e}")
             return None
         except Exception as e:
-            logger.error(f"❌ Error creating transaction for supplier payment {self.sp_no}: {e}")
+            logger.error(f"ERROR:Error creating transaction for supplier payment {self.sp_no}: {e}")
             import traceback
             logger.error(f"📋 Traceback: {traceback.format_exc()}")
             return None
@@ -311,7 +311,7 @@ class SupplierPayment(models.Model):
         self.supplier.advance_balance += self.amount
         self.supplier.save(update_fields=['advance_balance', 'updated_at'])
         
-        logger.info(f"✅ Advance balance updated: {old_advance} -> {self.supplier.advance_balance}")
+        logger.info(f"SUCCESS: Advance balance updated: {old_advance} -> {self.supplier.advance_balance}")
         
         # Decrease account balance
         if self.account:
@@ -423,7 +423,7 @@ class SupplierPayment(models.Model):
             self.supplier.advance_balance += remaining_total
             self.supplier.save(update_fields=['advance_balance', 'updated_at'])
             
-            logger.info(f"✅ Added remaining to advance: {remaining_total}, Balance: {old_advance} -> {self.supplier.advance_balance}")
+            logger.info(f"SUCCESS: Added remaining to advance: {remaining_total}, Balance: {old_advance} -> {self.supplier.advance_balance}")
 
     def _apply_advance_to_due_purchases(self, advance_amount):
         """Apply advance amount to due purchases"""

@@ -27,7 +27,7 @@ class Command(BaseCommand):
             self.fix_money_receipts_serial_numbers()
             self.fix_expenses_serial_numbers()
             
-        self.stdout.write(self.style.SUCCESS("✅ All serial numbers reset successfully!"))
+        self.stdout.write(self.style.SUCCESS("SUCCESS: All serial numbers reset successfully!"))
     
     def temporarily_remove_unique_constraints(self):
         """Temporarily set unique fields to NULL to avoid constraint violations"""
@@ -36,7 +36,7 @@ class Command(BaseCommand):
         # Set money receipt numbers to temporary values
         MoneyReceipt.objects.all().update(mr_no=None)
         
-        self.stdout.write("✅ Unique constraints temporarily removed")
+        self.stdout.write("SUCCESS: Unique constraints temporarily removed")
     
     def fix_sales_serial_numbers(self):
         """Reset sales invoice numbers to SL-1001, SL-1002... per company"""
@@ -54,7 +54,7 @@ class Command(BaseCommand):
                 
                 counter += 1
                 
-            self.stdout.write(f"✅ Company {company.name}: Fixed {sales.count()} sales")
+            self.stdout.write(f"SUCCESS: Company {company.name}: Fixed {sales.count()} sales")
     
     def fix_purchases_serial_numbers(self):
         """Reset purchase invoice numbers to PO-1001, PO-1002... per company"""
@@ -72,7 +72,7 @@ class Command(BaseCommand):
                 
                 counter += 1
                 
-            self.stdout.write(f"✅ Company {company.name}: Fixed {purchases.count()} purchases")
+            self.stdout.write(f"SUCCESS: Company {company.name}: Fixed {purchases.count()} purchases")
     
     def fix_money_receipts_serial_numbers(self):
         """Reset money receipt numbers to MR-1001, MR-1002... per company"""
@@ -90,7 +90,7 @@ class Command(BaseCommand):
                 
                 counter += 1
                 
-            self.stdout.write(f"✅ Company {company.name}: Fixed {receipts.count()} money receipts")
+            self.stdout.write(f"SUCCESS: Company {company.name}: Fixed {receipts.count()} money receipts")
     
     def fix_expenses_serial_numbers(self):
         """Reset expense invoice numbers to EXP-1001, EXP-1002... per company"""
@@ -108,4 +108,4 @@ class Command(BaseCommand):
                 
                 counter += 1
                 
-            self.stdout.write(f"✅ Company {company.name}: Fixed {expenses.count()} expenses")
+            self.stdout.write(f"SUCCESS: Company {company.name}: Fixed {expenses.count()} expenses")

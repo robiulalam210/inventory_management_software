@@ -99,7 +99,7 @@ class Command(BaseCommand):
                     fixed_count += 1
                     
             except Exception as e:
-                self.stdout.write(f'   ❌ Error fixing sale {sale.invoice_no}: {e}')
+                self.stdout.write(f'   ERROR:Error fixing sale {sale.invoice_no}: {e}')
                 # If we can't fix it, delete it (last resort)
                 try:
                     sale.delete()
@@ -137,7 +137,7 @@ class Command(BaseCommand):
                     fixed_count += 1
                     
             except Exception as e:
-                self.stdout.write(f'   ❌ Error fixing receipt {receipt.mr_no}: {e}')
+                self.stdout.write(f'   ERROR:Error fixing receipt {receipt.mr_no}: {e}')
         
         return fixed_count
 
@@ -169,7 +169,7 @@ class Command(BaseCommand):
                         fixed_count += 1
                         
                 except Exception as e:
-                    self.stdout.write(f'   ❌ Error fixing transaction {transaction.transaction_no}: {e}')
+                    self.stdout.write(f'   ERROR:Error fixing transaction {transaction.transaction_no}: {e}')
         
         except Exception as e:
             self.stdout.write(f'   ⚠️ Could not access transactions: {e}')
@@ -208,7 +208,7 @@ class Command(BaseCommand):
                     fixed_count += 1
                     
             except Exception as e:
-                self.stdout.write(f'   ❌ Error fixing account {account.name}: {e}')
+                self.stdout.write(f'   ERROR:Error fixing account {account.name}: {e}')
         
         return fixed_count
 
@@ -241,5 +241,5 @@ class Command(BaseCommand):
                 return fixed_count
                 
         except Exception as e:
-            self.stdout.write(f'   ❌ SQL fixes failed: {e}')
+            self.stdout.write(f'   ERROR:SQL fixes failed: {e}')
             return 0

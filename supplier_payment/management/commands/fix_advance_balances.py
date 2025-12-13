@@ -63,7 +63,7 @@ class Command(BaseCommand):
                         
                         self.stdout.write(
                             self.style.SUCCESS(
-                                f'   ✅ Updated advance balance: '
+                                f'   SUCCESS: Updated advance balance: '
                                 f'{old_balance} -> {supplier.advance_balance}'
                             )
                         )
@@ -75,7 +75,7 @@ class Command(BaseCommand):
                     
                 except Exception as e:
                     self.stdout.write(
-                        self.style.ERROR(f'   ❌ Error: {e}')
+                        self.style.ERROR(f'   ERROR:Error: {e}')
                     )
         
         self.stdout.write(self.style.SUCCESS('🎉 Emergency advance balance fix completed!'))

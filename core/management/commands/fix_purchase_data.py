@@ -30,7 +30,7 @@ class Command(BaseCommand):
                 fixed_count += 1
         
         self.stdout.write(
-            self.style.SUCCESS(f"✅ Fixed {fixed_count} purchase records")
+            self.style.SUCCESS(f"SUCCESS: Fixed {fixed_count} purchase records")
         )
         
         # Also update all supplier totals
@@ -38,5 +38,5 @@ class Command(BaseCommand):
         Supplier.recalculate_all_supplier_totals()
         
         self.stdout.write(
-            self.style.SUCCESS("✅ Updated all supplier totals")
+            self.style.SUCCESS("SUCCESS: Updated all supplier totals")
         )

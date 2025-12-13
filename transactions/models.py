@@ -247,7 +247,7 @@ class Transaction(models.Model):
                     else:
                         # Regular debit transaction - insufficient funds
                         error_msg = f"Insufficient balance in account {account.name}. Available: {old_balance}, Required: {self.amount}"
-                        logger.error(f"❌ {error_msg}")
+                        logger.error(f"ERROR:{error_msg}")
                         # Mark transaction as failed
                         self.status = 'failed'
                         super().save(update_fields=['status'])
@@ -357,11 +357,11 @@ class Transaction(models.Model):
                     is_opening_balance=False
                 )
                 
-                logger.info(f"✅ Transaction created for money receipt: {transaction_obj.transaction_no}")
+                logger.info(f"SUCCESS: Transaction created for money receipt: {transaction_obj.transaction_no}")
                 return transaction_obj
             
         except Exception as e:
-            logger.error(f"❌ Error creating transaction for money receipt {money_receipt.mr_no}: {e}")
+            logger.error(f"ERROR:Error creating transaction for money receipt {money_receipt.mr_no}: {e}")
             return None
 
     @classmethod

@@ -90,7 +90,7 @@ class Supplier(models.Model):
                 'total_purchases', 'total_paid', 'total_due', 'purchase_count', 'updated_at'
             ])
             
-            logger.info(f"✅ Supplier totals updated: {self.name} - "
+            logger.info(f"SUCCESS: Supplier totals updated: {self.name} - "
                     f"Purchases: {self.total_purchases}, "
                     f"Paid: {self.total_paid}, "
                     f"Due: {self.total_due}, "
@@ -98,7 +98,7 @@ class Supplier(models.Model):
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error updating supplier totals for {self.name}: {e}")
+            logger.error(f"ERROR:Error updating supplier totals for {self.name}: {e}")
             return False
         
     @classmethod
@@ -113,11 +113,11 @@ class Supplier(models.Model):
                 logger.info(f"Recalculating totals for supplier: {supplier.name}")
                 supplier.update_purchase_totals()
                 
-            logger.info(f"✅ Recalculated totals for {suppliers.count()} suppliers")
+            logger.info(f"SUCCESS: Recalculated totals for {suppliers.count()} suppliers")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Error recalculating supplier totals: {e}")
+            logger.error(f"ERROR:Error recalculating supplier totals: {e}")
             return False
 
     @property

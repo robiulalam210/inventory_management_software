@@ -46,9 +46,9 @@ class Command(BaseCommand):
                 
                 sale.save()
                 fixed_count += 1
-                self.stdout.write(f'✅ Fixed sale {sale.invoice_no}')
+                self.stdout.write(f'SUCCESS: Fixed sale {sale.invoice_no}')
                 
             except Exception as e:
-                self.stdout.write(f'❌ Error fixing {sale.invoice_no}: {e}')
+                self.stdout.write(f'ERROR:Error fixing {sale.invoice_no}: {e}')
         
         self.stdout.write(f'🎉 Fixed {fixed_count} sales!')

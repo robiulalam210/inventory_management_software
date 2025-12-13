@@ -21,14 +21,14 @@ def create_badstock_from_sales_return(sender, instance, created, **kwargs):
             if not product:
                 continue
 
-            # ✅ Create a BadStock record
+            # SUCCESS: Create a BadStock record
             BadStock.objects.create(
                 product=product,
                 quantity=item.quantity,
                 reason=f"Sales Return (Invoice {instance.invoice_no})"
             )
 
-            # ✅ Optional: restore returned stock to available inventory
+            # SUCCESS: Optional: restore returned stock to available inventory
             product.stock += item.quantity
             product.save()
 

@@ -1,4 +1,3 @@
-# purchases/serializers.py
 import logging
 import traceback
 from rest_framework import serializers
@@ -9,6 +8,7 @@ from django.db import transaction as db_transaction
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
+
 
 class PurchaseItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
@@ -54,6 +54,7 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Item total must be greater than 0 after discount")
             
         return attrs
+
 
 class PurchaseSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
@@ -117,6 +118,14 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         request = self.context.get('request')
+        user = request.user if request else None
+        
+        # Get account from attrs or request data
+        account = attrs.get('account')
+        
+        # FIXED: Handle empty account_id gracefully
+        if 'account' in attrs and not account:
+            attrs['account'] = None
         
         # Validate purchase items for creation
         if request and getattr(request, "method", None) == 'POST':
@@ -146,7 +155,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
                     })
                 
                 # Validate that products belong to user's company
-                user_company = request.user.company
+                user_company = user.company if user and hasattr(user, 'company') else None
                 if product and hasattr(product, 'company') and product.company != user_company:
                     raise serializers.ValidationError({
                         "purchase_items": f"Item {i+1}: Product '{product.name}' does not belong to your company."
@@ -188,81 +197,110 @@ class PurchaseSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         try:
             request = self.context.get('request')
-            if not request or not hasattr(request.user, 'company') or not request.user.company:
-                raise serializers.ValidationError("User does not belong to a company.")
+            user = request.user if request else None
+            
+            if not user or not hasattr(user, 'company') or not user.company:
+                raise serializers.ValidationError({"error": "User does not belong to a company."})
 
             items_data = validated_data.pop('purchase_items', [])
             instant_pay = validated_data.pop('instant_pay', False)
             
+            # FIXED: Handle empty account_id
             account = validated_data.get('account', None)
             payment_method = validated_data.get('payment_method', None)
             paid_amount = validated_data.get('paid_amount', Decimal('0.00'))
             
-            validated_data['company'] = request.user.company
-            validated_data['created_by'] = request.user
+            validated_data['company'] = user.company
+            validated_data['created_by'] = user
 
             with db_transaction.atomic():
                 # Create purchase first (without items)
                 purchase = Purchase.objects.create(**validated_data)
+                
+                logger.info(f"INFO: Purchase created with ID: {purchase.id}")
 
                 # Create purchase items
                 created_items = []
                 for item_data in items_data:
-                    item = PurchaseItem.objects.create(purchase=purchase, **item_data)
-                    created_items.append(item)
-                    logger.info(f"INFO: Created item: {item.product.name} x {item.qty} @ {item.price}")
+                    try:
+                        item = PurchaseItem.objects.create(purchase=purchase, **item_data)
+                        created_items.append(item)
+                        logger.info(f"INFO: Created item: {item.product.name} x {item.qty} @ {item.price}")
+                    except Exception as e:
+                        logger.error(f"ERROR: Failed to create purchase item: {str(e)}")
+                        raise
 
                 # Update totals to calculate the actual totals
-                purchase.update_totals(force_update=True)
+                success = purchase.update_totals(force_update=True)
+                if not success:
+                    logger.error("ERROR: Failed to update purchase totals")
                 
                 # Refresh from database to get updated values
                 purchase.refresh_from_db()
+                logger.info(f"INFO: Purchase totals - Grand Total: {purchase.grand_total}, Due: {purchase.due_amount}")
 
                 # Handle payments properly
                 if instant_pay and account and payment_method:
+                    logger.info(f"INFO: Processing instant payment with paid_amount: {paid_amount}")
                     if paid_amount > 0:
-                        # Create transaction directly without calling instant_pay
-                        from transactions.models import Transaction
-                        transaction_obj = Transaction.create_for_purchase_payment(
-                            purchase=purchase,
+                        # Apply the payment
+                        try:
+                            purchase.make_payment(
+                                amount=paid_amount,
+                                payment_method=payment_method,
+                                account=account,
+                                description=f"Instant payment for purchase {purchase.invoice_no}"
+                            )
+                            logger.info(f"SUCCESS: Instant payment of {paid_amount} applied")
+                        except Exception as e:
+                            logger.error(f"ERROR: Failed to apply instant payment: {str(e)}")
+                    elif purchase.due_amount > 0:
+                        # Pay the full due amount
+                        try:
+                            purchase.make_payment(
+                                amount=purchase.due_amount,
+                                payment_method=payment_method,
+                                account=account,
+                                description=f"Full payment for purchase {purchase.invoice_no}"
+                            )
+                            logger.info(f"SUCCESS: Full payment of {purchase.due_amount} applied")
+                        except Exception as e:
+                            logger.error(f"ERROR: Failed to apply full payment: {str(e)}")
+                elif paid_amount > 0 and account and payment_method:
+                    # If not instant_pay but paid_amount provided, create payment
+                    try:
+                        purchase.make_payment(
                             amount=paid_amount,
                             payment_method=payment_method,
                             account=account,
-                            created_by=request.user
+                            description=f"Partial payment for purchase {purchase.invoice_no}"
                         )
-                        if transaction_obj:
-                            logger.info(f"SUCCESS: Instant payment transaction created: {transaction_obj.transaction_no}")
-                    elif purchase.due_amount > 0:
-                        # Use the original instant_pay method without paid_amount
-                        logger.info(f"INFO: Processing instant payment for due_amount: {purchase.due_amount}")
-                        purchase.instant_pay(payment_method, account)
-                elif paid_amount > 0 and account and payment_method:
-                    # If not instant_pay but paid_amount provided, create single transaction
-                    from transactions.models import Transaction
-                    transaction_obj = Transaction.create_for_purchase_payment(
-                        purchase=purchase,
-                        amount=paid_amount,
-                        payment_method=payment_method,
-                        account=account,
-                        created_by=request.user
-                    )
-                    if transaction_obj:
-                        logger.info(f"SUCCESS: Payment transaction created: {transaction_obj.transaction_no}")
+                        logger.info(f"SUCCESS: Payment of {paid_amount} applied")
+                    except Exception as e:
+                        logger.error(f"ERROR: Failed to apply payment: {str(e)}")
 
-                # Update supplier totals
+                # Update supplier totals if supplier exists
                 if purchase.supplier:
-                    logger.info(f"UPDATING: Updating supplier totals for {purchase.supplier.name}")
-                    purchase.supplier.update_purchase_totals()
+                    try:
+                        logger.info(f"INFO: Updating supplier totals for {purchase.supplier.name}")
+                        # Ensure supplier has update_purchase_totals method
+                        if hasattr(purchase.supplier, 'update_purchase_totals'):
+                            purchase.supplier.update_purchase_totals()
+                    except Exception as e:
+                        logger.error(f"ERROR: Failed to update supplier totals: {str(e)}")
 
             logger.info(f"SUCCESS: Purchase creation completed successfully. ID: {purchase.id}, Invoice: {purchase.invoice_no}")
             return purchase
             
+        except serializers.ValidationError as e:
+            # Re-raise validation errors
+            raise e
         except Exception as e:
             logger.exception("ERROR: Exception in PurchaseSerializer.create")
+            # Use plain text error message without special characters
             raise serializers.ValidationError({
                 "error": f"Failed to create purchase: {str(e)}"
             })
-
 
     def update(self, instance, validated_data):
         items_data = validated_data.pop('purchase_items', None)
@@ -298,13 +336,23 @@ class PurchaseSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         
         # Ensure we have the latest data by refreshing from DB
-        instance.refresh_from_db()
+        try:
+            instance.refresh_from_db()
+        except:
+            pass
         
         # Force update totals to ensure calculations are current
-        instance.update_totals(force_update=True)
+        try:
+            instance.update_totals(force_update=True)
+        except Exception as e:
+            logger.error(f"ERROR: Failed to update totals in to_representation: {str(e)}")
         
         # Add payment breakdown with fresh data
-        representation['payment_breakdown'] = instance.get_payment_breakdown()
+        try:
+            representation['payment_breakdown'] = instance.get_payment_breakdown()
+        except Exception as e:
+            logger.error(f"ERROR: Failed to get payment breakdown: {str(e)}")
+            representation['payment_breakdown'] = {}
         
         # Ensure all calculated fields are included
         representation['grand_total'] = float(instance.grand_total)

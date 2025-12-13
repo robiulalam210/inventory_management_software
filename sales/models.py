@@ -90,18 +90,18 @@ class Sale(models.Model):
                 except Sale.DoesNotExist:
                     pass
             
-            # ✅ FIXED: Auto-assign company from created_by user if not set
+            # SUCCESS: FIXED: Auto-assign company from created_by user if not set
             if not self.company and hasattr(self, 'created_by') and self.created_by:
                 if hasattr(self.created_by, 'company') and self.created_by.company:
                     self.company = self.created_by.company
                     logger.info(f"Auto-assigned company from user: {self.company}")
             
-            # ✅ FIXED: CRITICAL - Ensure company is set before any operations
+            # SUCCESS: FIXED: CRITICAL - Ensure company is set before any operations
             if not self.company:
                 logger.error("Sale cannot be saved without a company")
                 raise ValidationError("Sale must be associated with a company.")
             
-            # ✅ FIXED: Validate customer belongs to same company
+            # SUCCESS: FIXED: Validate customer belongs to same company
             if self.customer and self.customer.company != self.company:
                 logger.warning(f"Customer company mismatch. Customer: {self.customer.company}, Sale: {self.company}")
                 # Reset customer if company doesn't match
@@ -117,7 +117,7 @@ class Sale(models.Model):
                 if not self.customer_name or self.customer_name == 'Walk-in Customer':
                     self.customer_name = 'Walk-in Customer'
             
-            # ✅ FIXED: Validate saved customer belongs to same company
+            # SUCCESS: FIXED: Validate saved customer belongs to same company
             if self.customer_type == 'saved_customer' and self.customer:
                 if self.customer.company != self.company:
                     raise ValidationError({
@@ -137,7 +137,7 @@ class Sale(models.Model):
             if self.paid_amount > 0 and not self.account:
                 self._set_default_account()
             
-            # ✅ FIXED: Validate account belongs to same company
+            # SUCCESS: FIXED: Validate account belongs to same company
             if self.account and self.account.company != self.company:
                 logger.warning(f"Account company mismatch. Resetting account.")
                 self.account = None
@@ -148,7 +148,7 @@ class Sale(models.Model):
             # Update totals after saving
             self.update_totals()
             
-            # ✅ FIXED: Create transaction ONLY if no money receipt will be created
+            # SUCCESS: FIXED: Create transaction ONLY if no money receipt will be created
             payment_increased = not is_new and self.paid_amount > old_paid_amount
             
             if (is_new or payment_increased) and self.paid_amount > 0:
@@ -172,7 +172,7 @@ class Sale(models.Model):
             return f"SL-{int(timezone.now().timestamp())}"
             
         try:
-            # ✅ FIXED: Get last sale by invoice_no, not by id
+            # SUCCESS: FIXED: Get last sale by invoice_no, not by id
             last_sale = Sale.objects.filter(
                 company=self.company,
                 invoice_no__isnull=False,
@@ -397,7 +397,7 @@ class Sale(models.Model):
             paid = self._safe_decimal(self.paid_amount)
             payable = self._safe_decimal(self.payable_amount)
             
-            # ✅ FIXED: Ensure payable is never negative
+            # SUCCESS: FIXED: Ensure payable is never negative
             if payable < Decimal('0.00'):
                 payable = Decimal('0.00')
             
@@ -422,7 +422,7 @@ class Sale(models.Model):
         try:
             from money_receipts.models import MoneyReceipt
             
-            # ✅ FIXED: For walk-in customers, don't set customer in money receipt
+            # SUCCESS: FIXED: For walk-in customers, don't set customer in money receipt
             money_receipt_customer = self.customer
             if self.customer_type == 'walk_in':
                 money_receipt_customer = None
@@ -594,7 +594,7 @@ class SaleItem(models.Model):
                     f"Not enough stock for {self.product.name}. Available: {self.product.stock_qty}, Requested: {self.quantity}"
                 )
         
-        # ✅ FIXED: Store old quantity for stock adjustment
+        # SUCCESS: FIXED: Store old quantity for stock adjustment
         old_qty = 0
         if not is_new:
             try:
@@ -605,7 +605,7 @@ class SaleItem(models.Model):
         
         super().save(*args, **kwargs)
 
-        # ✅ FIXED: Update product stock properly
+        # SUCCESS: FIXED: Update product stock properly
         try:
             product = self.product
             if is_new:
@@ -620,7 +620,7 @@ class SaleItem(models.Model):
         except Exception as e:
             logger.error(f"Error updating product stock: {e}")
         
-        # ✅ FIXED: Update sale totals
+        # SUCCESS: FIXED: Update sale totals
         try:
             self.sale.update_totals()
         except Exception as e:

@@ -22,13 +22,13 @@ class Command(BaseCommand):
                 # Use direct SQL to avoid model save methods and constraints
                 self.fix_with_sql()
                 
-            self.stdout.write(self.style.SUCCESS("✅ All serial numbers reset successfully!"))
+            self.stdout.write(self.style.SUCCESS("SUCCESS: All serial numbers reset successfully!"))
             
             # Verify the results
             self.verify_serial_numbers()
             
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Error: {str(e)}"))
+            self.stdout.write(self.style.ERROR(f"ERROR:Error: {str(e)}"))
             logger.error(f"Error resetting serial numbers: {str(e)}")
     
     def fix_with_sql(self):

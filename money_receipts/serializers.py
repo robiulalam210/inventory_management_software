@@ -76,7 +76,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
         amount = attrs.get('amount')
         customer = attrs.get('customer')
         sale = attrs.get('sale')
-        account = attrs.get('account')  # ✅ FIXED: Changed from 'attts' to 'attrs'
+        account = attrs.get('account')  # SUCCESS: FIXED: Changed from 'attts' to 'attrs'
         is_advance_payment = attrs.get('is_advance_payment', False)
         payment_type = attrs.get('payment_type', 'overall')
 
@@ -86,7 +86,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
                 "amount": "Payment amount must be greater than 0."
             })
 
-        # ✅ FIXED: Validate company consistency
+        # SUCCESS: FIXED: Validate company consistency
         if company:
             if customer and customer.company != company:
                 raise serializers.ValidationError({
@@ -128,7 +128,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
         if not request or not hasattr(request.user, 'company'):
             raise serializers.ValidationError("User must be associated with a company.")
         
-        # ✅ FIXED: Ensure company is set from request user
+        # SUCCESS: FIXED: Ensure company is set from request user
         validated_data['company'] = request.user.company
         
         # Set seller and created_by from request user
@@ -141,7 +141,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
         if 'payment_method' not in validated_data or not validated_data['payment_method']:
             validated_data['payment_method'] = 'cash'
         
-        # ✅ FIXED: Double-check customer company
+        # SUCCESS: FIXED: Double-check customer company
         customer = validated_data.get('customer')
         if customer and customer.company != validated_data['company']:
             raise serializers.ValidationError("Customer company mismatch.")

@@ -43,7 +43,7 @@ class Command(BaseCommand):
             ])
             
             self.stdout.write(
-                self.style.SUCCESS(f"   ✅ Fixed: Purchases=${total_purchases}, Due=${total_due}, Count={purchase_count}")
+                self.style.SUCCESS(f"   SUCCESS: Fixed: Purchases=${total_purchases}, Due=${total_due}, Count={purchase_count}")
             )
         
         self.stdout.write(self.style.SUCCESS("\n🎉 All suppliers fixed successfully!"))

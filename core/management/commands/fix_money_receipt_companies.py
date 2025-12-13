@@ -32,6 +32,6 @@ def fix_money_receipt_companies():
         except Exception as e:
             print(f"Error fixing {receipt.mr_no}: {e}")
     
-    print(f"✅ Fixed {fixed_count} money receipts")
+    print(f"SUCCESS: Fixed {fixed_count} money receipts")
 
 fix_money_receipt_companies()

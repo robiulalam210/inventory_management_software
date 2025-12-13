@@ -125,7 +125,7 @@ class MoneyReceiptCreateAPIView(APIView):
             # Prepare data
             data = request.data.copy()
             
-            # ✅ FIXED: Remove company from data - let serializer handle it
+            # SUCCESS: FIXED: Remove company from data - let serializer handle it
             if 'company' in data:
                 del data['company']
             
@@ -141,7 +141,7 @@ class MoneyReceiptCreateAPIView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            # ✅ FIXED: Pass request context to serializer
+            # SUCCESS: FIXED: Pass request context to serializer
             serializer = MoneyReceiptSerializer(data=data, context={'request': request})
             
             if serializer.is_valid():

@@ -151,7 +151,7 @@ class SupplierPaymentListCreateAPIView(APIView):
             if not serializer.is_valid():
                 logger.warning(f"Serializer validation errors: {serializer.errors}")
                 
-                # ✅ PROPER ERROR MESSAGE FORMATTING
+                # SUCCESS: PROPER ERROR MESSAGE FORMATTING
                 error_message = self._format_validation_errors(serializer.errors)
                 
                 return custom_response(
@@ -161,7 +161,7 @@ class SupplierPaymentListCreateAPIView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            # ✅ MANUALLY VALIDATE MODEL CONSTRAINTS
+            # SUCCESS: MANUALLY VALIDATE MODEL CONSTRAINTS
             try:
                 # Create instance for validation
                 payment_instance = SupplierPayment(**serializer.validated_data)
@@ -174,7 +174,7 @@ class SupplierPaymentListCreateAPIView(APIView):
             except ValidationError as e:
                 logger.warning(f"Model validation error: {e.message_dict}")
                 
-                # ✅ FORMAT MODEL VALIDATION ERRORS
+                # SUCCESS: FORMAT MODEL VALIDATION ERRORS
                 model_error_message = self._format_validation_errors(e.message_dict)
                 
                 return custom_response(
@@ -184,14 +184,14 @@ class SupplierPaymentListCreateAPIView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            # ✅ SAVE THE PAYMENT
+            # SUCCESS: SAVE THE PAYMENT
             try:
                 payment = serializer.save(
                     company=request.user.company,
                     created_by=request.user
                 )
                 
-                logger.info(f"✅ Supplier payment created successfully: {payment.sp_no}")
+                logger.info(f"SUCCESS: Supplier payment created successfully: {payment.sp_no}")
                 logger.info(f"💰 Payment amount: {payment.amount}, Status: {payment.status}")
                 logger.info("=== SUPPLIER PAYMENT CREATION COMPLETE ===")
                 

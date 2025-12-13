@@ -104,7 +104,7 @@ class MoneyReceipt(models.Model):
         try:
             is_new = self.pk is None
 
-            # ✅ FIXED: Auto-assign company from customer or sale if not set
+            # SUCCESS: FIXED: Auto-assign company from customer or sale if not set
             if not self.company:
                 if self.customer:
                     self.company = self.customer.company
@@ -127,7 +127,7 @@ class MoneyReceipt(models.Model):
                 # Ensure customer is set from sale and validate company
                 if not self.customer and self.sale.customer:
                     self.customer = self.sale.customer
-                    # ✅ FIXED: Ensure customer company matches
+                    # SUCCESS: FIXED: Ensure customer company matches
                     if self.customer.company != self.company:
                         logger.warning(f"Customer company mismatch. Resetting customer.")
                         self.customer = None
@@ -135,7 +135,7 @@ class MoneyReceipt(models.Model):
                 self.payment_type = 'overall'
                 self.specific_invoice = False
 
-            # ✅ FIXED: Validate company consistency before clean
+            # SUCCESS: FIXED: Validate company consistency before clean
             if self.customer and self.customer.company != self.company:
                 raise ValidationError("Customer must belong to the same company")
             
@@ -173,9 +173,9 @@ class MoneyReceipt(models.Model):
             return f"MR-{timestamp}"
             
         try:
-            # ✅ FIXED: Get last receipt FOR THIS COMPANY ONLY
+            # SUCCESS: FIXED: Get last receipt FOR THIS COMPANY ONLY
             last_receipt = MoneyReceipt.objects.filter(
-                company=self.company,  # ✅ Only this company's receipts
+                company=self.company,  # SUCCESS: Only this company's receipts
                 mr_no__isnull=False,
                 mr_no__startswith='MR-'
             ).order_by('-mr_no').first()

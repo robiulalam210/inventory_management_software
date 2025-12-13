@@ -17,13 +17,13 @@ class SupplierSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'email', 'phone', 'address', 'is_active', 'supplier_no',
             'total_due', 'total_paid', 'total_purchases', 'purchase_count',
-            'advance_balance',  # ✅ ADD THIS LINE - CRITICAL FIX
+            'advance_balance',  # SUCCESS: ADD THIS LINE - CRITICAL FIX
             'amount_type', 'company', 'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'company', 'created_by', 'supplier_no', 'created_at', 'updated_at',
             'total_due', 'total_paid', 'total_purchases', 'purchase_count',
-            'advance_balance'  # ✅ ADD THIS LINE
+            'advance_balance'  # SUCCESS: ADD THIS LINE
         ]
 
     def get_amount_type(self, obj):
@@ -31,7 +31,7 @@ class SupplierSerializer(serializers.ModelSerializer):
         if obj.total_due > 0:
             return "Due"
         elif obj.advance_balance > 0:
-            return "Advance"  # ✅ NEW: Show "Advance" when there's advance balance
+            return "Advance"  # SUCCESS: NEW: Show "Advance" when there's advance balance
         else:
             return "Paid"
 
@@ -44,7 +44,7 @@ class SupplierListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'supplier_no', 'name', 'phone', 'address', 'is_active',
             'total_purchases', 'total_paid', 'total_due', 'purchase_count', 
-            'advance_balance',  # ✅ ADD THIS LINE
+            'advance_balance',  # SUCCESS: ADD THIS LINE
             'amount_type'
         ]
 
@@ -53,7 +53,7 @@ class SupplierListSerializer(serializers.ModelSerializer):
         if obj.total_due > 0:
             return "Due"
         elif obj.advance_balance > 0:
-            return "Advance"  # ✅ NEW
+            return "Advance"  # SUCCESS: NEW
         else:
             return "Paid"
 

@@ -1,3 +1,4 @@
+# branch_warehouse/models.py
 from django.db import models
 from django.db.models import Sum, F, Q
 from django.conf import settings
@@ -681,7 +682,7 @@ class PurchaseItem(models.Model):
             return Decimal('0.00')
 
     def save(self, *args, **kwargs):
-        """Custom save with stock management - FIXED VERSION"""
+        """Custom save with stock management"""
         is_new = self.pk is None
         old_qty = 0
         
@@ -705,7 +706,6 @@ class PurchaseItem(models.Model):
                     stock_change = self.qty - old_qty
                     product.stock_qty += stock_change
                 
-                # FIXED: Save without specifying update_fields to avoid field name issues
                 product.save()
                 
                 if not hasattr(self.purchase, '_updating_totals'):
@@ -716,13 +716,12 @@ class PurchaseItem(models.Model):
             raise
 
     def delete(self, *args, **kwargs):
-        """Custom delete with stock management - FIXED VERSION"""
+        """Custom delete with stock management"""
         purchase = self.purchase
         product = self.product
         
         try:
             product.stock_qty -= self.qty
-            # FIXED: Save without specifying update_fields
             product.save()
             
             super().delete(*args, **kwargs)
@@ -747,25 +746,3 @@ class PurchaseItem(models.Model):
             'batch_no': self.batch_no,
             'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
         }
-
-
-# Signal handlers
-from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
-
-@receiver(post_save, sender=PurchaseItem)
-def purchase_item_post_save(sender, instance, created, **kwargs):
-    """Signal to update purchase totals after item save"""
-    try:
-        if not created:
-            instance.purchase.update_totals()
-    except Exception as e:
-        logger.error(f"ERROR: Error updating purchase totals after item save: {e}")
-
-@receiver(post_delete, sender=PurchaseItem)
-def purchase_item_post_delete(sender, instance, **kwargs):
-    """Signal to update purchase totals after item delete"""
-    try:
-        instance.purchase.update_totals()
-    except Exception as e:
-        logger.error(f"ERROR: Error updating purchase totals after item delete: {e}")

@@ -22,9 +22,9 @@ class Command(BaseCommand):
                         setattr(item, field, Decimal('0.00'))
                 
                 item.save()
-                self.stdout.write(f'✅ Fixed sale item {item.id}')
+                self.stdout.write(f'SUCCESS: Fixed sale item {item.id}')
             except Exception as e:
-                self.stdout.write(f'❌ Error fixing sale item {item.id}: {e}')
+                self.stdout.write(f'ERROR:Error fixing sale item {item.id}: {e}')
         
         # Fix Sales
         sales = Sale.objects.all()
@@ -47,9 +47,9 @@ class Command(BaseCommand):
                 
                 # Save to trigger update_totals
                 sale.save()
-                self.stdout.write(f'✅ Fixed sale {sale.invoice_no}')
+                self.stdout.write(f'SUCCESS: Fixed sale {sale.invoice_no}')
                 
             except Exception as e:
-                self.stdout.write(f'❌ Error fixing sale {sale.invoice_no}: {e}')
+                self.stdout.write(f'ERROR:Error fixing sale {sale.invoice_no}: {e}')
         
         self.stdout.write('🎉 All sales data fixed!')

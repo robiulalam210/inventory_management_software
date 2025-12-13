@@ -62,7 +62,7 @@ class SaleSerializer(serializers.ModelSerializer):
     sale_date = serializers.DateTimeField(read_only=True)
     grand_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     
-    # ✅ FIXED: Make paid_amount writable
+    # SUCCESS: FIXED: Make paid_amount writable
     paid_amount = serializers.DecimalField(
         max_digits=12, 
         decimal_places=2, 
@@ -108,7 +108,7 @@ class SaleSerializer(serializers.ModelSerializer):
         if customer_type == 'saved_customer' and not attrs.get('customer'):
             raise serializers.ValidationError({'customer': 'Saved customer must have a record.'})
 
-        # ✅ FIXED: Validate payment details when payment is made
+        # SUCCESS: FIXED: Validate payment details when payment is made
         if paid_amount and paid_amount > 0:
             if not payment_method:
                 raise serializers.ValidationError({
@@ -125,7 +125,7 @@ class SaleSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items', [])
         sale_by_data = validated_data.pop('sale_by', None)
         
-        # ✅ FIXED: Extract paid_amount before creating sale
+        # SUCCESS: FIXED: Extract paid_amount before creating sale
         paid_amount = validated_data.get('paid_amount', 0)
 
         request = self.context.get('request')
@@ -139,7 +139,7 @@ class SaleSerializer(serializers.ModelSerializer):
             validated_data['customer'] = None
             validated_data.setdefault('customer_name', "Walk-in Customer")
 
-        # ✅ FIXED: Handle charge fields properly
+        # SUCCESS: FIXED: Handle charge fields properly
         charge_fields_mapping = {
             'vat': 'overall_vat_amount',
             'service_charge': 'overall_service_charge', 
@@ -151,7 +151,7 @@ class SaleSerializer(serializers.ModelSerializer):
                 validated_data[target_field] = validated_data.pop(source_field)
 
         with transaction.atomic():
-            # ✅ FIXED: Create sale with paid_amount
+            # SUCCESS: FIXED: Create sale with paid_amount
             sale = Sale.objects.create(**validated_data)
 
             # Create sale items
@@ -167,10 +167,10 @@ class SaleSerializer(serializers.ModelSerializer):
             ]
             SaleItem.objects.bulk_create(sale_items)
             
-            # ✅ FIXED: Update totals to calculate correct amounts
+            # SUCCESS: FIXED: Update totals to calculate correct amounts
             sale.update_totals()
             
-            # ✅ FIXED: Handle payment and money receipt
+            # SUCCESS: FIXED: Handle payment and money receipt
             account = validated_data.get('account')
             if account and paid_amount > 0:
                 # Update account balance
@@ -190,7 +190,7 @@ class SaleSerializer(serializers.ModelSerializer):
                     if transaction_obj:
                         logger.info(f"💳 Direct transaction created: {transaction_obj.transaction_no}")
 
-            # ✅ FIXED: Refresh sale to get updated totals
+            # SUCCESS: FIXED: Refresh sale to get updated totals
             sale.refresh_from_db()
             
             return sale
@@ -200,7 +200,7 @@ class SaleSerializer(serializers.ModelSerializer):
         rep['items'] = SaleItemSerializer(instance.items.all(), many=True).data
         rep['customer_name'] = instance.customer.name if instance.customer else "Walk-in Customer"
         
-        # ✅ FIXED: Ensure correct payment amounts are shown
+        # SUCCESS: FIXED: Ensure correct payment amounts are shown
         rep['paid_amount'] = float(instance.paid_amount)
         rep['due_amount'] = float(instance.due_amount)
         rep['change_amount'] = float(instance.change_amount)
