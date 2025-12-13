@@ -1,3 +1,4 @@
+# accounts/views.py
 from rest_framework import status, serializers
 from rest_framework.decorators import action
 from django.db.models import Q, Sum, Count, DecimalField
@@ -7,16 +8,10 @@ from core.utils import custom_response
 from .models import Account
 from .serializers import AccountSerializer
 import logging
-from rest_framework import viewsets, status, serializers, filters
-from rest_framework.decorators import action
+from rest_framework import viewsets, filters
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Sum, Count, Case, When, F, DecimalField
-from django.db.models.functions import Coalesce
 from decimal import Decimal
-from datetime import datetime
-from django.utils import timezone
-from core.utils import custom_response
 from django.http import Http404
 
 logger = logging.getLogger(__name__)
@@ -26,9 +21,36 @@ class AccountViewSet(BaseInventoryViewSet):
     """CRUD API for accounts with company-based filtering, pagination control, and search."""
     queryset = Account.objects.all()
     serializer_class = AccountSerializer
+    pagination_class = CustomPageNumberPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'number', 'bank_name', 'branch', 'ac_type']
     ordering_fields = ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch']
     ordering = ['-created_at']
+    
+    def get_page_size(self, request):
+        """Get page size from request or use default"""
+        page_size = request.query_params.get('page_size')
+        if page_size and page_size.isdigit():
+            size = int(page_size)
+            # Limit page size to reasonable values
+            return min(size, 100)  # Max 100 items per page
+        # Return default from pagination class
+        return self.pagination_class.page_size if hasattr(self.pagination_class, 'page_size') else 10
+    
+    def get_paginated_response(self, data):
+        """Override to return custom paginated response"""
+        if self.paginator is None:
+            return Response(data)
+        
+        return Response({
+            'count': self.paginator.page.paginator.count,
+            'total_pages': self.paginator.page.paginator.num_pages,
+            'current_page': self.paginator.page.number,
+            'page_size': self.paginator.page_size,
+            'next': self.paginator.get_next_link(),
+            'previous': self.paginator.get_previous_link(),
+            'results': data
+        })
     
     def get_queryset(self):
         """Apply filters and search to the queryset"""
@@ -82,6 +104,16 @@ class AccountViewSet(BaseInventoryViewSet):
             elif status_filter.lower() == 'inactive':
                 queryset = queryset.filter(is_active=False)
         
+        # Apply is_active filter
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            if isinstance(is_active, str):
+                is_active = is_active.lower()
+                if is_active in ['true', '1', 'yes']:
+                    queryset = queryset.filter(is_active=True)
+                elif is_active in ['false', '0', 'no']:
+                    queryset = queryset.filter(is_active=False)
+        
         # Ordering
         order_by = self.request.query_params.get('order_by', '-created_at')
         if order_by.lstrip('-') in ['name', 'ac_type', 'balance', 'created_at', 'number', 'bank_name', 'branch', 'ac_no']:
@@ -96,10 +128,35 @@ class AccountViewSet(BaseInventoryViewSet):
         Get accounts with pagination control and filtering
         """
         try:
+            # Get query parameters
+            params = dict(request.query_params)
+            logger.debug(f"Account list called with params: {params}")
+            
             # Check if pagination should be disabled
             no_pagination = request.query_params.get('no_pagination', '').lower() in ['true', '1', 'yes']
             
+            # Get filtered queryset
             queryset = self.filter_queryset(self.get_queryset())
+            total_count = queryset.count()
+            logger.debug(f"Filtered queryset count: {total_count}")
+            
+            # Handle empty queryset
+            if total_count == 0:
+                return custom_response(
+                    success=True,
+                    message="No accounts found.",
+                    data={
+                        'results': [],
+                        'count': 0,
+                        'total_pages': 0,
+                        'current_page': 1,
+                        'page_size': 0,
+                        'next': None,
+                        'previous': None,
+                        'pagination': 'disabled' if no_pagination else 'enabled'
+                    },
+                    status_code=status.HTTP_200_OK
+                )
             
             # Handle non-paginated response
             if no_pagination:
@@ -108,55 +165,81 @@ class AccountViewSet(BaseInventoryViewSet):
                 
                 return custom_response(
                     success=True,
-                    message=f"Accounts fetched successfully (no pagination). Total: {queryset.count()}",
+                    message=f"Accounts fetched successfully (no pagination). Total: {total_count}",
                     data={
                         'results': data,
-                        'count': queryset.count(),
+                        'count': total_count,
+                        'total_pages': 1,
+                        'current_page': 1,
+                        'page_size': total_count,
+                        'next': None,
+                        'previous': None,
                         'pagination': 'disabled'
                     },
                     status_code=status.HTTP_200_OK
                 )
             
-            # Apply pagination
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
+            # Apply pagination (when no_pagination=false or not specified)
+            # Configure paginator
+            page_size = self.get_page_size(request)
+            
+            # Create a new paginator instance with the requested page size
+            paginator = CustomPageNumberPagination()
+            paginator.page_size = page_size
+            
+            # Get the requested page
+            page_number = request.query_params.get('page', 1)
+            if isinstance(page_number, str) and page_number.isdigit():
+                page_number = int(page_number)
+            
+            # Paginate the queryset
+            paginated_queryset = paginator.paginate_queryset(queryset, request)
+            
+            if paginated_queryset is not None:
+                serializer = self.get_serializer(paginated_queryset, many=True)
                 data = self._process_account_data(serializer.data)
                 
-                # Get the paginated response
-                paginated_response = self.get_paginated_response(data)
-                response_data = paginated_response.data
+                # Get pagination info
+                current_page = paginator.page.number
+                total_pages = paginator.page.paginator.num_pages
+                page_size = paginator.page_size
+                
+                # Build response data
+                response_data = {
+                    'results': data,
+                    'count': total_count,
+                    'total_pages': total_pages,
+                    'current_page': current_page,
+                    'page_size': page_size,
+                    'next': paginator.get_next_link(),
+                    'previous': paginator.get_previous_link(),
+                    'pagination': 'enabled'
+                }
                 
                 return custom_response(
                     success=True,
-                    message=f"Accounts fetched successfully. Total: {response_data.get('count', 0)}",
-                    data={
-                        'results': response_data.get('results', []),
-                        'count': response_data.get('count', 0),
-                        'total_pages': response_data.get('total_pages', 1),
-                        'current_page': response_data.get('current_page', 1),
-                        'page_size': response_data.get('page_size', 10),
-                        'next': response_data.get('next'),
-                        'previous': response_data.get('previous'),
-                    },
+                    message=f"Accounts fetched successfully. Showing page {current_page} of {total_pages}. Total: {total_count}",
+                    data=data,
                     status_code=status.HTTP_200_OK
                 )
             
-            # Fallback if pagination is not active
+            # If pagination fails for some reason, fall back to non-paginated
+            logger.warning("Pagination failed, falling back to non-paginated response")
             serializer = self.get_serializer(queryset, many=True)
             data = self._process_account_data(serializer.data)
             
             return custom_response(
                 success=True,
-                message="Account list fetched successfully.",
+                message=f"Accounts fetched successfully (pagination failed). Total: {total_count}",
                 data={
                     'results': data,
-                    'count': len(data),
+                    'count': total_count,
                     'total_pages': 1,
                     'current_page': 1,
-                    'page_size': len(data),
+                    'page_size': total_count,
                     'next': None,
                     'previous': None,
+                    'pagination': 'failed'
                 },
                 status_code=status.HTTP_200_OK
             )
@@ -166,24 +249,36 @@ class AccountViewSet(BaseInventoryViewSet):
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
     def _process_account_data(self, data):
         """Process account data to ensure consistent format"""
+        if not data:
+            return data
+            
         for item in data:
             # Ensure number is None if blank or empty string
             if item.get('ac_number') in ('', None):
                 item['ac_number'] = None
             
+            # Add number field from ac_number for consistency
+            item['number'] = item.get('ac_number')
+            
             # Ensure balance is float
             if 'balance' in item and item['balance'] is not None:
-                item['balance'] = float(item['balance'])
+                try:
+                    item['balance'] = float(item['balance'])
+                except (ValueError, TypeError):
+                    item['balance'] = 0.0
                 
             # Ensure opening_balance is float
             if 'opening_balance' in item and item['opening_balance'] is not None:
-                item['opening_balance'] = float(item['opening_balance'])
+                try:
+                    item['opening_balance'] = float(item['opening_balance'])
+                except (ValueError, TypeError):
+                    item['opening_balance'] = 0.0
                 
             # Ensure bank_name and branch are None if empty
             if item.get('bank_name') in ('', None):
@@ -211,12 +306,20 @@ class AccountViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_200_OK
             )
             
+        except Http404:
+            logger.warning(f"Account not found: {kwargs.get('pk')}")
+            return custom_response(
+                success=False,
+                message="Account not found.",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.error(f"Error fetching account details: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -226,6 +329,7 @@ class AccountViewSet(BaseInventoryViewSet):
             serializer.is_valid(raise_exception=True)
             account = serializer.save()
             
+            logger.info(f"Account created successfully: {account.id} - {account.name}")
             
             # Get the serialized data
             response_serializer = self.get_serializer(account)
@@ -251,7 +355,7 @@ class AccountViewSet(BaseInventoryViewSet):
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
   
@@ -266,6 +370,8 @@ class AccountViewSet(BaseInventoryViewSet):
             
             # Update the instance
             serializer.save()
+            
+            logger.info(f"Account updated successfully: {instance.id}")
             
             # Return updated data
             updated_serializer = self.get_serializer(instance)
@@ -299,7 +405,7 @@ class AccountViewSet(BaseInventoryViewSet):
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -314,6 +420,8 @@ class AccountViewSet(BaseInventoryViewSet):
             
             # Update the instance
             serializer.save()
+            
+            logger.info(f"Account partially updated: {instance.id}")
             
             # Return updated data
             updated_serializer = self.get_serializer(instance)
@@ -347,7 +455,7 @@ class AccountViewSet(BaseInventoryViewSet):
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -361,18 +469,27 @@ class AccountViewSet(BaseInventoryViewSet):
             
             status_text = "activated" if instance.is_active else "deactivated"
             
+            logger.info(f"Account {instance.id} {status_text}")
+            
             return custom_response(
                 success=True,
                 message=f"Account {status_text} successfully.",
                 data={'id': instance.id, 'is_active': instance.is_active},
                 status_code=status.HTTP_200_OK
             )
+        except Http404:
+            return custom_response(
+                success=False,
+                message="Account not found.",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
-            logger.error(f"Error toggling account status: {str(e)}")
+            logger.error(f"Error toggling account status: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -394,11 +511,11 @@ class AccountViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
-            logger.error(f"Error fetching account types: {str(e)}")
+            logger.error(f"Error fetching account types: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -449,6 +566,44 @@ class AccountViewSet(BaseInventoryViewSet):
             return custom_response(
                 success=False,
                 message="Internal server error",
-                data=None,
+                data={'error': str(e)},
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        """Get only active accounts"""
+        try:
+            # Set is_active=true in query params
+            request.GET = request.GET.copy()
+            request.GET['is_active'] = 'true'
+            
+            # Reuse the list method
+            return self.list(request)
+        except Exception as e:
+            logger.error(f"Error fetching active accounts: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data={'error': str(e)},
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def inactive(self, request):
+        """Get only inactive accounts"""
+        try:
+            # Set is_active=false in query params
+            request.GET = request.GET.copy()
+            request.GET['is_active'] = 'false'
+            
+            # Reuse the list method
+            return self.list(request)
+        except Exception as e:
+            logger.error(f"Error fetching inactive accounts: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Internal server error",
+                data={'error': str(e)},
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
