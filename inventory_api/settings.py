@@ -105,28 +105,28 @@ WSGI_APPLICATION = 'inventory_api.wsgi.application'
 # DATABASE CONFIGURATION
 # -----------------------------
 # SQLite (development)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
-
-# If you use MySQL in production, enable utf8mb4 for emojis:
 # DATABASES = {
 #     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'your_db_name',
-#         'USER': 'your_db_user',
-#         'PASSWORD': 'your_db_password',
-#         'HOST': 'localhost',
-#         'PORT': '3306',
-#         'OPTIONS': {
-#             'charset': 'utf8mb4',
-#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-#         },
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
 #     }
 # }
+
+# If you use MySQL in production, enable utf8mb4 for emojis:
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+         'NAME': 'meherinm_meherinm_meherinmart_db',
+        'USER': 'meherinm_robi',
+        'PASSWORD': 'meherinmart@123',
+        'HOST': 'localhost',
+        'PORT': '3306',
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    }
+}
 
 # -----------------------------
 # AUTH
