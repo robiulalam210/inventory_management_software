@@ -101,6 +101,75 @@ class ExpenseCreateSerializer(serializers.ModelSerializer):
             validated_data['created_by'] = request.user
         return super().create(validated_data)
 
+
+
+# class ExpenseUpdateSerializer(serializers.ModelSerializer):
+#     """Serializer specifically for updating expenses"""
+    
+#     class Meta:
+#         model = Expense
+#         fields = [
+#             'head', 'subhead', 'amount', 'payment_method', 'account',
+#             'expense_date', 'note'
+#         ]
+    
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         # Handle 'null' string for subhead field
+#         if 'data' in kwargs and kwargs['data']:
+#             data = kwargs['data']
+#             if isinstance(data, dict) and 'subhead' in data and data['subhead'] == 'null':
+#                 data['subhead'] = None
+    
+#     def validate_subhead(self, value):
+#         """Convert string 'null' to None"""
+#         if value == 'null':
+#             return None
+#         return value
+    
+#     def validate_payment_method(self, value):
+#         """Convert payment method to lowercase to match choices"""
+#         if value:
+#             value = value.lower().strip()
+#             valid_choices = ['cash', 'bank', 'mobile', 'card', 'other']
+#             if value not in valid_choices:
+#                 # Try to map common variations
+#                 payment_mapping = {
+#                     'cash': 'cash',
+#                     'Cash': 'cash',
+#                     'CASH': 'cash',
+#                     'bank': 'bank',
+#                     'Bank': 'bank',
+#                     'BANK': 'bank',
+#                     'mobile': 'mobile',
+#                     'Mobile': 'mobile',
+#                     'MOBILE': 'mobile',
+#                     'card': 'card',
+#                     'Card': 'card',
+#                     'CARD': 'card',
+#                     'other': 'other',
+#                     'Other': 'other',
+#                     'OTHER': 'other'
+#                 }
+#                 if value in payment_mapping:
+#                     return payment_mapping[value]
+#                 else:
+#                     raise serializers.ValidationError(
+#                         f"'{value}' is not a valid choice. Must be one of: {', '.join(valid_choices)}"
+#                     )
+#         return value
+    
+#     def validate(self, data):
+#         # Validate that account has sufficient balance
+#         account = data.get('account')
+#         amount = data.get('amount')
+        
+#         if account and amount and amount > account.balance:
+#             raise serializers.ValidationError({
+#                 'amount': f'Insufficient balance in account. Available: {account.balance}'
+#             })
+        
+#         return data
 class ExpenseUpdateSerializer(serializers.ModelSerializer):
     """Serializer specifically for updating expenses"""
     
@@ -111,46 +180,57 @@ class ExpenseUpdateSerializer(serializers.ModelSerializer):
             'expense_date', 'note'
         ]
     
-    def validate_payment_method(self, value):
-        """Convert payment method to lowercase to match choices"""
-        if value:
-            value = value.lower().strip()
-            valid_choices = ['cash', 'bank', 'mobile', 'card', 'other']
-            if value not in valid_choices:
-                # Try to map common variations
-                payment_mapping = {
-                    'cash': 'cash',
-                    'Cash': 'cash',
-                    'CASH': 'cash',
-                    'bank': 'bank',
-                    'Bank': 'bank',
-                    'BANK': 'bank',
-                    'mobile': 'mobile',
-                    'Mobile': 'mobile',
-                    'MOBILE': 'mobile',
-                    'card': 'card',
-                    'Card': 'card',
-                    'CARD': 'card',
-                    'other': 'other',
-                    'Other': 'other',
-                    'OTHER': 'other'
-                }
-                if value in payment_mapping:
-                    return payment_mapping[value]
-                else:
-                    raise serializers.ValidationError(
-                        f"'{value}' is not a valid choice. Must be one of: {', '.join(valid_choices)}"
-                    )
-        return value
+    def to_internal_value(self, data):
+        """Convert incoming data to internal values"""
+        # Make a mutable copy
+        data = data.copy()
+        
+        # Handle 'null' strings
+        if 'subhead' in data and data['subhead'] == 'null':
+            data['subhead'] = None
+        if 'account' in data and data['account'] == 'null':
+            data['account'] = None
+            
+        return super().to_internal_value(data)
     
     def validate(self, data):
-        # Validate that account has sufficient balance
-        account = data.get('account')
-        amount = data.get('amount')
+        """Validate expense data for updates"""
+        instance = getattr(self, 'instance', None)
+        request = self.context.get('request')
         
-        if account and amount and amount > account.balance:
-            raise serializers.ValidationError({
-                'amount': f'Insufficient balance in account. Available: {account.balance}'
-            })
+        if not instance:
+            return data
+        
+        # Check if account balance validation is needed
+        account = data.get('account')
+        new_amount = data.get('amount')
+        
+        # If both account and amount are being updated
+        if account is not None and new_amount is not None:
+            # For account updates, we need to validate against the NEW account
+            if account != instance.account:
+                # Check if new account has enough balance for the full new amount
+                if new_amount > account.balance:
+                    raise serializers.ValidationError({
+                        'amount': f'Insufficient balance in selected account. Available: {account.balance}'
+                    })
+            else:
+                # Same account, check if amount increased
+                if new_amount > instance.amount:
+                    increase = new_amount - instance.amount
+                    if increase > account.balance:
+                        raise serializers.ValidationError({
+                            'amount': f'Insufficient balance for amount increase. Available: {account.balance}, Increase needed: {increase}'
+                        })
+        
+        # If only amount is being updated (account unchanged)
+        elif new_amount is not None and instance.account:
+            if new_amount > instance.amount:
+                increase = new_amount - instance.amount
+                if increase > instance.account.balance:
+                    raise serializers.ValidationError({
+                        'amount': f'Insufficient balance for amount increase. Available: {instance.account.balance}, Increase needed: {increase}'
+                    })
         
         return data
+    

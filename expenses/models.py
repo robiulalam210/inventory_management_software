@@ -1,5 +1,4 @@
-# expenses/models.py
-from django.db import models
+from django.db import models, transaction as db_transaction
 from django.conf import settings
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -98,39 +97,21 @@ class Expense(models.Model):
         if self.account and self.amount > self.account.balance:
             raise ValidationError(f"Insufficient balance in account. Available: {self.account.balance}")
 
-    # def save(self, *args, **kwargs):
-    #     is_new = self.pk is None
-        
-    #     # Generate invoice number if new and not provided
-    #     if is_new and not self.invoice_number:
-    #         self.invoice_number = self.generate_invoice_number()
-        
-    #     # Validate before saving
-    #     self.clean()
-        
-    #     # Save the expense
-    #     super().save(*args, **kwargs)
-        
-    #     # Update account balance and create transaction for new expenses
-    #     if is_new and self.account:
-    #         logger.info(f"🔄 Creating transaction for new expense {self.invoice_number}")
-    #         try:
-    #             self.update_account_balance()
-    #             transaction = self.create_expense_transaction()
-    #             if transaction:
-    #                 logger.info(f"SUCCESS: Transaction created successfully: {transaction.id}")
-    #             else:
-    #                 logger.error(f"ERROR:Transaction creation returned None for expense {self.invoice_number}")
-    #         except Exception as e:
-    #             logger.error(f"ERROR:Error in transaction creation process: {str(e)}")
-    #             logger.error(f"ERROR:Traceback: {traceback.format_exc()}")
-    #     else:
-    #         if not is_new:
-    #             logger.info(f"ℹ️ Expense update - no transaction created for {self.invoice_number}")
-    #         if not self.account:
-    #             logger.warning(f"⚠️ No account specified for expense {self.invoice_number} - skipping transaction")
     def save(self, *args, **kwargs):
+        """Save expense with proper transaction handling for both creation and updates"""
         is_new = self.pk is None
+        old_instance = None
+        old_amount = None
+        old_account = None
+        
+        # If updating, get the old instance data BEFORE saving
+        if not is_new:
+            try:
+                old_instance = Expense.objects.get(pk=self.pk)
+                old_amount = old_instance.amount
+                old_account = old_instance.account
+            except Expense.DoesNotExist:
+                old_instance = None
         
         # Generate invoice number if new and not provided
         if is_new and not self.invoice_number:
@@ -142,72 +123,114 @@ class Expense(models.Model):
         # Save the expense first
         super().save(*args, **kwargs)
         
-        # For NEW expenses with account: Create transaction ONLY (no direct balance update)
-        if is_new and self.account:
-            logger.info(f"🔄 Processing new expense {self.invoice_number}")
-            try:
-                # ONLY create transaction - DO NOT update balance directly
-                # The transaction's save() method will handle balance update
-                transaction = self.create_expense_transaction()
-                if transaction:
-                    logger.info(f"SUCCESS: Transaction created successfully: {transaction.id}")
-                    # Verify account balance after transaction
-                    self.account.refresh_from_db()
-                    logger.info(f"💰 Account balance after transaction: {self.account.balance}")
+        # Handle transaction logic based on whether it's new or update
+        with db_transaction.atomic():  # Use database transaction for consistency
+            if is_new:
+                # NEW EXPENSE: Create transaction
+                if self.account:
+                    logger.info(f"Processing new expense {self.invoice_number}")
+                    try:
+                        transaction = self.create_expense_transaction()
+                        if transaction:
+                            logger.info(f"SUCCESS: Transaction created: {transaction.id}")
+                            self.account.refresh_from_db()
+                            logger.info(f" Account balance after transaction: {self.account.balance}")
+                        else:
+                            logger.error(f"ERROR: Transaction creation failed for expense {self.invoice_number}")
+                    except Exception as e:
+                        logger.error(f"ERROR: Error in transaction creation: {str(e)}")
+                        logger.error(f"ERROR: Traceback: {traceback.format_exc()}")
                 else:
-                    logger.error(f"ERROR:Transaction creation returned None for expense {self.invoice_number}")
-            except Exception as e:
-                logger.error(f"ERROR:Error in transaction creation process: {str(e)}")
-                logger.error(f"ERROR:Traceback: {traceback.format_exc()}")
-        else:
-            if not is_new:
-                logger.info(f"ℹ️ Expense update - no transaction created for {self.invoice_number}")
-            if not self.account:
-                logger.warning(f"⚠️ No account specified for expense {self.invoice_number} - skipping transaction")
+                    logger.warning(f"No account specified for new expense {self.invoice_number}")
+            
+            else:
+                # UPDATING EXISTING EXPENSE
+                logger.info(f" Processing expense update {self.invoice_number}")
+                
+                # Get existing transaction
+                existing_transaction = self.get_associated_transaction()
+                
+                # Detect what changed
+                amount_changed = old_instance and self.amount != old_amount
+                account_changed = old_instance and self.account != old_account
+                
+                if amount_changed or account_changed:
+                    logger.info(f"  - Amount changed: {amount_changed} ({old_amount} → {self.amount})")
+                    logger.info(f"  - Account changed: {account_changed} ({old_account} → {self.account})")
+                    
+                    # Handle the update by reversing old and creating new
+                    self._handle_expense_update(old_instance, existing_transaction)
+                else:
+                    logger.info(f" No significant changes to amount or account - transaction unchanged")
+                
+    def _handle_expense_update(self, old_instance, existing_transaction):
+        """Handle updates to expense by modifying transactions"""
+        try:
+            from transactions.models import Transaction
+            
+            # If there was an old account and old transaction, reverse it
+            if old_instance and old_instance.account and existing_transaction:
+                logger.info(f"Reversing old transaction {existing_transaction.transaction_no}")
+                
+                # Create a reversal transaction
+                reversal = self._create_reversal_transaction(old_instance)
+                if reversal:
+                    logger.info(f"Reversal created: {reversal.transaction_no}")
+                
+                # Mark old transaction as cancelled
+                existing_transaction.status = 'cancelled'
+                existing_transaction.save(update_fields=['status'])
+                logger.info(f"Old transaction cancelled: {existing_transaction.transaction_no}")
+            
+            # If there's a new account (or same account with new amount), create new transaction
+            if self.account:
+                logger.info(f"Creating new transaction for updated expense")
+                new_transaction = self.create_expense_transaction()
+                
+                if new_transaction:
+                    logger.info(f"New transaction created: {new_transaction.transaction_no}")
+                    
+                    # Refresh account balance
+                    self.account.refresh_from_db()
+                    logger.info(f"Updated account balance: {self.account.balance}")
+                else:
+                    logger.error(f"ERROR: Failed to create new transaction for updated expense")
+            else:
+                logger.info(f"No account specified - no new transaction created")
+                
+        except Exception as e:
+            logger.error(f"ERROR: Error handling expense update: {str(e)}")
+            logger.error(f"ERROR: Traceback: {traceback.format_exc()}")
 
-                
-    # def generate_invoice_number(self):
-    #     """Generate unique invoice number: EXP-1001, EXP-1002, etc."""
-    #     if not self.company:
-    #         return f"EXP-{int(timezone.now().timestamp())}"
+    def _create_reversal_transaction(self, old_instance):
+        """Create a reversal transaction for the old expense"""
+        try:
+            from transactions.models import Transaction
             
-    #     try:
-    #         # Get the last invoice number for this company
-    #         last_expense = Expense.objects.filter(
-    #             company=self.company,
-    #             invoice_number__startswith='EXP-'
-    #         ).order_by('-invoice_number').first()
+            # Create a CREDIT transaction to reverse the old DEBIT
+            reversal = Transaction.objects.create(
+                company=old_instance.company,
+                transaction_type='credit',  # CREDIT to reverse DEBIT
+                amount=old_instance.amount,
+                account=old_instance.account,
+                payment_method=old_instance.payment_method,
+                description=f"Reversal - Previous expense: {old_instance.invoice_number}",
+                created_by=old_instance.created_by,
+                status='completed',
+                transaction_date=timezone.now().date(),
+                is_opening_balance=False
+            )
             
-    #         if last_expense and last_expense.invoice_number:
-    #             try:
-    #                 # Extract number from "EXP-1001" format
-    #                 last_number = int(last_expense.invoice_number.split('-')[1])
-    #                 next_number = last_number + 1
-    #             except (ValueError, IndexError):
-    #                 # If parsing fails, count existing expenses
-    #                 existing_count = Expense.objects.filter(company=self.company).count()
-    #                 next_number = 1001 + existing_count
-    #         else:
-    #             # First expense for this company
-    #             existing_count = Expense.objects.filter(company=self.company).count()
-    #             next_number = 1001 + existing_count
+            logger.info(f"Created reversal transaction: {reversal.transaction_no}")
+            logger.info(f"Account {old_instance.account.name} balance increased by {old_instance.amount}")
+            return reversal
             
-    #         invoice_number = f"EXP-{next_number}"
-            
-    #         # Ensure uniqueness
-    #         counter = 1
-    #         while Expense.objects.filter(invoice_number=invoice_number).exists():
-    #             invoice_number = f"EXP-{next_number + counter}"
-    #             counter += 1
-                
-    #         return invoice_number
-            
-    #     except Exception as e:
-    #         logger.error(f"Error generating invoice number: {str(e)}")
-    #         # Fallback: timestamp-based numbering
-    #         return f"EXP-{int(timezone.now().timestamp())}"
+        except Exception as e:
+            logger.error(f"ERROR: Error creating reversal transaction: {e}")
+            return None
+
     def generate_invoice_number(self):
-        """Generate unique invoice number: EXP-1001, EXP-1002, etc. - FIXED"""
+        """Generate unique invoice number: EXP-1001, EXP-1002, etc."""
         if not self.company:
             # Fallback for expenses without company
             return f"EXP-TEMP-{int(timezone.now().timestamp())}"
@@ -249,16 +272,14 @@ class Expense(models.Model):
             return f"EXP-{int(timezone.now().timestamp() * 1000)}"
     
     def create_expense_transaction(self):
-        """Create DEBIT transaction record for this expense - GUARANTEED VERSION"""
+        """Create DEBIT transaction record for this expense"""
         if not self.account:
             logger.warning(f"No account specified for expense {self.invoice_number}")
             return None
 
         try:
             # Import inside method to avoid circular imports
-            logger.info("🔍 Importing Transaction model...")
             from transactions.models import Transaction
-            logger.info("SUCCESS: Transaction model imported successfully")
             
             # Create description
             description_parts = [f"Expense: {self.head.name}"]
@@ -276,84 +297,32 @@ class Expense(models.Model):
             logger.info(f"  - Payment Method: {self.payment_method}")
             logger.info(f"  - Description: {description}")
             
-            # Create transaction data with ALL required fields
-            transaction_data = {
-                'company': self.company,
-                'transaction_type': 'debit',
-                'amount': self.amount,
-                'account': self.account,
-                'payment_method': self.payment_method,
-                'description': description,
-                'reference_no': self.invoice_number,
-                'expense': self,
-                'status': 'completed',
-                'transaction_date': self.expense_date
-            }
+            # Create transaction
+            transaction = Transaction.objects.create(
+                company=self.company,
+                transaction_type='debit',
+                amount=self.amount,
+                account=self.account,
+                payment_method=self.payment_method,
+                description=description,
+                reference_no=self.invoice_number,
+                expense=self,
+                status='completed',
+                transaction_date=self.expense_date,
+                created_by=self.created_by
+            )
             
-            # Add created_by if available
-            if self.created_by:
-                transaction_data['created_by'] = self.created_by
-            
-            logger.info(f"🔍 Final transaction data: {transaction_data}")
-            
-            # CREATE THE TRANSACTION
-            logger.info("🚀 Creating Transaction object...")
-            transaction = Transaction(**transaction_data)
-            
-            # Check if transaction has required fields
-            logger.info(f"🔍 Transaction object created, checking fields...")
-            
-            # Save the transaction
-            transaction.save()
-            logger.info(f"SUCCESS: TRANSACTION SAVED SUCCESSFULLY! ID: {transaction.id}")
-            
-            # Verify the transaction was created
-            if Transaction.objects.filter(id=transaction.id).exists():
-                logger.info(f"SUCCESS: Transaction verified in database: {transaction.id}")
-                
-                # Check if transaction_no exists
-                if hasattr(transaction, 'transaction_no'):
-                    logger.info(f"SUCCESS: Transaction number: {transaction.transaction_no}")
-                else:
-                    logger.info("ℹ️ No transaction_no field found")
-                    
-            else:
-                logger.error("ERROR:Transaction not found in database after save!")
-                
+            logger.info(f"SUCCESS: TRANSACTION CREATED - {transaction.transaction_no}")
             return transaction
             
         except ImportError as e:
-            logger.error(f"ERROR:FAILED TO IMPORT TRANSACTION MODEL: {e}")
-            logger.error("ERROR:Please check:")
-            logger.error("  1. 'transactions' app is in INSTALLED_APPS")
-            logger.error("  2. Transaction model exists in transactions/models.py")
-            logger.error("  3. No circular imports")
+            logger.error(f"ERROR: Failed to import Transaction model: {e}")
             return None
             
         except Exception as e:
-            logger.error(f"ERROR:CRITICAL ERROR CREATING TRANSACTION: {str(e)}")
-            logger.error(f"ERROR:FULL TRACEBACK: {traceback.format_exc()}")
-            
-            # Try alternative approach - create with minimal fields
-            try:
-                logger.info("🔄 Trying alternative transaction creation...")
-                from transactions.models import Transaction
-                
-                # Create with minimal required fields only
-                minimal_transaction = Transaction.objects.create(
-                    company=self.company,
-                    transaction_type='debit',
-                    amount=self.amount,
-                    account=self.account,
-                    description=f"Expense: {self.head.name}",
-                    status='completed'
-                )
-                logger.info(f"SUCCESS: Alternative transaction created: {minimal_transaction.id}")
-                return minimal_transaction
-                
-            except Exception as alt_error:
-                logger.error(f"ERROR:Alternative approach also failed: {alt_error}")
-                return None
+            logger.error(f"ERROR: Error creating transaction: {str(e)}")
+            logger.error(f"ERROR: Traceback: {traceback.format_exc()}")
+            return None
 
     def force_create_transaction(self):
         """Force create a transaction if one doesn't exist"""
@@ -363,14 +332,14 @@ class Expense(models.Model):
             # Check if transaction already exists
             existing_transaction = Transaction.objects.filter(expense=self).first()
             if existing_transaction:
-                logger.info(f"ℹ️ Transaction already exists: {existing_transaction.id}")
+                logger.info(f"Transaction already exists: {existing_transaction.id}")
                 return existing_transaction
             
             # Create new transaction
             return self.create_expense_transaction()
             
         except Exception as e:
-            logger.error(f"ERROR:Error in force_create_transaction: {e}")
+            logger.error(f"ERROR: Error in force_create_transaction: {e}")
             return None
 
     def delete(self, *args, **kwargs):
@@ -381,9 +350,9 @@ class Expense(models.Model):
                 old_balance = self.account.balance
                 self.account.balance += self.amount
                 self.account.save(update_fields=['balance', 'updated_at'])
-                logger.info(f"🔄 Account balance restored after deleting expense {self.invoice_number}: {old_balance} -> {self.account.balance}")
+                logger.info(f"Account balance restored after deleting expense {self.invoice_number}: {old_balance} → {self.account.balance}")
             except Exception as e:
-                logger.error(f"ERROR:Error restoring account balance for deleted expense {self.invoice_number}: {str(e)}")
+                logger.error(f"ERROR: Error restoring account balance for deleted expense {self.invoice_number}: {str(e)}")
         
         # Delete associated transaction if exists
         try:
@@ -392,47 +361,14 @@ class Expense(models.Model):
             transaction_count = transactions.count()
             if transaction_count > 0:
                 transactions.delete()
-                logger.info(f"🗑️ {transaction_count} associated transactions deleted for expense {self.invoice_number}")
+                logger.info(f"{transaction_count} associated transactions deleted for expense {self.invoice_number}")
             else:
-                logger.info(f"ℹ️ No associated transactions found for expense {self.invoice_number}")
+                logger.info(f"No associated transactions found for expense {self.invoice_number}")
         except Exception as e:
-            logger.error(f"ERROR:Error deleting associated transactions: {e}")
+            logger.error(f"ERROR: Error deleting associated transactions: {e}")
         
         # Delete the expense
         super().delete(*args, **kwargs)
-
-    def reverse_expense(self):
-        """Reverse an expense - useful for corrections"""
-        if not self.account:
-            return False
-            
-        try:
-            # Restore account balance - CREDIT to reverse the DEBIT
-            self.account.balance += self.amount
-            self.account.save(update_fields=['balance', 'updated_at'])
-            
-            # Create a reversal transaction (CREDIT to reverse the original DEBIT)
-            from transactions.models import Transaction
-            
-            reversal_transaction = Transaction.objects.create(
-                company=self.company,
-                transaction_type='credit',
-                amount=self.amount,
-                account=self.account,
-                payment_method=self.payment_method,
-                description=f"Reversal of Expense: {self.description}",
-                reference_no=f"REV-{self.invoice_number}",
-                created_by=self.created_by,
-                status='completed',
-                transaction_date=timezone.now().date()
-            )
-            
-            logger.info(f"🔄 Expense reversed via CREDIT transaction: {self.invoice_number}")
-            return reversal_transaction
-            
-        except Exception as e:
-            logger.error(f"ERROR:Error reversing expense {self.invoice_number}: {e}")
-            return False
 
     @property
     def description(self):
@@ -490,72 +426,21 @@ class Expense(models.Model):
         
         return summary
 
-    @classmethod
-    def get_company_expenses(cls, company, start_date=None, end_date=None, head=None):
-        """Get expenses for a company with optional filters"""
-        queryset = cls.objects.filter(company=company)
-        
-        if start_date:
-            queryset = queryset.filter(expense_date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(expense_date__lte=end_date)
-        if head:
-            queryset = queryset.filter(head=head)
-            
-        return queryset.select_related('head', 'subhead', 'account', 'created_by')
-
-    @classmethod
-    def get_company_expenses_summary(cls, company, start_date=None, end_date=None):
-        """Get expenses summary for a company"""
-        queryset = cls.objects.filter(company=company)
-        
-        if start_date:
-            queryset = queryset.filter(expense_date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(expense_date__lte=end_date)
-            
-        return queryset.aggregate(
-            total_expenses=models.Count('id'),
-            total_amount=models.Sum('amount'),
-            average_amount=models.Avg('amount'),
-            min_amount=models.Min('amount'),
-            max_amount=models.Max('amount')
-        )
-
-    @classmethod
-    def get_expenses_by_head(cls, company, start_date=None, end_date=None):
-        """Get expenses grouped by head"""
-        from django.db.models import Sum
-        
-        queryset = cls.objects.filter(company=company)
-        
-        if start_date:
-            queryset = queryset.filter(expense_date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(expense_date__lte=end_date)
-            
-        return queryset.values(
-            'head__name'
-        ).annotate(
-            total_amount=Sum('amount'),
-            expense_count=models.Count('id')
-        ).order_by('-total_amount')
-
     def get_associated_transaction(self):
         """Get the transaction associated with this expense"""
         try:
             from transactions.models import Transaction
             transaction = Transaction.objects.filter(expense=self).first()
             if transaction:
-                logger.info(f"🔍 Found associated transaction: {transaction.id}")
+                logger.info(f"Found associated transaction: {transaction.id}")
             else:
-                logger.info(f"🔍 No associated transaction found for expense {self.id}")
+                logger.info(f"No associated transaction found for expense {self.id}")
             return transaction
         except ImportError:
-            logger.error("ERROR:Cannot import Transaction model")
+            logger.error("ERROR: Cannot import Transaction model")
             return None
         except Exception as e:
-            logger.error(f"ERROR:Error getting associated transaction: {e}")
+            logger.error(f"ERROR: Error getting associated transaction: {e}")
             return None
 
     def has_transaction(self):
@@ -584,7 +469,7 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.SUCCESS(f"SUCCESS: Created transaction {transaction.id}"))
                     expenses_without_transactions.append(expense.invoice_number)
                 else:
-                    self.stdout.write(self.style.ERROR(f"ERROR:Failed to create transaction"))
+                    self.stdout.write(self.style.ERROR(f"ERROR: Failed to create transaction"))
         
         if expenses_without_transactions:
             self.stdout.write(self.style.SUCCESS(f"Fixed {len(expenses_without_transactions)} expenses"))

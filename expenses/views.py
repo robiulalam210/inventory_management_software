@@ -380,7 +380,6 @@ class ExpenseDetailView(APIView):
             return custom_response(True, "Expense fetched successfully.", serializer.data, status.HTTP_200_OK)
         except Exception as e:
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     def patch(self, request, pk):
         try:
             company = getattr(request.user, 'company', None)
@@ -388,21 +387,35 @@ class ExpenseDetailView(APIView):
             if not expense:
                 return custom_response(False, "Expense not found.", None, status.HTTP_404_NOT_FOUND)
 
-            # Validate head and subhead if provided
-            head_id = request.data.get('head')
+            # Get the data from request
+            data = request.data.copy()
+            
+            # Check if subhead is being sent as string 'null' and convert it to None
+            if 'subhead' in data and data['subhead'] == 'null':
+                data['subhead'] = None
+            
+            # Validate head if provided
+            head_id = data.get('head')
             if head_id:
                 head_exists = ExpenseHead.objects.filter(id=head_id, company=company).exists()
                 if not head_exists:
                     return custom_response(False, "Expense Head not found.", None, status.HTTP_400_BAD_REQUEST)
             
-            subhead_id = request.data.get('subhead')
-            if subhead_id:
-                subhead_exists = ExpenseSubHead.objects.filter(id=subhead_id, company=company).exists()
-                if not subhead_exists:
-                    return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
-
+            # Validate subhead if provided (and not None)
+            subhead_id = data.get('subhead')
+            if subhead_id:  # This will be False for None, empty string, or 0
+                try:
+                    # Ensure it's a valid integer
+                    subhead_id_int = int(subhead_id)
+                    subhead_exists = ExpenseSubHead.objects.filter(id=subhead_id_int, company=company).exists()
+                    if not subhead_exists:
+                        return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
+                except (ValueError, TypeError):
+                    # If subhead_id is not a valid integer, treat it as null
+                    data['subhead'] = None
+            
             # Use ExpenseUpdateSerializer for PATCH
-            serializer = ExpenseUpdateSerializer(expense, data=request.data, partial=True, context={'request': request})
+            serializer = ExpenseUpdateSerializer(expense, data=data, partial=True, context={'request': request})
             if serializer.is_valid():
                 updated_expense = serializer.save()
                 # Return the full updated expense data
@@ -412,6 +425,38 @@ class ExpenseDetailView(APIView):
         except Exception as e:
             logger.error(f"Error in ExpenseDetailView PATCH: {str(e)}", exc_info=True)
             return custom_response(False, f"Update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # def patch(self, request, pk):
+    #     try:
+    #         company = getattr(request.user, 'company', None)
+    #         expense = Expense.objects.filter(pk=pk, company=company).first()
+    #         if not expense:
+    #             return custom_response(False, "Expense not found.", None, status.HTTP_404_NOT_FOUND)
+
+    #         # Validate head and subhead if provided
+    #         head_id = request.data.get('head')
+    #         if head_id:
+    #             head_exists = ExpenseHead.objects.filter(id=head_id, company=company).exists()
+    #             if not head_exists:
+    #                 return custom_response(False, "Expense Head not found.", None, status.HTTP_400_BAD_REQUEST)
+            
+    #         subhead_id = request.data.get('subhead')
+    #         if subhead_id:
+    #             subhead_exists = ExpenseSubHead.objects.filter(id=subhead_id, company=company).exists()
+    #             if not subhead_exists:
+    #                 return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
+
+    #         # Use ExpenseUpdateSerializer for PATCH
+    #         serializer = ExpenseUpdateSerializer(expense, data=request.data, partial=True, context={'request': request})
+    #         if serializer.is_valid():
+    #             updated_expense = serializer.save()
+    #             # Return the full updated expense data
+    #             response_serializer = ExpenseSerializer(updated_expense)
+    #             return custom_response(True, "Expense updated successfully.", response_serializer.data, status.HTTP_200_OK)
+    #         return custom_response(False, "Validation Error.", serializer.errors, status.HTTP_400_BAD_REQUEST)
+    #     except Exception as e:
+    #         logger.error(f"Error in ExpenseDetailView PATCH: {str(e)}", exc_info=True)
+    #         return custom_response(False, f"Update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk):
         try:
