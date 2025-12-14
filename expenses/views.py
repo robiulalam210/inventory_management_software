@@ -9,6 +9,11 @@ from .serializers import ExpenseSerializer, ExpenseHeadSerializer, ExpenseSubHea
 from core.pagination import CustomPageNumberPagination
 from django.db.models import Q 
 
+from django.utils import timezone
+from django.db import transaction
+from django.conf import settings
+import traceback    
+
  # Add this import
 
 import logging
@@ -426,51 +431,44 @@ class ExpenseDetailView(APIView):
             logger.error(f"Error in ExpenseDetailView PATCH: {str(e)}", exc_info=True)
             return custom_response(False, f"Update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    # def patch(self, request, pk):
+  
+    # def delete(self, request, pk):
     #     try:
     #         company = getattr(request.user, 'company', None)
     #         expense = Expense.objects.filter(pk=pk, company=company).first()
     #         if not expense:
     #             return custom_response(False, "Expense not found.", None, status.HTTP_404_NOT_FOUND)
-
-    #         # Validate head and subhead if provided
-    #         head_id = request.data.get('head')
-    #         if head_id:
-    #             head_exists = ExpenseHead.objects.filter(id=head_id, company=company).exists()
-    #             if not head_exists:
-    #                 return custom_response(False, "Expense Head not found.", None, status.HTTP_400_BAD_REQUEST)
             
-    #         subhead_id = request.data.get('subhead')
-    #         if subhead_id:
-    #             subhead_exists = ExpenseSubHead.objects.filter(id=subhead_id, company=company).exists()
-    #             if not subhead_exists:
-    #                 return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
-
-    #         # Use ExpenseUpdateSerializer for PATCH
-    #         serializer = ExpenseUpdateSerializer(expense, data=request.data, partial=True, context={'request': request})
-    #         if serializer.is_valid():
-    #             updated_expense = serializer.save()
-    #             # Return the full updated expense data
-    #             response_serializer = ExpenseSerializer(updated_expense)
-    #             return custom_response(True, "Expense updated successfully.", response_serializer.data, status.HTTP_200_OK)
-    #         return custom_response(False, "Validation Error.", serializer.errors, status.HTTP_400_BAD_REQUEST)
+    #         # Store expense info for logging before deletion
+    #         expense_info = f"{expense.invoice_number} - {expense.amount}"
+    #         expense.delete()
+            
+    #         logger.info(f"Expense deleted: {expense_info}")
+    #         return custom_response(True, "Expense deleted successfully.", None, status.HTTP_204_NO_CONTENT)
     #     except Exception as e:
-    #         logger.error(f"Error in ExpenseDetailView PATCH: {str(e)}", exc_info=True)
-    #         return custom_response(False, f"Update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
+    #         logger.error(f"Error in ExpenseDetailView DELETE: {str(e)}", exc_info=True)
+    #         return custom_response(False, f"Delete failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk):
         try:
             company = getattr(request.user, 'company', None)
             expense = Expense.objects.filter(pk=pk, company=company).first()
+            
             if not expense:
                 return custom_response(False, "Expense not found.", None, status.HTTP_404_NOT_FOUND)
             
-            # Store expense info for logging before deletion
+            # Store info for logging
             expense_info = f"{expense.invoice_number} - {expense.amount}"
+            
+            # Log before deletion
+            logger.info(f"📱 API DELETE Request: Expense {expense_info}")
+            
+            # THIS IS THE KEY: Just call expense.delete() - let the MODEL handle the logic
             expense.delete()
             
-            logger.info(f"Expense deleted: {expense_info}")
+            logger.info(f"✅ Expense deleted successfully: {expense_info}")
             return custom_response(True, "Expense deleted successfully.", None, status.HTTP_204_NO_CONTENT)
+            
         except Exception as e:
-            logger.error(f"Error in ExpenseDetailView DELETE: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error in ExpenseDetailView DELETE: {str(e)}", exc_info=True)
             return custom_response(False, f"Delete failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)

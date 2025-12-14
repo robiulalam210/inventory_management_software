@@ -228,6 +228,47 @@ class Expense(models.Model):
         except Exception as e:
             logger.error(f"ERROR: Error creating reversal transaction: {e}")
             return None
+    def delete(self, *args, **kwargs):
+        """Handle expense deletion - restore account balance and create reversal"""
+        try:
+            # Get expense data BEFORE deletion
+            account = self.account
+            amount = self.amount
+            invoice = self.invoice_number
+            
+            logger.info(f"🗑️ MODEL: Deleting expense {invoice} (Amount: {amount})")
+            
+            if account and amount:
+                # 1. RESTORE ACCOUNT BALANCE
+                old_balance = account.balance
+                account.balance += amount  # ADD back the amount
+                account.save(update_fields=['balance', 'updated_at'])
+                logger.info(f"💰 MODEL: Balance restored for {account.name}")
+                logger.info(f"   Before: {old_balance}, After: {account.balance}")
+                
+                # 2. CREATE REVERSAL TRANSACTION (optional)
+                try:
+                    from transactions.models import Transaction
+                    Transaction.objects.create(
+                        company=self.company,
+                        transaction_type='credit',
+                        amount=amount,
+                        account=account,
+                        description=f"Reversal of deleted expense: {invoice}",
+                        status='completed'
+                    )
+                    logger.info(f"🔄 MODEL: Reversal transaction created")
+                except:
+                    logger.warning(f"⚠️ MODEL: Could not create reversal transaction")
+            
+            # 3. DELETE THE EXPENSE (call parent method)
+            super().delete(*args, **kwargs)
+            logger.info(f"✅ MODEL: Expense {invoice} deleted")
+            
+        except Exception as e:
+            logger.error(f"❌ MODEL: Error in delete(): {str(e)}")
+            # Still delete even if reversal fails
+            super().delete(*args, **kwargs)
 
     def generate_invoice_number(self):
         """Generate unique invoice number: EXP-1001, EXP-1002, etc."""
