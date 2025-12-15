@@ -1,12 +1,14 @@
 import logging
 from rest_framework import viewsets, status, filters
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Count, Sum
+from django.db.models import Q, Count, Sum, F, Case, When, Value, DecimalField
 from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
 from .models import Customer
 from .serializers import CustomerSerializer
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
     
     search_fields = ['name', 'phone', 'email', 'address']
     filterset_fields = ['is_active']
-    ordering_fields = ['nameclient_no', 'date_created']
+    ordering_fields = ['name', 'client_no', 'date_created']
     ordering = ['client_no']
 
     def get_queryset(self):
@@ -35,11 +37,35 @@ class CustomerViewSet(viewsets.ModelViewSet):
         # Apply custom filters
         queryset = self.apply_custom_filters(queryset)
         
-        # Optimize queryset with annotations
+        # Optimize queryset with annotations for better performance
         queryset = queryset.annotate(
             sales_count=Count('sale', distinct=True),
             total_paid_amount=Sum('sale__paid_amount'),
-            total_due_amount=Sum('sale__grand_total') - Sum('sale__paid_amount')
+            total_grand_total=Sum('sale__grand_total'),
+            basic_due_amount=Case(
+                When(
+                    total_grand_total__isnull=True,
+                    then=Value(0)
+                ),
+                default=F('total_grand_total') - F('total_paid_amount'),
+                output_field=DecimalField(max_digits=12, decimal_places=2)
+            ),
+            net_due_amount=Case(
+                When(
+                    advance_balance__gte=F('basic_due_amount'),
+                    then=Value(0)
+                ),
+                default=F('basic_due_amount') - F('advance_balance'),
+                output_field=DecimalField(max_digits=12, decimal_places=2)
+            ),
+            remaining_advance=Case(
+                When(
+                    advance_balance__gt=F('basic_due_amount'),
+                    then=F('advance_balance') - F('basic_due_amount')
+                ),
+                default=Value(0),
+                output_field=DecimalField(max_digits=12, decimal_places=2)
+            )
         )
         
         return queryset
@@ -64,6 +90,50 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(is_active=True)
             elif status_filter.lower() == 'inactive':
                 queryset = queryset.filter(is_active=False)
+        
+        # Amount type filter (advance/due/paid)
+        amount_type = params.get('amount_type')
+        if amount_type:
+            if amount_type.lower() == 'advance':
+                queryset = queryset.filter(advance_balance__gt=0)
+            elif amount_type.lower() == 'due':
+                # Customers with net due amount > 0
+                queryset = queryset.annotate(
+                    temp_net_due=Case(
+                        When(
+                            total_grand_total__isnull=True,
+                            then=Value(0)
+                        ),
+                        default=Case(
+                            When(
+                                advance_balance__gte=F('total_grand_total') - F('total_paid_amount'),
+                                then=Value(0)
+                            ),
+                            default=F('total_grand_total') - F('total_paid_amount') - F('advance_balance'),
+                            output_field=DecimalField(max_digits=12, decimal_places=2)
+                        ),
+                        output_field=DecimalField(max_digits=12, decimal_places=2)
+                    )
+                ).filter(temp_net_due__gt=0)
+            elif amount_type.lower() == 'paid':
+                # Customers with no due and no advance
+                queryset = queryset.annotate(
+                    temp_net_due=Case(
+                        When(
+                            total_grand_total__isnull=True,
+                            then=Value(0)
+                        ),
+                        default=Case(
+                            When(
+                                advance_balance__gte=F('total_grand_total') - F('total_paid_amount'),
+                                then=Value(0)
+                            ),
+                            default=F('total_grand_total') - F('total_paid_amount') - F('advance_balance'),
+                            output_field=DecimalField(max_digits=12, decimal_places=2)
+                        ),
+                        output_field=DecimalField(max_digits=12, decimal_places=2)
+                    )
+                ).filter(temp_net_due=0, advance_balance=0)
         
         # Date range filter
         start_date = params.get('start_date')
@@ -100,7 +170,295 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @action(detail=True, methods=['get'])
+    def payment_details(self, request, pk=None):
+        """Get detailed payment information for a customer including advance, due, paid"""
+        try:
+            customer = self.get_object()
+            breakdown = customer.get_detailed_payment_breakdown()
+            
+            return custom_response(
+                success=True,
+                message="Payment details fetched successfully",
+                data=breakdown,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error fetching payment details for customer {pk}: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error fetching payment details: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get summary of all customers' payment status"""
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Calculate totals using annotations
+            total_customers = queryset.count()
+            
+            # Calculate summary from annotations
+            summary_data = queryset.aggregate(
+                total_advance=Sum('advance_balance'),
+                total_net_due=Sum('net_due_amount'),
+                total_paid=Sum('total_paid_amount'),
+                total_grand=Sum('total_grand_total')
+            )
+            
+            # Count by status
+            advance_count = queryset.filter(advance_balance__gt=0).count()
+            due_count = queryset.filter(net_due_amount__gt=0).count()
+            paid_count = queryset.filter(net_due_amount=0, advance_balance=0).count()
+            
+            summary = {
+                'total_customers': total_customers,
+                'financial_summary': {
+                    'total_advance': float(summary_data['total_advance'] or 0),
+                    'total_due': float(summary_data['total_net_due'] or 0),
+                    'total_paid': float(summary_data['total_paid'] or 0),
+                    'total_sales': float(summary_data['total_grand'] or 0)
+                },
+                'status_counts': {
+                    'advance_customers': advance_count,
+                    'due_customers': due_count,
+                    'paid_customers': paid_count
+                }
+            }
+            
+            return custom_response(
+                success=True,
+                message="Customer summary fetched successfully",
+                data=summary,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error fetching customer summary: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error fetching customer summary: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'])
+    def add_advance(self, request, pk=None):
+        """Add advance payment to customer"""
+        try:
+            customer = self.get_object()
+            amount = request.data.get('amount')
+            
+            if not amount or float(amount) <= 0:
+                return custom_response(
+                    success=False,
+                    message="Amount must be greater than 0",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            new_balance = customer.add_advance_direct(float(amount), created_by=request.user)
+            
+            return custom_response(
+                success=True,
+                message=f"Advance of {amount} added successfully",
+                data={
+                    'customer_id': customer.id,
+                    'customer_name': customer.name,
+                    'new_advance_balance': float(new_balance),
+                    'added_amount': float(amount)
+                },
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error adding advance to customer {pk}: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error adding advance: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'])
+    def use_advance(self, request, pk=None):
+        """Use advance balance for payment"""
+        try:
+            customer = self.get_object()
+            amount = request.data.get('amount')
+            
+            if not amount or float(amount) <= 0:
+                return custom_response(
+                    success=False,
+                    message="Amount must be greater than 0",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            new_balance = customer.use_advance_payment(float(amount))
+            
+            return custom_response(
+                success=True,
+                message=f"Advance of {amount} used successfully",
+                data={
+                    'customer_id': customer.id,
+                    'customer_name': customer.name,
+                    'new_advance_balance': float(new_balance),
+                    'used_amount': float(amount)
+                },
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error using advance for customer {pk}: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error using advance: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'])
+    def sync_advance(self, request, pk=None):
+        """Sync customer's advance balance with actual receipts and sales"""
+        try:
+            customer = self.get_object()
+            sync_result = customer.sync_advance_balance()
+            
+            if sync_result['synced']:
+                message = f"Advance balance synced from {sync_result['old_value']} to {sync_result['new_value']}"
+            else:
+                message = f"Advance balance is already correct: {sync_result['current_value']}"
+            
+            return custom_response(
+                success=True,
+                message=message,
+                data=sync_result,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error syncing advance for customer {pk}: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error syncing advance: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['get'])
+    def check_receipts(self, request, pk=None):
+        """Debug endpoint to check all money receipts for a customer"""
+        try:
+            customer = self.get_object()
+            
+            try:
+                from money_receipts.models import MoneyReceipt
+                
+                # Get all money receipts for this customer
+                all_receipts = MoneyReceipt.objects.filter(
+                    customer=customer,
+                    company=customer.company
+                )
+                
+                receipts_data = []
+                for receipt in all_receipts:
+                    receipt_info = {
+                        'id': receipt.id,
+                        'receipt_no': receipt.receipt_no,
+                        'amount': float(receipt.amount) if receipt.amount else 0,
+                        'payment_date': receipt.payment_date,
+                        'customer_id': receipt.customer_id,
+                        'company_id': receipt.company_id,
+                        'payment_type': receipt.payment_type if hasattr(receipt, 'payment_type') else None,
+                        'specific_invoice': receipt.specific_invoice if hasattr(receipt, 'specific_invoice') else None,
+                        'sale_id': receipt.sale_id if hasattr(receipt, 'sale') and receipt.sale else None,
+                        'sale_invoice_no': receipt.sale_invoice_no if hasattr(receipt, 'sale_invoice_no') else None,
+                    }
+                    
+                    # Check for advance-related fields
+                    if hasattr(receipt, 'is_advance_payment'):
+                        receipt_info['is_advance_payment'] = receipt.is_advance_payment
+                    if hasattr(receipt, 'advance_amount'):
+                        receipt_info['advance_amount'] = float(receipt.advance_amount) if receipt.advance_amount else 0
+                    
+                    # Determine if it should be treated as advance using the new logic
+                    is_advance, advance_type = customer.is_advance_receipt(receipt)
+                    receipt_info['should_be_advance'] = is_advance
+                    receipt_info['advance_type'] = advance_type
+                    
+                    receipts_data.append(receipt_info)
+                
+                # Check customer's sales
+                from sales.models import Sale
+                sales = Sale.objects.filter(customer=customer, company=customer.company)
+                sales_data = []
+                for sale in sales:
+                    sales_data.append({
+                        'id': sale.id,
+                        'invoice_no': sale.invoice_no,
+                        'grand_total': float(sale.grand_total),
+                        'paid_amount': float(sale.paid_amount),
+                        'due_amount': float(sale.due_amount),
+                        'overpayment': float(max(Decimal('0'), sale.paid_amount - sale.grand_total))
+                    })
+                
+                # Calculate what advance should be
+                sales_overpayment = max(0.0, sum(s['paid_amount'] for s in sales_data) - sum(s['grand_total'] for s in sales_data))
+                advance_receipts_total = sum(r['amount'] for r in receipts_data if r['should_be_advance'])
+                total_advance_should_be = sales_overpayment + advance_receipts_total
+                
+                return custom_response(
+                    success=True,
+                    message="Money receipts and sales checked",
+                    data={
+                        'customer_id': customer.id,
+                        'customer_name': customer.name,
+                        'stored_advance_balance': float(customer.advance_balance),
+                        'total_money_receipts': len(receipts_data),
+                        'money_receipts': receipts_data,
+                        'advance_receipts': [r for r in receipts_data if r['should_be_advance']],
+                        'non_advance_receipts': [r for r in receipts_data if not r['should_be_advance']],
+                        'total_sales': len(sales_data),
+                        'sales': sales_data,
+                        'calculated_advance': {
+                            'sales_overpayment': sales_overpayment,
+                            'advance_receipts_total': advance_receipts_total,
+                            'total_advance_should_be': total_advance_should_be
+                        },
+                        'advance_logic': {
+                            'rules': [
+                                'Rule 1: is_advance_payment = True',
+                                'Rule 2: advance_amount > 0',
+                                'Rule 3: payment_type = "advance"',
+                                'Rule 4: payment_type = "overall" and no sale linked',
+                                'Rule 5: No sale linked (generic payment)'
+                            ]
+                        }
+                    },
+                    status_code=status.HTTP_200_OK
+                )
+                
+            except ImportError as e:
+                return custom_response(
+                    success=False,
+                    message=f"Cannot import MoneyReceipt model: {str(e)}",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            logger.error(f"Error checking receipts for customer {pk}: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error checking receipts: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def create(self, request, *args, **kwargs):
+        from rest_framework import serializers
+        
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
@@ -133,7 +491,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_201_CREATED
             )
         except serializers.ValidationError as e:
-    # Safely get the first error message
+            # Safely get the first error message
             if isinstance(e.detail, list) and e.detail:
                 message = str(e.detail[0])
             elif isinstance(e.detail, dict) and e.detail:
@@ -239,7 +597,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
             # Money Receipts
             if money_receipts_count == 0:
                 try:
-                    from transactions.models import MoneyReceipt
+                    from money_receipts.models import MoneyReceipt
                     money_receipts_count = check_relationship("money receipts", 
                         lambda: MoneyReceipt.objects.filter(customer=instance).count()
                     )
@@ -358,21 +716,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-
-
-
-
-
-
-
 
 class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]  # Removed DjangoFilterBackend
-    pagination_class = None  # Disable pagination
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    pagination_class = None
     
     search_fields = ['name', 'phone', 'email', 'address']
     ordering_fields = ['name', 'date_created']
@@ -388,13 +738,11 @@ class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
         else:
             return Customer.objects.none()
         
-       
-        
         # Optimize queryset with annotations
         queryset = queryset.annotate(
             sales_count=Count('sale', distinct=True),
             total_paid_amount=Sum('sale__paid_amount'),
-            total_due_amount=Sum('sale__grand_total') - Sum('sale__paid_amount')
+            total_grand_total=Sum('sale__grand_total')
         )
         
         return queryset
@@ -419,4 +767,3 @@ class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
- 
