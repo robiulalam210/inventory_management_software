@@ -1,5 +1,3 @@
-# branch_warehouse/serializers.py - MINIMAL FIXES ONLY
-
 import logging
 import traceback
 from rest_framework import serializers
@@ -8,6 +6,7 @@ from products.models import Product
 from accounts.models import Account
 from django.db import transaction as db_transaction
 from decimal import Decimal
+from django.apps import apps  # ADD THIS IMPORT
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +98,6 @@ class PurchaseSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = request.user if request else None
         
-        account = attrs.get('account')
-        
-        if 'account' in attrs and not account:
-            attrs['account'] = None
-        
         # Validate purchase items for creation
         if request and getattr(request, "method", None) == 'POST':
             purchase_items = attrs.get('purchase_items') or []
@@ -141,6 +135,10 @@ class PurchaseSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "account": "Account is required for instant payment."
                 })
+            if not attrs.get('paid_amount') or Decimal(str(attrs.get('paid_amount', 0))) <= 0:
+                raise serializers.ValidationError({
+                    "paid_amount": "Paid amount must be greater than 0 for instant payment."
+                })
         
         # Validate amounts
         overall_discount = attrs.get('overall_discount', 0)
@@ -163,6 +161,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """Create purchase with transaction - FIXED to prevent duplicates"""
         try:
             request = self.context.get('request')
             user = request.user if request else None
@@ -177,56 +176,82 @@ class PurchaseSerializer(serializers.ModelSerializer):
             payment_method = validated_data.get('payment_method', None)
             paid_amount = validated_data.get('paid_amount', Decimal('0.00'))
             
+            logger.info(f"INFO: Creating purchase with data:")
+            logger.info(f"  User: {user.username}")
+            logger.info(f"  Company: {user.company.name}")
+            logger.info(f"  Instant Pay: {instant_pay}")
+            logger.info(f"  Paid Amount: {paid_amount}")
+            logger.info(f"  Account: {account.name if account else 'None'}")
+            logger.info(f"  Payment Method: {payment_method}")
+            logger.info(f"  Items Count: {len(items_data)}")
+
             validated_data['company'] = user.company
             validated_data['created_by'] = user
 
+            purchase = None
+            
             with db_transaction.atomic():
                 # Create purchase first (without items)
                 purchase = Purchase.objects.create(**validated_data)
+                logger.info(f"SUCCESS: Purchase created - Invoice: {purchase.invoice_no}, ID: {purchase.id}")
                 
                 # Create purchase items
                 for item_data in items_data:
                     PurchaseItem.objects.create(purchase=purchase, **item_data)
+                logger.info(f"SUCCESS: Created {len(items_data)} purchase items")
 
                 # Update totals to calculate the actual totals
                 purchase.update_totals(force_update=True)
+                logger.info(f"INFO: Purchase totals updated - Grand Total: {purchase.grand_total}")
                 
-                # Handle payments properly
-                if instant_pay and account and payment_method:
-                    if paid_amount > 0:
-                        try:
-                            purchase.make_payment(
-                                amount=paid_amount,
-                                payment_method=payment_method,
-                                account=account,
-                                description=f"Instant payment for purchase {purchase.invoice_no}"
-                            )
-                        except Exception as e:
-                            logger.error(f"ERROR: Failed to apply instant payment: {str(e)}")
-                    elif purchase.due_amount > 0:
-                        try:
-                            purchase.make_payment(
-                                amount=purchase.due_amount,
-                                payment_method=payment_method,
-                                account=account,
-                                description=f"Full payment for purchase {purchase.invoice_no}"
-                            )
-                        except Exception as e:
-                            logger.error(f"ERROR: Failed to apply full payment: {str(e)}")
-                elif paid_amount > 0 and account and payment_method:
-                    try:
-                        purchase.make_payment(
-                            amount=paid_amount,
-                            payment_method=payment_method,
-                            account=account,
-                            description=f"Partial payment for purchase {purchase.invoice_no}"
-                        )
-                    except Exception as e:
-                        logger.error(f"ERROR: Failed to apply payment: {str(e)}")
+                # FIXED: Handle instant payment - ONLY create transaction if needed
+                if instant_pay and paid_amount > 0 and account and payment_method:
+                    logger.info(f"INFO: Processing instant payment for purchase {purchase.invoice_no}")
+                    logger.info(f"  Amount to pay: {paid_amount}")
+                    
+                    # Check if transaction already exists before creating
+                    Transaction = apps.get_model('transactions', 'Transaction')
+                    existing_transaction = Transaction.objects.filter(
+                        purchase=purchase,
+                        amount=paid_amount,
+                        transaction_type='debit',
+                        account=account,
+                        payment_method=payment_method,
+                        status='completed'
+                    ).first()
+                    
+                    if existing_transaction:
+                        logger.warning(f"WARNING: Transaction already exists: {existing_transaction.transaction_no}")
+                        # Just update the purchase with payment details
+                        purchase.paid_amount = paid_amount
+                        purchase.account = account
+                        purchase.payment_method = payment_method
+                        purchase.update_totals(force_update=True)
+                    else:
+                        # Update purchase with payment details
+                        purchase.paid_amount = paid_amount
+                        purchase.account = account
+                        purchase.payment_method = payment_method
+                        purchase.save(update_fields=['paid_amount', 'account', 'payment_method', 'date_updated'])
+                        
+                        # Update totals again to recalculate due_amount
+                        purchase.update_totals(force_update=True)
+                        
+                        # Create transaction (ONLY HERE - not in multiple places)
+                        transaction = purchase.create_initial_payment_transaction()
+                        if transaction:
+                            logger.info(f"SUCCESS: Payment transaction created: {transaction.transaction_no}")
+                        else:
+                            logger.warning(f"WARNING: Failed to create payment transaction")
+                
+                # Refresh purchase to get updated values
+                purchase.refresh_from_db()
+                logger.info(f"INFO: Final purchase state - Paid: {purchase.paid_amount}, Due: {purchase.due_amount}, Status: {purchase.payment_status}")
 
             return purchase
             
         except serializers.ValidationError as e:
+            logger.error(f"VALIDATION ERROR: {e.detail}")
             raise e
         except Exception as e:
             logger.exception("ERROR: Exception in PurchaseSerializer.create")
@@ -261,5 +286,26 @@ class PurchaseSerializer(serializers.ModelSerializer):
         # Add item count and total quantity
         representation['item_count'] = instance.item_count
         representation['total_quantity'] = instance.total_quantity
+        
+        # Add transaction info if available
+        try:
+            if instance.paid_amount > 0:
+                Transaction = apps.get_model('transactions', 'Transaction')
+                transactions = Transaction.objects.filter(purchase=instance, status='completed')
+                representation['transactions'] = [
+                    {
+                        'id': t.id,
+                        'transaction_no': t.transaction_no,
+                        'amount': float(t.amount),
+                        'type': t.transaction_type,
+                        'created_at': t.created_at.isoformat() if t.created_at else None
+                    }
+                    for t in transactions
+                ]
+                representation['transaction_count'] = transactions.count()
+        except Exception as e:
+            logger.error(f"ERROR: Failed to fetch transactions: {str(e)}")
+            representation['transactions'] = []
+            representation['transaction_count'] = 0
         
         return representation

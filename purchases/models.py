@@ -1,5 +1,3 @@
-# branch_warehouse/models.py - MINIMAL FIXES ONLY
-
 from django.db import models
 from django.db.models import Sum, F, Q
 from django.conf import settings
@@ -8,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import logging
 from django.core.exceptions import ValidationError
 from django.db import transaction as db_transaction
+from django.apps import apps  # ADD THIS IMPORT
 
 logger = logging.getLogger(__name__)
 
@@ -100,31 +99,7 @@ class Purchase(models.Model):
             logger.info("INFO: Purchase is cancelled, status unchanged")
             return
             
-        # Don't check items if purchase doesn't have PK yet (during initial creation)
-        if not self.pk:
-            logger.info("INFO: Purchase not saved yet, using basic status calculation")
-            if self.paid_amount <= 0:
-                self.payment_status = 'pending'
-            elif self.paid_amount >= self.grand_total:
-                self.payment_status = 'paid'
-                self.due_amount = Decimal('0.00')
-            elif self.paid_amount > 0:
-                self.payment_status = 'partial'
-            else:
-                self.payment_status = 'pending'
-        else:
-            # Only check items if purchase has been saved
-            if self.grand_total == 0:
-                # If grand total is zero but we have items, this might be a calculation issue
-                try:
-                    if self.items.exists():
-                        logger.warning("WARNING: Grand total is 0 but purchase has items - recalculating totals")
-                        self.update_totals(force_update=True)
-                except ValueError:
-                    # This can happen if purchase doesn't have PK yet
-                    logger.warning("WARNING: Cannot check items - purchase not fully saved")
-        
-        # Standard payment status logic (applies to both new and existing purchases)
+        # Standard payment status logic
         if self.paid_amount <= 0:
             self.payment_status = 'pending'
             logger.info("INFO: Status set to: pending")
@@ -200,12 +175,12 @@ class Purchase(models.Model):
         logger.info(f"UPDATING: Purchase.update_totals called for purchase ID: {self.id}")
         
         try:
-            # FIXED: Use item.subtotal() which includes item discounts
+            # Calculate subtotal from items
             items_subtotal = sum(item.subtotal() for item in self.items.all())
             subtotal = items_subtotal or Decimal('0.00')
             subtotal = self._round_decimal(subtotal)
 
-            logger.info(f"INFO: Calculated subtotal from items (WITH item discounts): {subtotal}")
+            logger.info(f"INFO: Calculated subtotal from items: {subtotal}")
 
             discount_amount = Decimal('0.00')
             if self.overall_discount_type == 'percentage':
@@ -271,7 +246,7 @@ class Purchase(models.Model):
             self._updating_totals = False
 
     def save(self, *args, **kwargs):
-        """Custom save method"""
+        """Custom save method - FIXED: No transaction creation here"""
         is_new = self.pk is None
         
         self.clean()
@@ -280,13 +255,18 @@ class Purchase(models.Model):
             self.invoice_no = self.generate_invoice_no()
         
         if is_new:
+            # Initialize due_amount for new purchases
             self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
-            self._update_payment_status()
+            logger.info(f"INFO: New purchase due_amount initialized: {self.due_amount}")
         
+        # Save the purchase
         super().save(*args, **kwargs)
+        
+        # FIXED: Transaction creation removed from save() method
+        # Transaction should only be created in create_initial_payment_transaction()
 
     def make_payment(self, amount, payment_method=None, account=None, description=None):
-        """Make a payment towards this purchase"""
+        """Make a payment towards this purchase - FIXED to check existing transactions"""
         amount = self._round_decimal(amount)
         
         # Validate payment
@@ -333,24 +313,16 @@ class Purchase(models.Model):
                 super().save(update_fields=update_fields)
                 
                 # Create transaction for the payment
-                if account and amount > 0:
+                if amount > 0:
                     try:
-                        from transactions.models import Transaction
-                        
-                        transaction_obj = Transaction.objects.create(
-                            company=self.company,
-                            transaction_type='debit',
+                        transaction = self.create_payment_transaction(
                             amount=amount,
-                            account=account,
                             payment_method=payment_method or self.payment_method,
-                            description=description or f"Purchase Payment - {self.invoice_no} - {self.supplier.name}",
-                            purchase=self,
-                            created_by=self.updated_by or self.created_by,
-                            status='completed'
+                            account=account or self.account,
+                            description=description or f"Purchase Payment - {self.invoice_no} - {self.supplier.name}"
                         )
-                        
-                        if transaction_obj:
-                            logger.info(f"SUCCESS: Debit transaction created for purchase payment: {transaction_obj.transaction_no}")
+                        if transaction:
+                            logger.info(f"SUCCESS: Debit transaction created for purchase payment: {transaction.transaction_no}")
                         else:
                             logger.error(f"ERROR: Transaction creation returned None")
                             
@@ -365,11 +337,77 @@ class Purchase(models.Model):
             logger.error(f"ERROR: Error in make_payment: {e}")
             raise
 
+    def create_payment_transaction(self, amount, payment_method, account, description):
+        """Create a payment transaction - FIXED to check for duplicates"""
+        if amount <= 0 or not account:
+            logger.warning(f"WARNING: Cannot create transaction - amount: {amount}, account: {account}")
+            return None
+        
+        try:
+            # Check for existing transaction with same details
+            Transaction = apps.get_model('transactions', 'Transaction')
+            existing_transaction = Transaction.objects.filter(
+                purchase=self,
+                amount=amount,
+                transaction_type='debit',
+                account=account,
+                payment_method=payment_method,
+                status='completed'
+            ).first()
+            
+            if existing_transaction:
+                logger.warning(f"WARNING: Duplicate transaction detected: {existing_transaction.transaction_no}")
+                logger.warning(f"  Purchase: {self.invoice_no}, Amount: {amount}, Account: {account.name}")
+                return existing_transaction
+            
+            logger.info(f"INFO: Creating payment transaction:")
+            logger.info(f"  Amount: {amount}")
+            logger.info(f"  Account: {account.name} (ID: {account.id})")
+            logger.info(f"  Payment Method: {payment_method}")
+            logger.info(f"  Company: {self.company.name if self.company else 'No Company'}")
+            
+            transaction_obj = Transaction.objects.create(
+                company=self.company,
+                transaction_type='debit',  # Debit when paying for purchase
+                amount=amount,
+                account=account,
+                payment_method=payment_method,
+                description=description,
+                purchase=self,
+                created_by=self.updated_by or self.created_by,
+                status='completed'
+            )
+            
+            logger.info(f"SUCCESS: Transaction created - No: {transaction_obj.transaction_no}")
+            return transaction_obj
+            
+        except Exception as e:
+            logger.error(f"ERROR: Failed to create transaction: {str(e)}")
+            raise
+
     def create_initial_payment_transaction(self):
-        """Create transaction for initial payment when purchase is created"""
-        if self.paid_amount > 0 and self.account:
+        """Create transaction for initial payment when purchase is created - FIXED for duplicates"""
+        if self.paid_amount > 0 and self.account and self.payment_method:
             try:
-                from transactions.models import Transaction
+                # Check for existing transaction first
+                Transaction = apps.get_model('transactions', 'Transaction')
+                existing_transaction = Transaction.objects.filter(
+                    purchase=self,
+                    amount=self.paid_amount,
+                    transaction_type='debit',
+                    account=self.account,
+                    payment_method=self.payment_method,
+                    status='completed'
+                ).first()
+                
+                if existing_transaction:
+                    logger.warning(f"WARNING: Initial payment transaction already exists: {existing_transaction.transaction_no}")
+                    return existing_transaction
+                
+                logger.info(f"INFO: Creating initial payment transaction for purchase {self.invoice_no}")
+                logger.info(f"  Paid Amount: {self.paid_amount}")
+                logger.info(f"  Account: {self.account.name}")
+                logger.info(f"  Payment Method: {self.payment_method}")
                 
                 transaction_obj = Transaction.objects.create(
                     company=self.company,
@@ -386,9 +424,16 @@ class Purchase(models.Model):
                 if transaction_obj:
                     logger.info(f"SUCCESS: Initial debit transaction created: {transaction_obj.transaction_no}")
                     return transaction_obj
+                else:
+                    logger.error(f"ERROR: Transaction creation returned None")
                     
             except Exception as e:
                 logger.error(f"ERROR: Error creating initial transaction: {e}")
+        else:
+            logger.warning(f"WARNING: Cannot create initial transaction - missing data:")
+            logger.warning(f"  Paid Amount: {self.paid_amount}")
+            logger.warning(f"  Account: {self.account}")
+            logger.warning(f"  Payment Method: {self.payment_method}")
         
         return None
 
@@ -407,7 +452,7 @@ class Purchase(models.Model):
                 # Reverse any payments made
                 if self.paid_amount > 0 and self.account:
                     try:
-                        from transactions.models import Transaction
+                        Transaction = apps.get_model('transactions', 'Transaction')
                         Transaction.objects.create(
                             company=self.company,
                             transaction_type='credit',
@@ -465,23 +510,12 @@ class Purchase(models.Model):
         if paid_amount > 0 and account and payment_method:
             logger.info(f"INFO: Processing instant payment: {paid_amount} via {payment_method}")
             try:
-                from transactions.models import Transaction
-                transaction = Transaction.create_for_purchase_payment(
-                    purchase=self,
+                return self.make_payment(
                     amount=paid_amount,
                     payment_method=payment_method,
                     account=account,
-                    created_by=self.created_by
+                    description=f"Instant payment for purchase {self.invoice_no}"
                 )
-                
-                if transaction:
-                    logger.info(f"SUCCESS: Instant payment transaction created: {transaction.transaction_no}")
-                    # Refresh purchase to get updated paid_amount
-                    self.refresh_from_db()
-                    return transaction
-                else:
-                    logger.error("ERROR: Transaction creation returned None")
-                    return None
                     
             except Exception as e:
                 logger.error(f"ERROR: Error in instant_pay: {str(e)}")
@@ -625,7 +659,6 @@ class Purchase(models.Model):
             queryset = queryset.filter(purchase_date__lte=end_date)
             
         return queryset.order_by('-purchase_date')
-
 
 class PurchaseItem(models.Model):
     purchase = models.ForeignKey(Purchase, on_delete=models.CASCADE, related_name='items')

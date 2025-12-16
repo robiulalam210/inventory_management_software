@@ -29,7 +29,9 @@ class TransactionViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['transaction_no', 'description', 'account__name']
     ordering_fields = ['transaction_date', 'amount', 'created_at']
-    ordering = ['-transaction_date']
+    ordering_fields = ['transaction_date', 'amount', 'created_at', 'transaction_no']  # Add transaction_no here
+    ordering = ['-transaction_no'] 
+    # ordering = ['-transaction_date']
     
     def get_queryset(self):
         queryset = super().get_queryset()

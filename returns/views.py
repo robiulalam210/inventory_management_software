@@ -1,13 +1,19 @@
 # returns/views.py
 from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.decorators import action
-from django.db.models import Q
+from rest_framework.response import Response
+from django.db.models import Q, Sum, Count
+from django.db import transaction as db_transaction
+from django.core.exceptions import ValidationError
 from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
-from .models import SalesReturn, PurchaseReturn, BadStock
+from .models import SalesReturn, PurchaseReturn, BadStock, SalesReturnItem, PurchaseReturnItem
 from .serializers import SalesReturnSerializer, PurchaseReturnSerializer, BadStockSerializer
 from products.models import Product
 from accounts.models import Account
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     """Filters queryset by logged-in user's company"""
@@ -24,11 +30,23 @@ class BaseCompanyViewSet(viewsets.ModelViewSet):
         return queryset.none()
 
     def perform_create(self, serializer):
-        serializer.save(company=self.request.user.company)
+        serializer.save(company=self.request.user.company, created_by=self.request.user)
 
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.filter_queryset(self.get_queryset())
+            
+            # Get summary data if requested
+            get_summary = request.query_params.get('summary', 'false').lower() == 'true'
+            if get_summary:
+                summary = self._get_summary(queryset)
+                return custom_response(
+                    success=True,
+                    message="Summary fetched successfully.",
+                    data=summary,
+                    status_code=status.HTTP_200_OK
+                )
+            
             page = self.paginate_queryset(queryset)
             
             if page is not None:
@@ -43,16 +61,22 @@ class BaseCompanyViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
+            logger.error(f"Error in list: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _get_summary(self, queryset):
+        """Get summary data for the queryset"""
+        return {}
 
 
 class SalesReturnViewSet(BaseCompanyViewSet):
     serializer_class = SalesReturnSerializer
+    model = SalesReturn
 
     def get_queryset(self):
         user = self.request.user
@@ -64,6 +88,7 @@ class SalesReturnViewSet(BaseCompanyViewSet):
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         customer_name = self.request.query_params.get('customer_name', None)
+        receipt_no = self.request.query_params.get('receipt_no', None)
         
         if search:
             queryset = queryset.filter(
@@ -78,6 +103,9 @@ class SalesReturnViewSet(BaseCompanyViewSet):
         if customer_name:
             queryset = queryset.filter(customer_name__icontains=customer_name)
             
+        if receipt_no:
+            queryset = queryset.filter(receipt_no__icontains=receipt_no)
+            
         if start_date and end_date:
             queryset = queryset.filter(return_date__range=[start_date, end_date])
         elif start_date:
@@ -86,6 +114,29 @@ class SalesReturnViewSet(BaseCompanyViewSet):
             queryset = queryset.filter(return_date__lte=end_date)
         
         return queryset.order_by('-return_date', '-id')
+    
+    def _get_summary(self, queryset):
+        """Get sales return summary"""
+        total_count = queryset.count()
+        
+        # Status counts
+        status_counts = queryset.values('status').annotate(
+            count=Count('id'),
+            total_amount=Sum('return_amount')
+        )
+        
+        # Monthly summary
+        monthly_summary = queryset.values('return_date__year', 'return_date__month').annotate(
+            count=Count('id'),
+            total_amount=Sum('return_amount')
+        ).order_by('-return_date__year', '-return_date__month')[:12]
+        
+        return {
+            'total_count': total_count,
+            'total_amount': queryset.aggregate(total=Sum('return_amount'))['total'] or 0,
+            'status_summary': list(status_counts),
+            'monthly_summary': list(monthly_summary)
+        }
 
     @action(detail=False, methods=['get'])
     def get_initial_data(self, request):
@@ -94,13 +145,29 @@ class SalesReturnViewSet(BaseCompanyViewSet):
             user = request.user
             company = user.company
             
-            # Get recent products and accounts
-            products = Product.objects.filter(company=company).values('id', 'name', 'price')
-            accounts = Account.objects.filter(company=company).values('id', 'name')
+            # Get products and accounts
+            products = Product.objects.filter(company=company).values('id', 'name', 'price', 'stock', 'code')
+            accounts = Account.objects.filter(company=company).values('id', 'name', 'balance', 'account_type')
+            
+            # Get recent sales for reference
+            recent_sales = []
+            # Uncomment if you have sales app
+            # from sales.models import Sale
+            # recent_sales = Sale.objects.filter(company=company).order_by('-sale_date')[:10].values(
+            #     'id', 'invoice_no', 'customer_name', 'total_amount'
+            # )
             
             data = {
                 'products': list(products),
                 'accounts': list(accounts),
+                'recent_sales': list(recent_sales),
+                'payment_methods': [
+                    {'value': 'cash', 'label': 'Cash'},
+                    {'value': 'bank', 'label': 'Bank Transfer'},
+                    {'value': 'mobile', 'label': 'Mobile Banking'},
+                    {'value': 'card', 'label': 'Card'},
+                    {'value': 'credit', 'label': 'Credit'}
+                ]
             }
             
             return custom_response(
@@ -110,6 +177,7 @@ class SalesReturnViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
+            logger.error(f"Error in get_initial_data: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -118,29 +186,34 @@ class SalesReturnViewSet(BaseCompanyViewSet):
             )
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
         try:
-            serializer.is_valid(raise_exception=True)
-            instance = serializer.save(company=request.user.company)
-            
-            # Create bad stock entries for damaged items
-            for item in instance.items.all():
-                if item.damage_quantity > 0:
-                    BadStock.objects.create(
-                        product=item.product,
-                        quantity=item.damage_quantity,
-                        company=request.user.company,
-                        reason=f"Damaged in sales return {instance.receipt_no}",
-                        reference_type='sales_return',
-                        reference_id=instance.id
-                    )
-            
-            return custom_response(
-                success=True,
-                message="Sales return created successfully.",
-                data=self.get_serializer(instance).data,
-                status_code=status.HTTP_201_CREATED
-            )
+            with db_transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                instance = serializer.save(
+                    company=request.user.company,
+                    created_by=request.user
+                )
+                
+                # Auto-approve if requested
+                auto_approve = request.data.get('auto_approve', False)
+                if auto_approve:
+                    try:
+                        instance.approve()
+                    except ValidationError as e:
+                        return custom_response(
+                            success=False,
+                            message=f"Created but could not approve: {str(e)}",
+                            data=serializer.data,
+                            status_code=status.HTTP_201_CREATED
+                        )
+                
+                return custom_response(
+                    success=True,
+                    message="Sales return created successfully.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_201_CREATED
+                )
         except serializers.ValidationError as e:
             return custom_response(
                 success=False,
@@ -148,25 +221,15 @@ class SalesReturnViewSet(BaseCompanyViewSet):
                 data=e.detail,
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
+        except ValidationError as e:
             return custom_response(
                 success=False,
                 message=str(e),
                 data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def retrieve(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            return custom_response(
-                success=True,
-                message="Sales return details fetched successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            logger.error(f"Error creating sales return: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -176,19 +239,37 @@ class SalesReturnViewSet(BaseCompanyViewSet):
 
     def update(self, request, *args, **kwargs):
         try:
-            partial = kwargs.pop('partial', False)
             instance = self.get_object()
-            serializer = self.get_serializer(instance, data=request.data, partial=partial)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-
+            
+            # Only allow update if pending
+            if instance.status != 'pending':
+                return custom_response(
+                    success=False,
+                    message=f"Cannot update {instance.status} return",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with db_transaction.atomic():
+                serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get('partial', False))
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                
+                return custom_response(
+                    success=True,
+                    message="Sales return updated successfully.",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+        except serializers.ValidationError as e:
             return custom_response(
-                success=True,
-                message="Sales return updated successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
+            logger.error(f"Error updating sales return: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -199,7 +280,17 @@ class SalesReturnViewSet(BaseCompanyViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            self.perform_destroy(instance)
+            
+            # Only allow delete if pending or rejected
+            if instance.status not in ['pending', 'rejected']:
+                return custom_response(
+                    success=False,
+                    message=f"Cannot delete {instance.status} return",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            instance.delete()
             return custom_response(
                 success=True,
                 message="Sales return deleted successfully.",
@@ -207,6 +298,151 @@ class SalesReturnViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_204_NO_CONTENT
             )
         except Exception as e:
+            logger.error(f"Error deleting sales return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve a sales return"""
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                instance.approve()
+                
+                return custom_response(
+                    success=True,
+                    message="Sales return approved successfully.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_200_OK
+                )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error approving sales return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        """Mark sales return as completed"""
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                instance.complete()
+                
+                return custom_response(
+                    success=True,
+                    message="Sales return marked as completed.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_200_OK
+                )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error completing sales return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Reject a sales return"""
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                instance.reject()
+                
+                return custom_response(
+                    success=True,
+                    message="Sales return rejected successfully.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_200_OK
+                )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error rejecting sales return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def get_stats(self, request):
+        """Get sales return statistics"""
+        try:
+            user = request.user
+            company = user.company
+            
+            # Today's returns
+            today = timezone.now().date()
+            todays_returns = SalesReturn.objects.filter(
+                company=company,
+                return_date=today
+            )
+            
+            # This month's returns
+            month_start = today.replace(day=1)
+            this_months_returns = SalesReturn.objects.filter(
+                company=company,
+                return_date__gte=month_start
+            )
+            
+            stats = {
+                'today': {
+                    'count': todays_returns.count(),
+                    'amount': todays_returns.aggregate(total=Sum('return_amount'))['total'] or 0
+                },
+                'this_month': {
+                    'count': this_months_returns.count(),
+                    'amount': this_months_returns.aggregate(total=Sum('return_amount'))['total'] or 0
+                },
+                'by_status': list(SalesReturn.objects.filter(company=company).values('status').annotate(
+                    count=Count('id'),
+                    amount=Sum('return_amount')
+                ))
+            }
+            
+            return custom_response(
+                success=True,
+                message="Statistics fetched successfully.",
+                data=stats,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -217,6 +453,7 @@ class SalesReturnViewSet(BaseCompanyViewSet):
 
 class PurchaseReturnViewSet(BaseCompanyViewSet):
     serializer_class = PurchaseReturnSerializer
+    model = PurchaseReturn
 
     def get_queryset(self):
         user = self.request.user
@@ -228,6 +465,7 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
         supplier = self.request.query_params.get('supplier', None)
+        invoice_no = self.request.query_params.get('invoice_no', None)
         
         if search:
             queryset = queryset.filter(
@@ -242,6 +480,9 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
         if supplier:
             queryset = queryset.filter(supplier__icontains=supplier)
             
+        if invoice_no:
+            queryset = queryset.filter(invoice_no__icontains=invoice_no)
+            
         if start_date and end_date:
             queryset = queryset.filter(return_date__range=[start_date, end_date])
         elif start_date:
@@ -250,6 +491,29 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
             queryset = queryset.filter(return_date__lte=end_date)
         
         return queryset.order_by('-return_date', '-id')
+    
+    def _get_summary(self, queryset):
+        """Get purchase return summary"""
+        total_count = queryset.count()
+        
+        # Status counts
+        status_counts = queryset.values('status').annotate(
+            count=Count('id'),
+            total_amount=Sum('return_amount')
+        )
+        
+        # Supplier summary
+        supplier_summary = queryset.values('supplier').annotate(
+            count=Count('id'),
+            total_amount=Sum('return_amount')
+        ).order_by('-total_amount')[:10]
+        
+        return {
+            'total_count': total_count,
+            'total_amount': queryset.aggregate(total=Sum('return_amount'))['total'] or 0,
+            'status_summary': list(status_counts),
+            'supplier_summary': list(supplier_summary)
+        }
 
     @action(detail=False, methods=['get'])
     def get_initial_data(self, request):
@@ -258,13 +522,29 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
             user = request.user
             company = user.company
             
-            # Get recent products and accounts
-            products = Product.objects.filter(company=company).values('id', 'name', 'cost_price')
-            accounts = Account.objects.filter(company=company).values('id', 'name')
+            # Get products and accounts
+            products = Product.objects.filter(company=company).values('id', 'name', 'cost_price', 'stock', 'code')
+            accounts = Account.objects.filter(company=company).values('id', 'name', 'balance', 'account_type')
+            
+            # Get recent purchases for reference
+            recent_purchases = []
+            # Uncomment if you have purchases app
+            # from purchases.models import Purchase
+            # recent_purchases = Purchase.objects.filter(company=company).order_by('-purchase_date')[:10].values(
+            #     'id', 'invoice_no', 'supplier__name', 'total_amount'
+            # )
             
             data = {
                 'products': list(products),
                 'accounts': list(accounts),
+                'recent_purchases': list(recent_purchases),
+                'payment_methods': [
+                    {'value': 'cash', 'label': 'Cash'},
+                    {'value': 'bank', 'label': 'Bank Transfer'},
+                    {'value': 'mobile', 'label': 'Mobile Banking'},
+                    {'value': 'card', 'label': 'Card'},
+                    {'value': 'credit', 'label': 'Credit'}
+                ]
             }
             
             return custom_response(
@@ -274,6 +554,7 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
+            logger.error(f"Error in get_initial_data: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -282,28 +563,34 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
             )
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
         try:
-            serializer.is_valid(raise_exception=True)
-            instance = serializer.save(company=request.user.company)
-            
-            # Create bad stock entries for returned items if needed
-            for item in instance.items.all():
-                BadStock.objects.create(
-                    product=item.product,
-                    quantity=item.quantity,
+            with db_transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                instance = serializer.save(
                     company=request.user.company,
-                    reason=f"Returned from purchase {instance.invoice_no}",
-                    reference_type='purchase_return',
-                    reference_id=instance.id
+                    created_by=request.user
                 )
-            
-            return custom_response(
-                success=True,
-                message="Purchase return created successfully.",
-                data=self.get_serializer(instance).data,
-                status_code=status.HTTP_201_CREATED
-            )
+                
+                # Auto-approve if requested
+                auto_approve = request.data.get('auto_approve', False)
+                if auto_approve:
+                    try:
+                        instance.approve()
+                    except ValidationError as e:
+                        return custom_response(
+                            success=False,
+                            message=f"Created but could not approve: {str(e)}",
+                            data=serializer.data,
+                            status_code=status.HTTP_201_CREATED
+                        )
+                
+                return custom_response(
+                    success=True,
+                    message="Purchase return created successfully.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_201_CREATED
+                )
         except serializers.ValidationError as e:
             return custom_response(
                 success=False,
@@ -311,7 +598,108 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
                 data=e.detail,
                 status_code=status.HTTP_400_BAD_REQUEST
             )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
+            logger.error(f"Error creating purchase return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve a purchase return"""
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                instance.approve()
+                
+                return custom_response(
+                    success=True,
+                    message="Purchase return approved successfully.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_200_OK
+                )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error approving purchase return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        """Mark purchase return as completed"""
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                instance.complete()
+                
+                return custom_response(
+                    success=True,
+                    message="Purchase return marked as completed.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_200_OK
+                )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error completing purchase return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Reject a purchase return"""
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                instance.reject()
+                
+                return custom_response(
+                    success=True,
+                    message="Purchase return rejected successfully.",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_200_OK
+                )
+        except ValidationError as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error rejecting purchase return: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -332,15 +720,20 @@ class BadStockViewSet(BaseCompanyViewSet):
         reference_type = self.request.query_params.get('reference_type', None)
         start_date = self.request.query_params.get('start_date', None)
         end_date = self.request.query_params.get('end_date', None)
+        product_id = self.request.query_params.get('product_id', None)
         
         if search:
             queryset = queryset.filter(
                 Q(product__name__icontains=search) |
-                Q(reason__icontains=search)
+                Q(reason__icontains=search) |
+                Q(product__code__icontains=search)
             )
         
         if reference_type:
             queryset = queryset.filter(reference_type=reference_type)
+            
+        if product_id:
+            queryset = queryset.filter(product_id=product_id)
             
         if start_date and end_date:
             queryset = queryset.filter(date__range=[start_date, end_date])
@@ -350,6 +743,29 @@ class BadStockViewSet(BaseCompanyViewSet):
             queryset = queryset.filter(date__lte=end_date)
         
         return queryset.order_by('-date', '-id')
+    
+    def _get_summary(self, queryset):
+        """Get bad stock summary"""
+        total_quantity = queryset.aggregate(total=Sum('quantity'))['total'] or 0
+        
+        # By reference type
+        by_reference_type = queryset.values('reference_type').annotate(
+            count=Count('id'),
+            total_quantity=Sum('quantity')
+        )
+        
+        # By product
+        by_product = queryset.values('product__name', 'product__code').annotate(
+            count=Count('id'),
+            total_quantity=Sum('quantity')
+        ).order_by('-total_quantity')[:10]
+        
+        return {
+            'total_count': queryset.count(),
+            'total_quantity': total_quantity,
+            'by_reference_type': list(by_reference_type),
+            'top_products': list(by_product)
+        }
 
     @action(detail=False, methods=['get'])
     def get_summary(self, request):
@@ -360,20 +776,30 @@ class BadStockViewSet(BaseCompanyViewSet):
             
             total_bad_stock = BadStock.objects.filter(company=company).count()
             total_quantity = BadStock.objects.filter(company=company).aggregate(
-                total_quantity=models.Sum('quantity')
+                total_quantity=Sum('quantity')
             )['total_quantity'] or 0
             
             by_reference_type = BadStock.objects.filter(company=company).values(
                 'reference_type'
             ).annotate(
-                count=models.Count('id'),
-                total_quantity=models.Sum('quantity')
+                count=Count('id'),
+                total_quantity=Sum('quantity')
             )
+            
+            # Monthly trend
+            monthly_trend = BadStock.objects.filter(
+                company=company,
+                date__gte=timezone.now().date().replace(day=1, month=timezone.now().month-5)
+            ).values('date__year', 'date__month').annotate(
+                count=Count('id'),
+                total_quantity=Sum('quantity')
+            ).order_by('date__year', 'date__month')
             
             data = {
                 'total_bad_stock': total_bad_stock,
                 'total_quantity': total_quantity,
-                'by_reference_type': list(by_reference_type)
+                'by_reference_type': list(by_reference_type),
+                'monthly_trend': list(monthly_trend)
             }
             
             return custom_response(
@@ -383,6 +809,47 @@ class BadStockViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_200_OK
             )
         except Exception as e:
+            logger.error(f"Error getting bad stock summary: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def create_direct(self, request):
+        """Create direct bad stock entry (not from return)"""
+        try:
+            with db_transaction.atomic():
+                data = request.data.copy()
+                data['company_id'] = request.user.company.id
+                data['reference_type'] = 'direct'
+                
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                instance = serializer.save()
+                
+                # Update product stock (decrease)
+                product = instance.product
+                product.stock = models.F('stock') - instance.quantity
+                product.save(update_fields=['stock'])
+                
+                return custom_response(
+                    success=True,
+                    message="Bad stock entry created successfully.",
+                    data=serializer.data,
+                    status_code=status.HTTP_201_CREATED
+                )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error creating direct bad stock: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
