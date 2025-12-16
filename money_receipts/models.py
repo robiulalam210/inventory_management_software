@@ -28,9 +28,10 @@ class MoneyReceipt(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
-    mr_no = models.CharField(max_length=20, blank=True)
+    mr_no = models.CharField(max_length=20, blank=True, unique=True)  # Added unique constraint
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
     sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True)
+    sale_invoice_no = models.CharField(max_length=50, blank=True, null=True)  # ADDED THIS FIELD
 
     payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES, default='overall')
     specific_invoice = models.BooleanField(default=False)
@@ -91,20 +92,18 @@ class MoneyReceipt(models.Model):
         if self.customer and self.customer.company != self.company:
             raise ValidationError("Customer must belong to the same company")
 
-   # money_receipts/models.py - FIX THE SAVE METHOD
-
     def save(self, *args, **kwargs):
         """FIXED: Safe save method with proper company validation"""
-        # Prevent recursion
-        if getattr(self, '_saving', False):
+        # Check if we're already saving to prevent recursion
+        if hasattr(self, '_currently_saving') and self._currently_saving:
             return super().save(*args, **kwargs)
         
-        self._saving = True
+        self._currently_saving = True
         
         try:
             is_new = self.pk is None
 
-            # SUCCESS: FIXED: Auto-assign company from customer or sale if not set
+            # Auto-assign company from customer or sale if not set
             if not self.company:
                 if self.customer:
                     self.company = self.customer.company
@@ -112,6 +111,8 @@ class MoneyReceipt(models.Model):
                     self.company = self.sale.company
                 elif hasattr(self, '_request_user') and hasattr(self._request_user, 'company'):
                     self.company = self._request_user.company
+                else:
+                    raise ValidationError("Company is required")
 
             # Generate MR number if new
             if is_new and not self.mr_no:
@@ -124,18 +125,17 @@ class MoneyReceipt(models.Model):
             elif self.sale:
                 self.payment_type = 'specific'
                 self.specific_invoice = True
-                # Ensure customer is set from sale and validate company
+                # Set sale_invoice_no from sale
+                if self.sale and not self.sale_invoice_no:
+                    self.sale_invoice_no = self.sale.invoice_no
+                # Ensure customer is set from sale
                 if not self.customer and self.sale.customer:
                     self.customer = self.sale.customer
-                    # SUCCESS: FIXED: Ensure customer company matches
-                    if self.customer.company != self.company:
-                        logger.warning(f"Customer company mismatch. Resetting customer.")
-                        self.customer = None
             else:
                 self.payment_type = 'overall'
                 self.specific_invoice = False
 
-            # SUCCESS: FIXED: Validate company consistency before clean
+            # Validate company consistency
             if self.customer and self.customer.company != self.company:
                 raise ValidationError("Customer must belong to the same company")
             
@@ -152,30 +152,39 @@ class MoneyReceipt(models.Model):
             super().save(*args, **kwargs)
 
             # Process payment and create transaction if completed
+            # But only if this is not a recursive save
             if (self.payment_status == 'completed' and 
-                not getattr(self, '_payment_processed', False)):
+                not hasattr(self, '_payment_already_processed')):
                 
-                self._payment_processed = True
-                self.process_payment()
-                self.create_transaction()
+                self._payment_already_processed = True
+                try:
+                    self.process_payment()
+                except Exception as e:
+                    logger.error(f"Payment processing failed for {self.mr_no}: {e}")
+                
+                try:
+                    self.create_transaction()
+                except Exception as e:
+                    logger.error(f"Transaction creation failed for {self.mr_no}: {e}")
                 
         finally:
-            self._saving = False
-
-
-  # money_receipts/models.py - FIXED _generate_mr_no METHOD
+            # Clean up the flag
+            if hasattr(self, '_currently_saving'):
+                delattr(self, '_currently_saving')
+            if hasattr(self, '_payment_already_processed'):
+                delattr(self, '_payment_already_processed')
 
     def _generate_mr_no(self):
-        """Generate company-specific sequential MR number - FIXED VERSION"""
+        """Generate company-specific sequential MR number"""
         if not self.company:
             logger.error("Cannot generate MR number: No company assigned")
             timestamp = int(timezone.now().timestamp())
             return f"MR-{timestamp}"
             
         try:
-            # SUCCESS: FIXED: Get last receipt FOR THIS COMPANY ONLY
+            # Get last receipt for this company
             last_receipt = MoneyReceipt.objects.filter(
-                company=self.company,  # SUCCESS: Only this company's receipts
+                company=self.company,
                 mr_no__isnull=False,
                 mr_no__startswith='MR-'
             ).order_by('-mr_no').first()
@@ -186,33 +195,34 @@ class MoneyReceipt(models.Model):
                     last_number = int(last_receipt.mr_no.split('-')[1])
                     new_number = last_number + 1
                 except (ValueError, IndexError):
-                    # If parsing fails, count existing receipts FOR THIS COMPANY
+                    # If parsing fails, count existing receipts
                     existing_count = MoneyReceipt.objects.filter(company=self.company).count()
                     new_number = 1001 + existing_count
             else:
-                # First receipt FOR THIS COMPANY
+                # First receipt for this company
                 existing_count = MoneyReceipt.objects.filter(company=self.company).count()
                 new_number = 1001 + existing_count
                 
             mr_no = f"MR-{new_number}"
             
-            # Check for duplicates (shouldn't happen with company filter)
-            counter = 0
-            while MoneyReceipt.objects.filter(company=self.company, mr_no=mr_no).exists() and counter < 10:
+            # Check for duplicates
+            while MoneyReceipt.objects.filter(mr_no=mr_no).exists():
                 new_number += 1
                 mr_no = f"MR-{new_number}"
-                counter += 1
                 
             return mr_no
             
         except Exception as e:
             logger.error(f"Error generating mr_no: {e}")
             timestamp = int(timezone.now().timestamp())
-            return f"MR-{timestamp}"
-        
+            random_suffix = ''.join(random.choices(string.digits, k=4))
+            return f"MR-{timestamp}-{random_suffix}"
+
     def process_payment(self):
         """Process payment based on type"""
         try:
+            logger.info(f"Processing payment for {self.mr_no} - Type: {self.payment_type}, Amount: {self.amount}")
+            
             if self.is_advance_payment:
                 return self._process_advance_payment()
             elif self.payment_type == 'specific' and self.sale:
@@ -223,94 +233,109 @@ class MoneyReceipt(models.Model):
             # Mark as failed if processing fails
             self.payment_status = 'failed'
             self.save(update_fields=['payment_status'])
-            logger.error(f"Payment processing failed for {self.mr_no}: {str(e)}")
+            logger.error(f"Payment processing failed for {self.mr_no}: {str(e)}", exc_info=True)
             return False
 
     def _process_advance_payment(self):
         """Process advance payment - add to customer balance"""
         if not self.customer:
-            logger.error("Cannot process advance payment: No customer specified")
+            logger.error(f"Cannot process advance payment: No customer specified for {self.mr_no}")
             return False
 
         try:
+            # Get fresh customer object
+            customer = Customer.objects.get(id=self.customer.id)
+            
             # Update customer's advance balance
-            self.customer.advance_balance += self.amount
-            self.customer.save(update_fields=['advance_balance'])
-            logger.info(f"Advance payment processed for {self.customer.name}: {self.amount}")
+            customer.advance_balance += self.amount
+            customer.save(update_fields=['advance_balance'])
+            
+            logger.info(f"Advance payment processed for {customer.name}: {self.amount}. New balance: {customer.advance_balance}")
             return True
+        except Customer.DoesNotExist:
+            logger.error(f"Customer not found for advance payment: {self.mr_no}")
+            return False
         except Exception as e:
-            logger.error(f"Error processing advance payment: {e}")
+            logger.error(f"Error processing advance payment for {self.mr_no}: {e}")
             return False
 
     def _process_specific_invoice_payment(self):
         """Process payment for a specific invoice"""
         if not self.sale:
-            logger.error("Cannot process specific payment: No sale specified")
+            logger.error(f"Cannot process specific payment: No sale specified for {self.mr_no}")
             return False
 
         try:
             from sales.models import Sale
             
-            # Get fresh sale object to avoid stale data
+            # Get fresh sale object
             sale = Sale.objects.get(id=self.sale.id)
             
             # If sale is already paid, treat as advance
             if sale.due_amount <= 0:
                 if sale.customer:
+                    # Update customer advance balance
                     sale.customer.advance_balance += self.amount
                     sale.customer.save(update_fields=['advance_balance'])
                     logger.info(f"Payment for paid invoice {sale.invoice_no} treated as advance: {self.amount}")
                 return True
             
-            # Validate payment amount
+            # Check if amount exceeds due amount
             if self.amount > sale.due_amount:
                 # Only pay the due amount, treat rest as advance
                 payment_amount = sale.due_amount
                 advance_amount = self.amount - sale.due_amount
                 
-                # Process payment
+                # Update sale
                 sale.paid_amount += payment_amount
                 sale.due_amount = Decimal('0.00')
                 sale.payment_status = 'paid'
                 
-                # Save sale WITHOUT triggering money receipt
-                sale._skip_money_receipt = True
-                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
+                # Save sale
+                sale._skip_money_receipt = True  # Prevent recursive money receipt creation
+                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status', 'updated_at'])
                 
                 # Process advance if any
                 if advance_amount > 0 and sale.customer:
                     sale.customer.advance_balance += advance_amount
                     sale.customer.save(update_fields=['advance_balance'])
-                    logger.info(f"Excess payment {advance_amount} treated as advance")
+                    logger.info(f"Excess payment {advance_amount} treated as advance for invoice {sale.invoice_no}")
                     
             else:
                 # Normal payment
                 sale.paid_amount += self.amount
-                sale.due_amount = sale.due_amount - self.amount
+                sale.due_amount -= self.amount
                 sale.payment_status = 'paid' if sale.due_amount == 0 else 'partial'
                 
-                # Save sale WITHOUT triggering money receipt
-                sale._skip_money_receipt = True
-                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
+                # Save sale
+                sale._skip_money_receipt = True  # Prevent recursive money receipt creation
+                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status', 'updated_at'])
 
-            logger.info(f"Payment processed for {sale.invoice_no}: {self.amount}")
+            logger.info(f"Payment processed for {sale.invoice_no}: {self.amount}. New paid: {sale.paid_amount}, New due: {sale.due_amount}")
             return True
             
+        except Sale.DoesNotExist:
+            logger.error(f"Sale not found for payment: {self.mr_no}")
+            return False
         except Exception as e:
-            logger.error(f"Error processing specific invoice payment: {e}")
+            logger.error(f"Error processing specific invoice payment for {self.mr_no}: {e}")
             return False
 
     def _process_overall_payment(self):
         """Process payment for all due invoices of the customer"""
         if not self.customer:
-            logger.error("Cannot process overall payment: No customer specified")
+            logger.error(f"Cannot process overall payment: No customer specified for {self.mr_no}")
             return False
 
         try:
             from sales.models import Sale
 
+            # Get fresh customer object
+            customer = Customer.objects.get(id=self.customer.id)
+            
+            # Get all due sales for this customer
             due_sales = Sale.objects.filter(
-                customer=self.customer,
+                customer=customer,
                 company=self.company,
                 due_amount__gt=0
             ).order_by('sale_date')
@@ -324,27 +349,30 @@ class MoneyReceipt(models.Model):
 
                 applied = min(remaining, sale.due_amount)
                 sale.paid_amount += applied
-                sale.due_amount = sale.due_amount - applied
+                sale.due_amount -= applied
                 sale.payment_status = 'paid' if sale.due_amount == 0 else 'partial'
                 
-                # Save sale WITHOUT triggering money receipt
+                # Save sale without triggering money receipt
                 sale._skip_money_receipt = True
-                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status'])
+                sale.save(update_fields=['paid_amount', 'due_amount', 'payment_status', 'updated_at'])
                 
                 remaining -= applied
                 processed_any = True
-                logger.info(f"Applied {applied} to invoice {sale.invoice_no}")
+                logger.info(f"Applied {applied} to invoice {sale.invoice_no}. Remaining: {remaining}")
 
             # Treat remaining as advance
             if remaining > 0:
-                self.customer.advance_balance += remaining
-                self.customer.save(update_fields=['advance_balance'])
-                logger.info(f"Remaining {remaining} added as advance for {self.customer.name}")
+                customer.advance_balance += remaining
+                customer.save(update_fields=['advance_balance'])
+                logger.info(f"Remaining {remaining} added as advance for {customer.name}. New balance: {customer.advance_balance}")
 
             return processed_any or remaining > 0
             
+        except Customer.DoesNotExist:
+            logger.error(f"Customer not found for overall payment: {self.mr_no}")
+            return False
         except Exception as e:
-            logger.error(f"Error processing overall payment: {e}")
+            logger.error(f"Error processing overall payment for {self.mr_no}: {e}")
             return False
 
     def create_transaction(self):
@@ -354,7 +382,7 @@ class MoneyReceipt(models.Model):
             return None
 
         # Check if transaction already exists
-        if hasattr(self, 'transaction') and self.transaction:
+        if self.transaction:
             logger.info(f"Money receipt {self.mr_no} already has transaction")
             return self.transaction
 
@@ -362,6 +390,9 @@ class MoneyReceipt(models.Model):
             from transactions.models import Transaction
             transaction = Transaction.create_for_money_receipt(self)
             if transaction:
+                # Link the transaction
+                self.transaction = transaction
+                self.save(update_fields=['transaction'])
                 logger.info(f"Transaction created for money receipt {self.mr_no}: {transaction.transaction_no}")
             return transaction
             
@@ -389,9 +420,11 @@ class MoneyReceipt(models.Model):
             })
         elif self.payment_type == 'specific' and self.sale:
             try:
+                # Get fresh sale data
                 from sales.models import Sale
                 sale = Sale.objects.get(id=self.sale.id)
                 
+                # Calculate before payment values
                 previous_paid = float(sale.paid_amount - self.amount)
                 previous_due = float(sale.due_amount + self.amount)
 
@@ -432,28 +465,36 @@ class MoneyReceipt(models.Model):
 
     @classmethod
     def create_auto_receipt(cls, sale, created_by=None):
-        """Create money receipt automatically for sale"""
+        """Create money receipt automatically for sale - FIXED VERSION"""
         if sale.paid_amount <= 0:
             return None
+        
+        # Check if auto receipt already exists for this sale
+        existing = cls.objects.filter(sale=sale, payment_type='specific').first()
+        if existing:
+            logger.info(f"Auto receipt already exists for sale {sale.invoice_no}: {existing.mr_no}")
+            return existing
 
         try:
             receipt = cls(
                 company=sale.company,
                 customer=sale.customer,
                 sale=sale,
+                sale_invoice_no=sale.invoice_no,
                 payment_type='specific',
                 specific_invoice=True,
                 amount=sale.paid_amount,
                 payment_method=sale.payment_method or 'Cash',
                 payment_date=timezone.now(),
-                remark=f"Auto-generated receipt - {sale.invoice_no}",
+                remark=f"Auto receipt for {sale.invoice_no}",
                 seller=sale.sale_by,
                 account=sale.account,
                 created_by=created_by or sale.created_by,
                 payment_status='completed'
             )
 
-            setattr(receipt, '_auto_created', True)
+            # Mark as auto-created to prevent recursion
+            receipt._skip_payment_processing = True
             receipt.save()
             return receipt
             
@@ -469,6 +510,7 @@ class MoneyReceipt(models.Model):
                 company=company,
                 customer=customer,
                 sale=None,
+                sale_invoice_no=None,
                 payment_type='advance',
                 specific_invoice=False,
                 is_advance_payment=True,
