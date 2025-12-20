@@ -255,7 +255,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_unit_info(self, obj):
         if obj.unit:
-            return {'id': obj.unit.id, 'name': obj.unit.name}
+            return {'id': obj.unit.id, 'name': obj.unit.name,'code': obj.unit.code  }
         return None
 
     def get_brand_info(self, obj):

@@ -1,10 +1,11 @@
-# returns/views.py
+# returns/views.py - COMPLETE FIXED VERSION
 from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Q, Sum, Count
 from django.db import transaction as db_transaction
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
 from .models import SalesReturn, PurchaseReturn, BadStock, SalesReturnItem, PurchaseReturnItem
@@ -14,6 +15,7 @@ from accounts.models import Account
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     """Filters queryset by logged-in user's company"""
@@ -146,7 +148,7 @@ class SalesReturnViewSet(BaseCompanyViewSet):
             company = user.company
             
             # Get products and accounts
-            products = Product.objects.filter(company=company).values('id', 'name', 'price', 'stock', 'code')
+            products = Product.objects.filter(company=company).values('id', 'name', 'price', 'stock_qty', 'code')
             accounts = Account.objects.filter(company=company).values('id', 'name', 'balance', 'account_type')
             
             # Get recent sales for reference
@@ -523,7 +525,7 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
             company = user.company
             
             # Get products and accounts
-            products = Product.objects.filter(company=company).values('id', 'name', 'cost_price', 'stock', 'code')
+            products = Product.objects.filter(company=company).values('id', 'name', 'cost_price', 'stock_qty', 'code')
             accounts = Account.objects.filter(company=company).values('id', 'name', 'balance', 'account_type')
             
             # Get recent purchases for reference
@@ -614,6 +616,76 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    def update(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            
+            # Only allow update if pending
+            if instance.status != 'pending':
+                return custom_response(
+                    success=False,
+                    message=f"Cannot update {instance.status} return",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with db_transaction.atomic():
+                serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get('partial', False))
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                
+                return custom_response(
+                    success=True,
+                    message="Purchase return updated successfully.",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error updating purchase return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            
+            # Only allow delete if pending or rejected
+            if instance.status not in ['pending', 'rejected']:
+                return custom_response(
+                    success=False,
+                    message=f"Cannot delete {instance.status} return",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            instance.delete()
+            return custom_response(
+                success=True,
+                message="Purchase return deleted successfully.",
+                data=None,
+                status_code=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            logger.error(f"Error deleting purchase return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # CRITICAL FIX: ADD @action DECORATOR HERE
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve a purchase return"""
@@ -645,6 +717,7 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # CRITICAL FIX: ADD @action DECORATOR HERE
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
         """Mark purchase return as completed"""
@@ -676,6 +749,7 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # CRITICAL FIX: ADD @action DECORATOR HERE
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject a purchase return"""
@@ -700,6 +774,57 @@ class PurchaseReturnViewSet(BaseCompanyViewSet):
             )
         except Exception as e:
             logger.error(f"Error rejecting purchase return: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'])
+    def get_stats(self, request):
+        """Get purchase return statistics"""
+        try:
+            user = request.user
+            company = user.company
+            
+            # Today's returns
+            today = timezone.now().date()
+            todays_returns = PurchaseReturn.objects.filter(
+                company=company,
+                return_date=today
+            )
+            
+            # This month's returns
+            month_start = today.replace(day=1)
+            this_months_returns = PurchaseReturn.objects.filter(
+                company=company,
+                return_date__gte=month_start
+            )
+            
+            stats = {
+                'today': {
+                    'count': todays_returns.count(),
+                    'amount': todays_returns.aggregate(total=Sum('return_amount'))['total'] or 0
+                },
+                'this_month': {
+                    'count': this_months_returns.count(),
+                    'amount': this_months_returns.aggregate(total=Sum('return_amount'))['total'] or 0
+                },
+                'by_status': list(PurchaseReturn.objects.filter(company=company).values('status').annotate(
+                    count=Count('id'),
+                    amount=Sum('return_amount')
+                ))
+            }
+            
+            return custom_response(
+                success=True,
+                message="Statistics fetched successfully.",
+                data=stats,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
             return custom_response(
                 success=False,
                 message=str(e),
@@ -767,6 +892,87 @@ class BadStockViewSet(BaseCompanyViewSet):
             'top_products': list(by_product)
         }
 
+    def create(self, request, *args, **kwargs):
+        try:
+            with db_transaction.atomic():
+                serializer = self.get_serializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save(
+                    company=request.user.company
+                )
+                
+                return custom_response(
+                    success=True,
+                    message="Bad stock entry created successfully.",
+                    data=serializer.data,
+                    status_code=status.HTTP_201_CREATED
+                )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error creating bad stock: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def update(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            
+            with db_transaction.atomic():
+                serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get('partial', False))
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                
+                return custom_response(
+                    success=True,
+                    message="Bad stock entry updated successfully.",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error.",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error updating bad stock: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+            instance.delete()
+            return custom_response(
+                success=True,
+                message="Bad stock entry deleted successfully.",
+                data=None,
+                status_code=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            logger.error(f"Error deleting bad stock: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=False, methods=['get'])
     def get_summary(self, request):
         """Get bad stock summary"""
@@ -823,7 +1029,7 @@ class BadStockViewSet(BaseCompanyViewSet):
         try:
             with db_transaction.atomic():
                 data = request.data.copy()
-                data['company_id'] = request.user.company.id
+                data['company'] = request.user.company.id
                 data['reference_type'] = 'direct'
                 
                 serializer = self.get_serializer(data=data)
@@ -832,8 +1038,9 @@ class BadStockViewSet(BaseCompanyViewSet):
                 
                 # Update product stock (decrease)
                 product = instance.product
-                product.stock = models.F('stock') - instance.quantity
-                product.save(update_fields=['stock'])
+                if hasattr(product, 'stock_qty'):
+                    product.stock_qty -= instance.quantity
+                    product.save(update_fields=['stock_qty', 'updated_at'])
                 
                 return custom_response(
                     success=True,
