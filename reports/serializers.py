@@ -1,4 +1,4 @@
-# reports/serializers.py
+# reports/serializers.py - UPDATED VERSION
 from rest_framework import serializers
 from expenses.models import Expense
 
@@ -110,8 +110,6 @@ class ProfitLossReportSerializer(serializers.Serializer):
     expense_breakdown = serializers.ListField(required=False)
     date_range = serializers.DictField(required=False)
 
-
-# serializers.py - Add this serializer
 class PurchaseReturnReportSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
     invoice_no = serializers.CharField()
@@ -119,7 +117,6 @@ class PurchaseReturnReportSerializer(serializers.Serializer):
     total_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     return_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     date = serializers.DateField()
-
     
 class SalesReturnReportSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
@@ -129,13 +126,20 @@ class SalesReturnReportSerializer(serializers.Serializer):
     return_amount = serializers.FloatField()
     date = serializers.DateField()
 
+# FIXED: Added missing fields to TopSoldProductsSerializer
 class TopSoldProductsSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
     product_name = serializers.CharField()
     selling_price = serializers.FloatField()
+    purchase_price = serializers.FloatField(required=False)
     total_sold_quantity = serializers.IntegerField()
     total_sold_price = serializers.FloatField()
-    product_id = serializers.IntegerField(required=False)
+    total_profit = serializers.FloatField(required=False)
+    current_stock = serializers.IntegerField(required=False)
+    product_id = serializers.IntegerField()
+    
+    class Meta:
+        fields = '__all__'
 
 class LowStockSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
@@ -205,15 +209,23 @@ class SupplierLedgerSerializer(serializers.Serializer):
     supplier_id = serializers.IntegerField()
     supplier_name = serializers.CharField()
 
+# FIXED: Added missing fields to CustomerDueAdvanceSerializer
 class CustomerDueAdvanceSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
     customer_no = serializers.IntegerField(source='customer_id')
     customer_name = serializers.CharField()
     phone = serializers.CharField()
     email = serializers.CharField()
+    total_sales = serializers.FloatField()
+    total_received = serializers.FloatField()
     present_due = serializers.FloatField()
     present_advance = serializers.FloatField()
+    total_transactions = serializers.IntegerField(required=False)
+    total_payments = serializers.FloatField(required=False)
     customer_id = serializers.IntegerField()
+    
+    class Meta:
+        fields = '__all__'
 
 class CustomerLedgerSerializer(serializers.Serializer):
     sl = serializers.IntegerField()

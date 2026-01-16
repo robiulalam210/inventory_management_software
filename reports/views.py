@@ -6,7 +6,6 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 from decimal import Decimal
 from django.utils import timezone
-
 from django.db.models import Sum, Count, F
 from django.db.models.functions import TruncDate
 from datetime import datetime, timedelta
@@ -56,27 +55,72 @@ class SalesReportView(BaseReportView):
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
             
+            # ===== DEBUG LOGS =====
+            print(f"=== SALES REPORT DEBUG ===")
+            print(f"Company ID: {company.id}")
+            print(f"Request GET params: {dict(request.GET)}")
+            print(f"Parsed start date: {start}")
+            print(f"Parsed end date: {end}")
+            print(f"Filters: {filters}")
+            
             sales = Sale.objects.filter(company=company).select_related(
                 'customer', 'sale_by'
             ).prefetch_related(
                 'items', 'items__product'
             ).order_by('-sale_date')
             
-            if start and end:
-                sales = sales.filter(sale_date__date__range=[start, end])
+            print(f"Total sales in company (before filters): {sales.count()}")
             
+            # ===== FIXED DATE FILTERING =====
+            if start and end:
+                print(f"Applying date filter: {start} to {end}")
+                
+                # IMPORTANT: Convert dates to datetimes for proper comparison
+                # Since sale_date is DateTimeField, we need to use __range with datetimes
+                start_datetime = datetime.combine(start, datetime.min.time())
+                end_datetime = datetime.combine(end, datetime.max.time())
+                
+                print(f"Start datetime: {start_datetime}")
+                print(f"End datetime: {end_datetime}")
+                
+                # Option 1: Use __range with datetimes (recommended)
+                sales = sales.filter(sale_date__range=[start_datetime, end_datetime])
+                
+                print(f"Sales after date filter: {sales.count()}")
+                
+                # DEBUG: Check what dates are actually in the filtered sales
+                if sales.exists():
+                    print("Sample sales dates after filter:")
+                    for sale in sales[:5]:  # First 5
+                        print(f"  - {sale.invoice_no}: {sale.sale_date}")
+                else:
+                    print("No sales found with date filter!")
+                    
+                    # DEBUG: Check if sales exist outside the filter range
+                    all_sales = Sale.objects.filter(company=company)
+                    print(f"All sales dates in database (first 10):")
+                    for sale in all_sales.order_by('sale_date')[:10]:
+                        print(f"  - {sale.invoice_no}: {sale.sale_date} (Year: {sale.sale_date.year})")
+            
+            # ===== OTHER FILTERS =====
             filter_q = Q()
             if filters.get('customer'):
                 filter_q &= Q(customer_id=filters['customer'])
+                print(f"Applying customer filter: {filters['customer']}")
             if filters.get('payment_status'):
                 filter_q &= Q(payment_status=filters['payment_status'])
+                print(f"Applying payment status filter: {filters['payment_status']}")
             if filters.get('sale_type'):
                 filter_q &= Q(sale_type=filters['sale_type'])
+                print(f"Applying sale type filter: {filters['sale_type']}")
             if filters.get('invoice_no'):
                 filter_q &= Q(invoice_no__icontains=filters['invoice_no'])
+                print(f"Applying invoice no filter: {filters['invoice_no']}")
             
             sales = sales.filter(filter_q)
-
+            print(f"Sales after all filters: {sales.count()}")
+            
+            # ===== BUILD REPORT DATA =====
             report_data = []
             sl_number = 1
             
@@ -84,6 +128,7 @@ class SalesReportView(BaseReportView):
                 sales_price = 0.0
                 cost_price = 0.0
                 
+                # Calculate totals from items
                 for item in sale.items.all():
                     item_sales_price = (item.quantity or 0) * (item.unit_price or 0)
                     sales_price += float(item_sales_price)
@@ -103,6 +148,8 @@ class SalesReportView(BaseReportView):
                     sales_by = "Unknown"
                 
                 net_amount = sales_price
+                
+                # Apply amount filters if provided
                 if filters.get('min_amount') and net_amount < float(filters['min_amount']):
                     continue
                 if filters.get('max_amount') and net_amount > float(filters['max_amount']):
@@ -125,6 +172,9 @@ class SalesReportView(BaseReportView):
                 })
                 sl_number += 1
             
+            print(f"Final report data count: {len(report_data)}")
+            
+            # ===== RETURN RESPONSE =====
             serializer = SalesReportSerializer(report_data, many=True)
             summary = self._build_sales_summary(report_data, (start, end))
             
@@ -137,16 +187,27 @@ class SalesReportView(BaseReportView):
                 }
             }
             
+            print(f"=== END SALES REPORT DEBUG ===\n")
+            
             return custom_response(True, "Sales report fetched successfully", response_data)
             
         except Exception as e:
+            print(f"ERROR in SalesReportView: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return self.handle_exception(e)
     
     def _build_sales_summary(self, report_data, date_range):
         if not report_data:
+            print("No report data to build summary")
             return {
-                'total_sales': 0, 'total_cost': 0, 'total_profit': 0,
-                'total_collected': 0, 'total_due': 0, 'average_profit_margin': 0,
+                'total_sales': 0, 
+                'total_cost': 0, 
+                'total_profit': 0,
+                'total_collected': 0, 
+                'total_due': 0, 
+                'average_profit_margin': 0,
+                'total_transactions': 0,
                 'date_range': {
                     'start': date_range[0].isoformat() if date_range[0] else None,
                     'end': date_range[1].isoformat() if date_range[1] else None
@@ -348,7 +409,7 @@ class LowStockReportView(BaseReportView):
             return self.handle_exception(e)
 
 # --------------------
-# Top Sold Products Report - Updated Format
+# Top Sold Products Report - FIXED VERSION
 # --------------------
 class TopSoldProductsReportView(BaseReportView):
     @method_decorator(cache_page(600))
@@ -357,58 +418,125 @@ class TopSoldProductsReportView(BaseReportView):
             company = self.get_company(request)
             start, end = self.get_date_range(request)
             
-            sale_items = SaleItem.objects.filter(
+            # Debug logs
+            print(f"=== TOP PRODUCTS DEBUG ===")
+            print(f"Company: {company.id}")
+            print(f"Date range: {start} to {end}")
+            print(f"GET params: {dict(request.GET)}")
+            
+            # First get sale items for the date range
+            sale_items_query = SaleItem.objects.filter(
                 sale__company=company
-            ).select_related('product')
+            ).select_related('product', 'product__category', 'product__brand')
             
+            # Apply date filter correctly
             if start and end:
-                sale_items = sale_items.filter(sale__sale_date__date__range=[start, end])
+                # Convert dates to datetimes for proper comparison
+                start_datetime = datetime.combine(start, datetime.min.time())
+                end_datetime = datetime.combine(end, datetime.max.time())
+                sale_items_query = sale_items_query.filter(
+                    sale__sale_date__range=[start_datetime, end_datetime]
+                )
             
+            # Apply category filter
             category_id = request.GET.get('category')
             if category_id:
-                sale_items = sale_items.filter(product__category_id=category_id)
+                sale_items_query = sale_items_query.filter(product__category_id=category_id)
             
+            # Get limit
             limit = int(request.GET.get('limit', 10))
             
-            product_totals = sale_items.values(
-                'product__id', 'product__name', 'product__selling_price'
+            # Group by product and aggregate
+            product_stats = sale_items_query.values(
+                'product__id',
+                'product__name',
+                'product__selling_price',
+                'product__purchase_price',
+                'product__stock_qty'
             ).annotate(
-                quantity_sold=Sum('quantity'),
-                total_sales=Sum(F('quantity') * F('unit_price'), output_field=FloatField())
-            ).order_by('-quantity_sold')[:limit]
+                total_quantity_sold=Coalesce(Sum('quantity'), 0),
+                total_sales_amount=Coalesce(
+                    Sum(F('quantity') * F('unit_price')),
+                    0,
+                    output_field=FloatField()
+                )
+            ).order_by('-total_quantity_sold')[:limit]
             
+            print(f"Found {len(product_stats)} products with sales data")
+            
+            # Prepare report data
             report_data = []
             sl_number = 1
             
-            for item in product_totals:
+            for stat in product_stats:
+                # Calculate profit
+                purchase_price = stat.get('product__purchase_price', 0) or 0
+                selling_price = stat.get('product__selling_price', 0) or 0
+                profit_per_unit = selling_price - purchase_price
+                total_profit = profit_per_unit * stat['total_quantity_sold']
+                
                 report_data.append({
                     'sl': sl_number,
-                    'product_name': item['product__name'],
-                    'selling_price': float(item['product__selling_price'] or 0),
-                    'total_sold_quantity': item['quantity_sold'] or 0,
-                    'total_sold_price': float(item['total_sales'] or 0),
-                    'product_id': item['product__id']
+                    'product_name': stat['product__name'],
+                    'selling_price': float(selling_price),
+                    'purchase_price': float(purchase_price),
+                    'total_sold_quantity': stat['total_quantity_sold'],
+                    'total_sold_price': float(stat['total_sales_amount']),
+                    'total_profit': float(total_profit),
+                    'current_stock': stat.get('product__stock_qty', 0),
+                    'product_id': stat['product__id']
                 })
                 sl_number += 1
             
+            # If no data found, show all products with zero sales
+            if not report_data:
+                print("No sales found, showing all products...")
+                products = Product.objects.filter(company=company).order_by('-stock_qty')[:limit]
+                
+                for product in products:
+                    report_data.append({
+                        'sl': sl_number,
+                        'product_name': product.name,
+                        'selling_price': float(product.selling_price or 0),
+                        'purchase_price': float(product.purchase_price or 0),
+                        'total_sold_quantity': 0,
+                        'total_sold_price': 0,
+                        'total_profit': 0,
+                        'current_stock': product.stock_qty,
+                        'product_id': product.id
+                    })
+                    sl_number += 1
+            
             serializer = TopSoldProductsSerializer(report_data, many=True)
+            
+            # Calculate summary
+            total_quantity = sum(item['total_sold_quantity'] for item in report_data)
+            total_sales = sum(item['total_sold_price'] for item in report_data)
+            total_profit = sum(item['total_profit'] for item in report_data)
             
             response_data = {
                 'report': serializer.data,
                 'summary': {
                     'total_products': len(report_data),
-                    'total_quantity_sold': sum(item['total_sold_quantity'] for item in report_data),
-                    'total_sales': sum(item['total_sold_price'] for item in report_data),
+                    'total_quantity_sold': total_quantity,
+                    'total_sales_amount': round(total_sales, 2),
+                    'total_profit': round(total_profit, 2),
                     'date_range': {
                         'start': start.isoformat() if start else None,
                         'end': end.isoformat() if end else None
-                    }
+                    },
+                    'limit_used': limit
                 }
             }
+            
+            print(f"=== END TOP PRODUCTS DEBUG ===\n")
             
             return custom_response(True, "Top sold products report fetched successfully", response_data)
             
         except Exception as e:
+            print(f"ERROR in TopSoldProductsReportView: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return self.handle_exception(e)
 
 # --------------------
@@ -501,7 +629,6 @@ class SupplierDueAdvanceReportView(BaseReportView):
 # --------------------
 # Supplier Ledger Details - Updated Format
 # --------------------
-
 class SupplierLedgerReportView(BaseReportView):
     filter_serializer_class = SupplierLedgerFilterSerializer
     
@@ -753,8 +880,9 @@ class SupplierLedgerReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
+
 # --------------------
-# Customer Due & Advance Report - Updated Format
+# Customer Due & Advance Report - FIXED VERSION
 # --------------------
 class CustomerDueAdvanceReportView(BaseReportView):
     filter_serializer_class = CustomerDueAdvanceFilterSerializer
@@ -765,83 +893,155 @@ class CustomerDueAdvanceReportView(BaseReportView):
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
             
+            print(f"=== CUSTOMER DUE DEBUG ===")
+            print(f"Company: {company.id}")
+            print(f"Filters: {filters}")
+            print(f"Date range: {start} to {end}")
+            
             from customers.models import Customer
             customers = Customer.objects.filter(company=company, is_active=True)
             
             if filters.get('customer'):
                 customers = customers.filter(id=filters['customer'])
+                print(f"Filtered by customer ID: {filters['customer']}")
+            
+            print(f"Total active customers: {customers.count()}")
             
             report_data = []
             sl_number = 1
             
             for customer in customers:
-                sales = Sale.objects.filter(
+                # Get sales for this customer
+                sales_query = Sale.objects.filter(
                     company=company, 
                     customer=customer
                 )
                 
+                # Apply date range filter
                 if start and end:
-                    sales = sales.filter(sale_date__date__range=[start, end])
+                    start_datetime = datetime.combine(start, datetime.min.time())
+                    end_datetime = datetime.combine(end, datetime.max.time())
+                    sales_query = sales_query.filter(sale_date__range=[start_datetime, end_datetime])
                 
-                sales_totals = sales.aggregate(
-                    total_sales=Sum('grand_total'),
-                    total_received=Sum('paid_amount'),
+                # Get totals - FIXED with output_field
+                sales_totals = sales_query.aggregate(
+                    total_sales=Coalesce(Sum('grand_total', output_field=FloatField()), 0.0),
+                    total_received=Coalesce(Sum('paid_amount', output_field=FloatField()), 0.0),
+                    total_discount=Coalesce(Sum('overall_discount', output_field=FloatField()), 0.0),
                     count=Count('id')
                 )
                 
+                # Convert to float
                 total_sales = float(sales_totals['total_sales'] or 0)
                 total_received = float(sales_totals['total_received'] or 0)
-                present_due = max(0, total_sales - total_received)
-                present_advance = max(0, total_received - total_sales)
+                total_discount = float(sales_totals['total_discount'] or 0)
                 
-                if filters.get('status') != 'all':
-                    if filters['status'] == 'due' and present_due <= 0:
-                        continue
-                    elif filters['status'] == 'advance' and present_advance <= 0:
-                        continue
+                # Calculate due and advance
+                net_sales = total_sales - total_discount
+                present_due = max(0.0, net_sales - total_received)
+                present_advance = max(0.0, total_received - net_sales)
                 
-                if total_sales > 0 or filters.get('status') != 'all':
-                    report_data.append({
-                        'sl': sl_number,
-                        'customer_no': customer.id,
-                        'customer_name': customer.name,
-                        'phone': customer.phone or 'N/A',
-                        'email': customer.email or 'N/A',
-                        'present_due': round(present_due, 2),
-                        'present_advance': round(present_advance, 2),
-                        'customer_id': customer.id
-                    })
-                    sl_number += 1
+                print(f"Customer {customer.name}: Sales={net_sales}, Received={total_received}, Due={present_due}, Advance={present_advance}")
+                
+                # Apply status filter
+                status_filter = filters.get('status', 'all')
+                
+                if status_filter == 'due' and present_due <= 0:
+                    continue  # Skip if no due and filter is for due only
+                elif status_filter == 'advance' and present_advance <= 0:
+                    continue  # Skip if no advance and filter is for advance only
+                elif status_filter == 'all' and present_due == 0 and present_advance == 0 and total_sales == 0:
+                    # Skip customers with no activity if showing all
+                    continue
+                
+                # Get payment summary if needed
+                try:
+                    from money_receipts.models import MoneyReceipt
+                    payments = MoneyReceipt.objects.filter(
+                        company=company,
+                        customer=customer
+                    )
+                    if start and end:
+                        start_datetime = datetime.combine(start, datetime.min.time())
+                        end_datetime = datetime.combine(end, datetime.max.time())
+                        payments = payments.filter(payment_date__range=[start_datetime, end_datetime])
+                    
+                    total_payments = payments.aggregate(
+                        total=Coalesce(Sum('amount', output_field=FloatField()), 0.0)
+                    )['total'] or 0
+                except ImportError:
+                    total_payments = 0
+                
+                # Add to report
+                report_data.append({
+                    'sl': sl_number,
+                    'customer_no': customer.id,
+                    'customer_name': customer.name,
+                    'phone': customer.phone or 'N/A',
+                    'email': customer.email or 'N/A',
+                    'total_sales': round(net_sales, 2),
+                    'total_received': round(total_received, 2),
+                    'present_due': round(present_due, 2),
+                    'present_advance': round(present_advance, 2),
+                    'total_transactions': sales_totals['count'],
+                    'total_payments': round(float(total_payments), 2),
+                    'customer_id': customer.id
+                })
+                sl_number += 1
             
-            report_data.sort(key=lambda x: x['present_due'] or x['present_advance'], reverse=True)
+            # Sort based on filter
+            if filters.get('status') == 'due':
+                report_data.sort(key=lambda x: x['present_due'], reverse=True)
+            elif filters.get('status') == 'advance':
+                report_data.sort(key=lambda x: x['present_advance'], reverse=True)
+            else:
+                report_data.sort(key=lambda x: max(x['present_due'], x['present_advance']), reverse=True)
+            
+            # Update SL numbers after sorting
+            for i, item in enumerate(report_data, 1):
+                item['sl'] = i
+            
+            print(f"Final report items: {len(report_data)}")
             
             serializer = CustomerDueAdvanceSerializer(report_data, many=True)
             
+            # Calculate summary
             total_customers = len(report_data)
             total_overall_due = sum(item['present_due'] for item in report_data)
             total_overall_advance = sum(item['present_advance'] for item in report_data)
+            total_overall_sales = sum(item['total_sales'] for item in report_data)
+            total_overall_received = sum(item['total_received'] for item in report_data)
             
             response_data = {
                 'report': self.paginate_data(serializer.data),
                 'summary': {
                     'total_customers': total_customers,
+                    'total_sales_amount': round(total_overall_sales, 2),
+                    'total_received_amount': round(total_overall_received, 2),
                     'total_due_amount': round(total_overall_due, 2),
                     'total_advance_amount': round(total_overall_advance, 2),
                     'net_balance': round(total_overall_advance - total_overall_due, 2),
                     'date_range': {
                         'start': start.isoformat() if start else None,
                         'end': end.isoformat() if end else None
-                    }
+                    },
+                    'filter_status': filters.get('status', 'all')
                 }
             }
+            
+            print(f"=== END CUSTOMER DUE DEBUG ===\n")
             
             return custom_response(True, "Customer due & advance report fetched successfully", response_data)
             
         except Exception as e:
+            print(f"ERROR in CustomerDueAdvanceReportView: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return self.handle_exception(e)
+        
 
 # --------------------
-# Customer Ledger Details - Updated Format
+# Customer Ledger Details - ASCII-SAFE VERSION
 # --------------------
 class CustomerLedgerReportView(BaseReportView):
     filter_serializer_class = CustomerLedgerFilterSerializer
@@ -852,109 +1052,212 @@ class CustomerLedgerReportView(BaseReportView):
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
             
+            # ASCII-safe debug output
+            print("\n=== CUSTOMER LEDGER DEBUG ===")
+            print(f"Company ID: {company.id}")
+            print(f"Customer ID from filters: {filters.get('customer')}")
+            print(f"Date range: {start} to {end}")
+            
             if not filters.get('customer'):
                 return custom_response(False, "Customer ID is required for ledger report", None, 400)
             
             from customers.models import Customer
+            
+            # ASCII-safe customer lookup
             try:
                 customer = Customer.objects.get(id=filters['customer'], company=company)
+                print(f"[SUCCESS] Found customer: {customer.name} (ID: {customer.id})")
             except Customer.DoesNotExist:
                 return custom_response(False, "Customer not found", None, 404)
             
             ledger_entries = []
-            running_balance = 0
+            running_balance = 0.0
             sl_number = 1
             
-            # 1. Sale transactions
+            # 1. Sale transactions - NO DATE FILTER FOR NOW
             if filters.get('transaction_type') in ['all', 'sale']:
                 sales = Sale.objects.filter(
                     company=company, 
                     customer=customer
-                )
+                ).select_related('customer').order_by('sale_date')
                 
-                if start and end:
-                    sales = sales.filter(sale_date__date__range=[start, end])
+                print(f"\n--- SALES FOR CUSTOMER ---")
+                print(f"Total sales count: {sales.count()}")
                 
-                for sale in sales.order_by('sale_date'):
-                    running_balance += float(sale.grand_total)
+                # Show all sales without date filter
+                sale_counter = 0
+                for sale in sales:
+                    sale_counter += 1
+                    sale_amount = 0.0
+                    if sale.grand_total:
+                        try:
+                            sale_amount = float(sale.grand_total)
+                        except (TypeError, ValueError):
+                            sale_amount = 0.0
+                    
+                    running_balance += sale_amount
+                    
+                    # ASCII-safe date formatting
+                    sale_date_str = "N/A"
+                    if sale.sale_date:
+                        try:
+                            sale_date_str = sale.sale_date.strftime('%Y-%m-%d')
+                        except:
+                            sale_date_str = str(sale.sale_date)[:10]
+                    
+                    print(f"Sale {sale_counter}: {sale.invoice_no} - Date: {sale_date_str} - Amount: ${sale_amount}")
                     
                     ledger_entries.append({
                         'sl': sl_number,
                         'voucher_no': sale.invoice_no,
-                        'date': sale.sale_date.date(),
+                        'date': sale.sale_date.date() if sale.sale_date else datetime.now().date(),
                         'particular': 'Sale',
                         'details': f'Sale - {sale.invoice_no}',
                         'type': 'Sale',
                         'method': sale.payment_method or 'N/A',
-                        'debit': round(float(sale.grand_total), 2),
+                        'debit': round(sale_amount, 2),
                         'credit': 0.0,
                         'due': round(running_balance, 2),
                         'customer_id': customer.id,
                         'customer_name': customer.name
                     })
                     sl_number += 1
+                
+                if sale_counter == 0:
+                    print("No sales found for this customer")
             
             # 2. Payment transactions
             if filters.get('transaction_type') in ['all', 'payment']:
                 try:
                     from money_receipts.models import MoneyReceipt
-                    payments = MoneyReceipt.objects.filter(
-                        company=company,
-                        customer=customer
-                    )
                     
-                    if start and end:
-                        payments = payments.filter(payment_date__date__range=[start, end])
+                    payments = MoneyReceipt.objects.filter(company=company)
                     
-                    for payment in payments.order_by('payment_date'):
-                        running_balance -= float(payment.amount)
+                    # Filter by customer
+                    if hasattr(MoneyReceipt, 'customer'):
+                        payments = payments.filter(customer=customer)
+                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
+                        print(f"Filtering by customer field")
+                    elif hasattr(MoneyReceipt, 'customer_id'):
+                        payments = payments.filter(customer_id=customer.id)
+                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
+                        print(f"Filtering by customer_id field")
+                    elif hasattr(MoneyReceipt, 'customer_name'):
+                        payments = payments.filter(customer_name__icontains=customer.name)
+                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
+                        print(f"Filtering by customer_name field")
+                    else:
+                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
+                        print(f"MoneyReceipt model doesn't have customer-related fields")
+                        payments = MoneyReceipt.objects.none()
+                    
+                    print(f"Total payments count: {payments.count()}")
+                    
+                    payment_counter = 0
+                    for payment in payments.order_by('id'):
+                        payment_counter += 1
+                        payment_amount = 0.0
+                        if hasattr(payment, 'amount') and payment.amount:
+                            try:
+                                payment_amount = float(payment.amount)
+                            except (TypeError, ValueError):
+                                payment_amount = 0.0
+                        
+                        running_balance -= payment_amount
+                        
+                        # Get voucher number
+                        voucher_no = getattr(payment, 'mr_no', 
+                                           getattr(payment, 'voucher_no', 
+                                                   getattr(payment, 'invoice_no', 
+                                                           f"PYMT-{payment.id}")))
+                        
+                        # ASCII-safe output
+                        print(f"Payment {payment_counter}: {voucher_no} - Amount: ${payment_amount}")
+                        
+                        # Get date
+                        payment_date = None
+                        if hasattr(payment, 'payment_date'):
+                            payment_date = payment.payment_date
+                        elif hasattr(payment, 'date'):
+                            payment_date = payment.date
                         
                         ledger_entries.append({
                             'sl': sl_number,
-                            'voucher_no': payment.mr_no,
-                            'date': payment.payment_date.date(),
+                            'voucher_no': voucher_no,
+                            'date': payment_date.date() if payment_date else datetime.now().date(),
                             'particular': 'Payment',
-                            'details': f'Payment - {payment.payment_method}',
+                            'details': f'Payment - {getattr(payment, "payment_method", "N/A")}',
                             'type': 'Payment',
-                            'method': payment.payment_method or 'N/A',
+                            'method': getattr(payment, 'payment_method', 'N/A'),
                             'debit': 0.0,
-                            'credit': round(float(payment.amount), 2),
+                            'credit': round(payment_amount, 2),
                             'due': round(running_balance, 2),
                             'customer_id': customer.id,
                             'customer_name': customer.name
                         })
                         sl_number += 1
-                except ImportError:
-                    pass
+                    
+                    if payment_counter == 0:
+                        print("No payments found for this customer")
+                        
+                except ImportError as e:
+                    print(f"\n--- PAYMENTS ---")
+                    print(f"MoneyReceipt model not available: {e}")
+                except Exception as e:
+                    print(f"\n--- PAYMENTS ERROR ---")
+                    print(f"Error: {str(e)}")
             
             # 3. Sales Return transactions
             if filters.get('transaction_type') in ['all', 'return']:
                 sales_returns = SalesReturn.objects.filter(company=company)
                 
+                print(f"\n--- SALES RETURNS FOR CUSTOMER ---")
+                
+                # Filter by customer
                 if hasattr(SalesReturn, 'customer'):
                     sales_returns = sales_returns.filter(customer=customer)
+                    print(f"Filtering by direct customer relationship")
                 elif hasattr(SalesReturn, 'sale__customer'):
                     sales_returns = sales_returns.filter(sale__customer=customer)
+                    print(f"Filtering by sale__customer relationship")
+                else:
+                    print(f"No customer relationship found in SalesReturn model")
+                    sales_returns = SalesReturn.objects.none()
                 
-                if start and end:
-                    sales_returns = sales_returns.filter(return_date__range=[start, end])
+                print(f"Total returns count: {sales_returns.count()}")
                 
-                for return_obj in sales_returns.order_by('return_date'):
-                    return_amount = 0
-                    for item in return_obj.items.all():
-                        item_total = (item.quantity or 0) * (item.unit_price or 0)
-                        return_amount += float(item_total)
+                return_counter = 0
+                for return_obj in sales_returns.order_by('id'):
+                    return_counter += 1
+                    return_amount = 0.0
+                    
+                    if hasattr(return_obj, 'return_amount') and return_obj.return_amount:
+                        try:
+                            return_amount = float(return_obj.return_amount)
+                        except (TypeError, ValueError):
+                            return_amount = 0.0
+                    elif hasattr(return_obj, 'grand_total') and return_obj.grand_total:
+                        try:
+                            return_amount = float(return_obj.grand_total)
+                        except (TypeError, ValueError):
+                            return_amount = 0.0
                     
                     running_balance -= return_amount
                     
+                    voucher_no = getattr(return_obj, 'invoice_no', 
+                                       getattr(return_obj, 'return_no', 
+                                               f"RET-{return_obj.id}"))
+                    
+                    print(f"Return {return_counter}: {voucher_no} - Amount: ${return_amount}")
+                    
                     ledger_entries.append({
                         'sl': sl_number,
-                        'voucher_no': getattr(return_obj, 'invoice_no', f"RET-{return_obj.id}"),
+                        'voucher_no': voucher_no,
                         'date': return_obj.return_date,
                         'particular': 'Return',
                         'details': 'Sales Return',
                         'type': 'Return',
-                        'method': 'N/A',
+                        'method': getattr(return_obj, 'payment_method', 'N/A'),
                         'debit': 0.0,
                         'credit': round(return_amount, 2),
                         'due': round(running_balance, 2),
@@ -962,6 +1265,9 @@ class CustomerLedgerReportView(BaseReportView):
                         'customer_name': customer.name
                     })
                     sl_number += 1
+                
+                if return_counter == 0:
+                    print("No returns found for this customer")
             
             # Sort all entries by date
             ledger_entries.sort(key=lambda x: x['date'])
@@ -969,6 +1275,33 @@ class CustomerLedgerReportView(BaseReportView):
             # Re-number SL after sorting
             for i, entry in enumerate(ledger_entries, 1):
                 entry['sl'] = i
+            
+            print(f"\n=== LEDGER SUMMARY ===")
+            print(f"Total ledger entries: {len(ledger_entries)}")
+            print(f"Final running balance: {running_balance}")
+            
+            if ledger_entries:
+                print("First 5 entries:")
+                for i, entry in enumerate(ledger_entries[:5], 1):
+                    print(f"  {i}. {entry['date']} - {entry['type']} - {entry['voucher_no']}")
+            else:
+                print("No ledger entries found!")
+                
+                # Additional debug
+                print(f"\n=== ADDITIONAL DEBUG ===")
+                print(f"Customer: {customer.name} (ID: {customer.id})")
+                print(f"Company: {company.id}")
+                
+                # Check if any sales exist at all
+                all_sales_in_company = Sale.objects.filter(company=company).count()
+                print(f"All sales in company: {all_sales_in_company}")
+                
+                # Check sales with this customer ID (regardless of company)
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT COUNT(*) FROM sales_sale WHERE customer_id = %s", [customer.id])
+                    row = cursor.fetchone()
+                    print(f"All sales with customer ID {customer.id}: {row[0]}")
             
             serializer = CustomerLedgerSerializer(ledger_entries, many=True)
             
@@ -986,10 +1319,17 @@ class CustomerLedgerReportView(BaseReportView):
                 }
             }
             
+            print(f"\n=== END DEBUG ===\n")
+            
             return custom_response(True, "Customer ledger report fetched successfully", response_data)
             
         except Exception as e:
-            return self.handle_exception(e)
+            # ASCII-safe error message
+            error_msg = str(e).encode('ascii', 'ignore').decode('ascii')
+            print(f"ERROR in CustomerLedgerReportView: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return self.handle_exception(e)    
 
 # --------------------
 # Stock Report - Updated Format
@@ -1258,6 +1598,7 @@ class ExpenseReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
+
 class PurchaseReturnReportView(BaseReportView):
     def get(self, request):
         try:
@@ -1337,7 +1678,6 @@ class PurchaseReturnReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
-
 
 class SalesReturnReportView(BaseReportView):
     def get(self, request):
@@ -1455,7 +1795,6 @@ class BadStockReportView(BaseReportView):
             
         except Exception as e:
             return self.handle_exception(e)
-
 
 class DashboardSummaryView(BaseReportView):
     @method_decorator(cache_page(300))
@@ -1778,312 +2117,3 @@ class DashboardSummaryView(BaseReportView):
             import traceback
             traceback.print_exc()
             return self.handle_exception(e)
-        
-# class DashboardSummaryView(BaseReportView):
-#     @method_decorator(cache_page(300))
-#     def get(self, request):
-#         try:
-#             company = self.get_company(request)
-            
-#             # Get date range from request with proper defaults
-#             date_filter = request.GET.get('dateFilter', 'current_day')
-            
-#             # Calculate date range based on filter
-#             today = timezone.now().date()
-#             if date_filter == 'current_day':
-#                 start_date = today
-#                 end_date = today
-#             elif date_filter == 'this_month':
-#                 start_date = today.replace(day=1)
-#                 end_date = today
-#             elif date_filter == 'lifeTime':
-#                 # For lifetime, use a very early date
-#                 start_date = datetime(2020, 1, 1).date()
-#                 end_date = today
-#             else:
-#                 start_date = today
-#                 end_date = today
-
-#             print(f"Date filter: {date_filter}, Range: {start_date} to {end_date}")
-
-#             # Sales metrics with date range
-#             sales_query = Sale.objects.filter(
-#                 company=company, 
-#                 sale_date__date__range=[start_date, end_date]
-#             )
-            
-#             today_sales = sales_query.aggregate(
-#                 total=Sum('grand_total'),
-#                 count=Count('id'),
-#                 total_due=Sum('due_amount')
-#             )
-
-#             # Calculate total sales quantity from sale items
-#             today_sales_quantity = SaleItem.objects.filter(
-#                 sale__company=company,
-#                 sale__sale_date__date__range=[start_date, end_date]
-#             ).aggregate(
-#                 total_quantity=Sum('quantity')
-#             )
-
-#             # Sales profit calculation
-#             today_sales_profit = SaleItem.objects.filter(
-#                 sale__company=company,
-#                 sale__sale_date__date__range=[start_date, end_date]
-#             ).annotate(
-#                 item_profit=(F('unit_price') - F('product__purchase_price')) * F('quantity')
-#             ).aggregate(
-#                 total_profit=Sum('item_profit', output_field=FloatField())
-#             )
-
-#             # Sales returns with date range
-#             try:
-#                 today_sales_returns = SalesReturn.objects.filter(
-#                     company=company,
-#                     return_date__range=[start_date, end_date]
-#                 ).aggregate(
-#                     total_amount=Sum('return_amount'),
-#                     count=Count('id')
-#                 )
-                
-#                 today_sales_return_quantity = {'total_quantity': 0}
-#                 if hasattr(SalesReturn, 'items'):
-#                     return_items = SalesReturnItem.objects.filter(
-#                         sales_return__company=company,
-#                         sales_return__return_date__range=[start_date, end_date]
-#                     )
-#                     if hasattr(SalesReturnItem, 'quantity'):
-#                         today_sales_return_quantity = return_items.aggregate(
-#                             total_quantity=Sum('quantity')
-#                         )
-#                     elif hasattr(SalesReturnItem, 'qty'):
-#                         today_sales_return_quantity = return_items.aggregate(
-#                             total_quantity=Sum('qty')
-#                         )
-#             except Exception as e:
-#                 print(f"Sales return error: {e}")
-#                 today_sales_returns = {'total_amount': 0, 'count': 0}
-#                 today_sales_return_quantity = {'total_quantity': 0}
-
-#             # Purchase metrics with date range
-#             purchases_query = Purchase.objects.filter(
-#                 company=company,
-#                 purchase_date__range=[start_date, end_date]
-#             )
-            
-#             today_purchases = purchases_query.aggregate(
-#                 total=Sum('grand_total'),
-#                 count=Count('id'),
-#                 total_due=Sum('due_amount')
-#             )
-
-#             # Calculate total purchase quantity from purchase items
-#             today_purchases_quantity = PurchaseItem.objects.filter(
-#                 purchase__company=company,
-#                 purchase__purchase_date__range=[start_date, end_date]
-#             ).aggregate(
-#                 total_quantity=Sum('qty')
-#             )
-
-#             # Purchase returns with date range
-#             try:
-#                 today_purchase_returns = PurchaseReturn.objects.filter(
-#                     company=company,
-#                     return_date__range=[start_date, end_date]
-#                 ).aggregate(
-#                     total_amount=Sum('return_amount'),
-#                     count=Count('id')
-#                 )
-                
-#                 today_purchase_return_quantity = {'total_quantity': 0}
-#                 if hasattr(PurchaseReturn, 'items'):
-#                     return_items = PurchaseReturnItem.objects.filter(
-#                         purchase_return__company=company,
-#                         purchase_return__return_date__range=[start_date, end_date]
-#                     )
-#                     if hasattr(PurchaseReturnItem, 'quantity'):
-#                         today_purchase_return_quantity = return_items.aggregate(
-#                             total_quantity=Sum('quantity')
-#                         )
-#                     elif hasattr(PurchaseReturnItem, 'qty'):
-#                         today_purchase_return_quantity = return_items.aggregate(
-#                             total_quantity=Sum('qty')
-#                         )
-#             except Exception as e:
-#                 print(f"Purchase return error: {e}")
-#                 today_purchase_returns = {'total_amount': 0, 'count': 0}
-#                 today_purchase_return_quantity = {'total_quantity': 0}
-
-#             # Expense metrics with date range
-#             today_expenses = Expense.objects.filter(
-#                 company=company,
-#                 expense_date__range=[start_date, end_date]
-#             ).aggregate(
-#                 total=Sum('amount'),
-#                 count=Count('id')
-#             )
-
-#             # Debug information
-#             print(f"Sales count: {today_sales['count']}, Total: {today_sales['total']}")
-#             print(f"Sales quantity: {today_sales_quantity['total_quantity']}")
-#             print(f"Purchases count: {today_purchases['count']}, Total: {today_purchases['total']}")
-#             print(f"Purchases quantity: {today_purchases_quantity['total_quantity']}")
-
-#             # ========== CORRECTED FINANCIAL CALCULATIONS ==========
-            
-#             # Calculate net amounts (after deducting due amounts)
-#             sales_net_amount = float(today_sales['total'] or 0) - float(today_sales['total_due'] or 0)
-#             purchases_net_amount = float(today_purchases['total'] or 0) - float(today_purchases['total_due'] or 0)
-            
-#             # Calculate net sales and purchases after returns
-#             net_sales_after_returns = float(today_sales['total'] or 0) - float(today_sales_returns['total_amount'] or 0)
-#             net_purchases_after_returns = float(today_purchases['total'] or 0) - float(today_purchase_returns['total_amount'] or 0)
-            
-#             # Profit calculations
-#             gross_profit = float(today_sales_profit['total_profit'] or 0)
-#             net_profit = gross_profit - float(today_expenses['total'] or 0)
-            
-#             # Cash flow calculation (actual cash movement)
-#             cash_inflows = sales_net_amount  # Actual cash received from sales
-#             cash_outflows = purchases_net_amount + float(today_expenses['total'] or 0)  # Cash paid for purchases + expenses
-#             operating_cash_flow = cash_inflows - cash_outflows
-
-#             # Corrected financial summary
-#             overall_financials = {
-#                 'net_sales': net_sales_after_returns,  # Sales after returns
-#                 'net_purchases': net_purchases_after_returns,  # Purchases after returns
-#                 'gross_profit': gross_profit,
-#                 'net_profit': net_profit,
-#                 'operating_cash_flow': operating_cash_flow,  # Actual cash movement
-#                 'cash_components': {
-#                     'cash_in': cash_inflows,
-#                     'cash_out_purchases': purchases_net_amount,
-#                     'cash_out_expenses': float(today_expenses['total'] or 0)
-#                 }
-#             }
-
-#             # Print debug info for calculations
-#             print(f"=== FINANCIAL CALCULATIONS ===")
-#             print(f"Sales Total: {today_sales['total']}")
-#             print(f"Sales Due: {today_sales['total_due']}")
-#             print(f"Sales Net Amount: {sales_net_amount}")
-#             print(f"Net Sales After Returns: {net_sales_after_returns}")
-#             print(f"Purchases Net Amount: {purchases_net_amount}")
-#             print(f"Net Purchases After Returns: {net_purchases_after_returns}")
-#             print(f"Gross Profit: {gross_profit}")
-#             print(f"Net Profit: {net_profit}")
-#             print(f"Cash Flow: {operating_cash_flow}")
-
-#             # Stock alerts (not date dependent)
-#             low_stock_count = Product.objects.filter(
-#                 company=company,
-#                 stock_qty__lte=F('alert_quantity'),
-#                 stock_qty__gt=0
-#             ).count()
-            
-#             out_of_stock_count = Product.objects.filter(
-#                 company=company,
-#                 stock_qty=0
-#             ).count()
-
-#             # Recent activities (always show latest 5 regardless of date filter)
-#             recent_sales = Sale.objects.filter(
-#                 company=company
-#             ).select_related('customer').order_by('-sale_date')[:5]
-            
-#             # Calculate quantities for recent sales
-#             recent_sales_data = []
-#             for sale in recent_sales:
-#                 sale_quantity = SaleItem.objects.filter(sale=sale).aggregate(
-#                     total_quantity=Sum('quantity')
-#                 )['total_quantity'] or 0
-                
-#                 recent_sales_data.append({
-#                     'invoice_no': sale.invoice_no,
-#                     'customer': sale.customer.name if sale.customer else "Walk-in",
-#                     'amount': float(sale.grand_total),
-#                     'due_amount': float(sale.due_amount),
-#                     'quantity': sale_quantity,
-#                     'date': sale.sale_date.date().isoformat() if sale.sale_date else None
-#                 })
-
-#             recent_purchases = Purchase.objects.filter(
-#                 company=company
-#             ).select_related('supplier').order_by('-purchase_date')[:5]
-            
-#             # Calculate quantities for recent purchases
-#             recent_purchases_data = []
-#             for purchase in recent_purchases:
-#                 purchase_quantity = PurchaseItem.objects.filter(purchase=purchase).aggregate(
-#                     total_quantity=Sum('qty')
-#                 )['total_quantity'] or 0
-                
-#                 recent_purchases_data.append({
-#                     'invoice_no': purchase.invoice_no,
-#                     'supplier': purchase.supplier.name,
-#                     'amount': float(purchase.grand_total),
-#                     'due_amount': float(purchase.due_amount),
-#                     'quantity': purchase_quantity,
-#                     'date': purchase.purchase_date.isoformat() if purchase.purchase_date else None
-#                 })
-
-#             dashboard_data = {
-#                 'today_metrics': {
-#                     'sales': {
-#                         'total': float(today_sales['total'] or 0),
-#                         'count': today_sales['count'] or 0,
-#                         'total_quantity': today_sales_quantity['total_quantity'] or 0,
-#                         'total_due': float(today_sales['total_due'] or 0),
-#                         'net_total': sales_net_amount  # Use calculated net amount
-#                     },
-#                     'sales_returns': {
-#                         'total_amount': float(today_sales_returns['total_amount'] or 0),
-#                         'total_quantity': today_sales_return_quantity['total_quantity'] or 0,
-#                         'count': today_sales_returns['count'] or 0
-#                     },
-#                     'purchases': {
-#                         'total': float(today_purchases['total'] or 0),
-#                         'count': today_purchases['count'] or 0,
-#                         'total_quantity': today_purchases_quantity['total_quantity'] or 0,
-#                         'total_due': float(today_purchases['total_due'] or 0),
-#                         'net_total': purchases_net_amount  # Use calculated net amount
-#                     },
-#                     'purchase_returns': {
-#                         'total_amount': float(today_purchase_returns['total_amount'] or 0),
-#                         'total_quantity': today_purchase_return_quantity['total_quantity'] or 0,
-#                         'count': today_purchase_returns['count'] or 0
-#                     },
-#                     'expenses': {
-#                         'total': float(today_expenses['total'] or 0),
-#                         'count': today_expenses['count'] or 0
-#                     }
-#                 },
-#                 'profit_loss': {
-#                     'gross_profit': gross_profit,
-#                     'net_profit': net_profit,
-#                     'profit_margin': (
-#                         (gross_profit / float(today_sales['total'] or 1)) * 100 
-#                         if today_sales['total'] and today_sales['total'] > 0 else 0
-#                     )
-#                 },
-#                 'financial_summary': overall_financials,
-#                 'stock_alerts': {
-#                     'low_stock': low_stock_count,
-#                     'out_of_stock': out_of_stock_count
-#                 },
-#                 'recent_activities': {
-#                     'sales': recent_sales_data,
-#                     'purchases': recent_purchases_data
-#                 },
-#                 'date_filter_info': {
-#                     'filter_type': date_filter,
-#                     'start_date': start_date.isoformat(),
-#                     'end_date': end_date.isoformat()
-#                 }
-#             }
-
-#             return custom_response(True, "Dashboard data fetched successfully", dashboard_data)
-            
-#         except Exception as e:
-#             print(f"Dashboard error: {str(e)}")
-#             return self.handle_exception(e)

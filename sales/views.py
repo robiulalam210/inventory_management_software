@@ -129,27 +129,69 @@ class SaleViewSet(BaseCompanyViewSet):
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
 
-        # Date range filters
+        # Date range filters - FIXED VERSION
         start_date = params.get('start_date')
         end_date = params.get('end_date')
         
-        if start_date:
+        if start_date and end_date:
             try:
-                if 'T' in start_date:
-                    start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                else:
-                    start = datetime.strptime(start_date, '%Y-%m-%d')
-                queryset = queryset.filter(sale_date__date__gte=start.date())
+                # Parse dates
+                start = self._parse_date(start_date)
+                end = self._parse_date(end_date)
+                
+                if start and end:
+                    # FIX: Adjust unreasonable years (2025, 2026, etc.)
+                    current_year = timezone.now().year
+                    
+                    if start.year > current_year + 1 or start.year < current_year - 1:
+                        logger.warning(f"Adjusting unreasonable start year {start.year} to {current_year}")
+                        start = start.replace(year=current_year)
+                    
+                    if end.year > current_year + 1 or end.year < current_year - 1:
+                        logger.warning(f"Adjusting unreasonable end year {end.year} to {current_year}")
+                        end = end.replace(year=current_year)
+                    
+                    # Swap dates if start is after end
+                    if start > end:
+                        start, end = end, start
+                        logger.warning(f"Swapped dates: start was after end")
+                    
+                    # Ensure end date includes full day
+                    end = end + timedelta(days=1) - timedelta(seconds=1)
+                    
+                    queryset = queryset.filter(sale_date__range=[start, end])
+                    
+            except ValueError as e:
+                logger.error(f"Invalid date format: {e}")
+        
+        elif start_date:
+            try:
+                start = self._parse_date(start_date)
+                if start:
+                    # Adjust unreasonable years
+                    current_year = timezone.now().year
+                    if start.year > current_year + 1 or start.year < current_year - 1:
+                        logger.warning(f"Adjusting unreasonable start year {start.year} to {current_year}")
+                        start = start.replace(year=current_year)
+                    
+                    queryset = queryset.filter(sale_date__gte=start)
             except ValueError as e:
                 logger.error(f"Invalid start date format: {e}")
         
-        if end_date:
+        elif end_date:
             try:
-                if 'T' in end_date:
-                    end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-                else:
-                    end = datetime.strptime(end_date, '%Y-%m-%d')
-                queryset = queryset.filter(sale_date__date__lte=end.date())
+                end = self._parse_date(end_date)
+                if end:
+                    # Adjust unreasonable years
+                    current_year = timezone.now().year
+                    if end.year > current_year + 1 or end.year < current_year - 1:
+                        logger.warning(f"Adjusting unreasonable end year {end.year} to {current_year}")
+                        end = end.replace(year=current_year)
+                    
+                    # Ensure end date includes full day
+                    end = end + timedelta(days=1) - timedelta(seconds=1)
+                    
+                    queryset = queryset.filter(sale_date__lte=end)
             except ValueError as e:
                 logger.error(f"Invalid end date format: {e}")
 
@@ -170,6 +212,29 @@ class SaleViewSet(BaseCompanyViewSet):
         
         return queryset
 
+    def _parse_date(self, date_str):
+        """Helper method to parse date strings"""
+        try:
+            if not date_str:
+                return None
+            
+            # Remove timezone info if present
+            if 'T' in date_str:
+                # Handle ISO format with timezone
+                if '+' in date_str or 'Z' in date_str:
+                    if 'Z' in date_str:
+                        date_str = date_str.replace('Z', '+00:00')
+                    return datetime.fromisoformat(date_str)
+                else:
+                    # Handle ISO format without timezone
+                    return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
+            else:
+                # Handle simple date format
+                return datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError as e:
+            logger.error(f"Date parsing error for '{date_str}': {e}")
+            return None
+
     def create(self, request, *args, **kwargs):
         """Create a new sale"""
         try:
@@ -178,6 +243,21 @@ class SaleViewSet(BaseCompanyViewSet):
             
             # Log incoming data for debugging
             logger.info(f"Creating sale with data: {request.data}")
+            
+            # FIX: Ensure sale_date is not in future
+            sale_date = request.data.get('sale_date')
+            if sale_date:
+                try:
+                    sale_date_obj = datetime.fromisoformat(sale_date.replace('Z', '+00:00'))
+                    current_time = timezone.now()
+                    
+                    # Prevent dates more than 1 day in future
+                    if sale_date_obj > current_time + timedelta(days=1):
+                        logger.warning(f"Sale date {sale_date_obj} is too far in future. Adjusting to current time.")
+                        # Update the data with current time
+                        request.data['sale_date'] = current_time.isoformat()
+                except Exception as e:
+                    logger.error(f"Error validating sale date: {e}")
             
             sale = serializer.save()
             
@@ -348,6 +428,34 @@ class SaleViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=['get'])
+    def fix_future_dates(self, request):
+        """Admin endpoint to fix sales with future dates"""
+        try:
+            if not request.user.is_superuser:
+                return Response({"error": "Permission denied"}, status=403)
+            
+            current_time = timezone.now()
+            future_sales = Sale.objects.filter(sale_date__gt=current_time)
+            
+            count = 0
+            for sale in future_sales:
+                # Fix to current time
+                sale.sale_date = current_time
+                sale.save(update_fields=['sale_date'])
+                count += 1
+                logger.info(f"Fixed sale {sale.invoice_no} date from {sale.sale_date} to {current_time}")
+            
+            return Response({
+                "status": True,
+                "message": f"Fixed {count} sales with future dates",
+                "data": {"fixed_count": count}
+            })
+            
+        except Exception as e:
+            logger.error(f"Error fixing future dates: {str(e)}")
+            return Response({"error": str(e)}, status=500)
+
 
 # -----------------------------
 # SaleItem ViewSet
@@ -437,27 +545,51 @@ class SaleAllListViewSet(BaseCompanyViewSet):
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
 
-        # Date range filter
+        # Date range filter - FIXED VERSION
         start_date = params.get('start_date')
         end_date = params.get('end_date')
+        
         if start_date or end_date:
             try:
                 def parse_date(date_str):
                     if not date_str:
                         return None
-                    if 'T' in date_str:
-                        return datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
-                    return datetime.strptime(date_str, '%Y-%m-%d').date()
+                    try:
+                        if 'T' in date_str:
+                            if '+' in date_str or 'Z' in date_str:
+                                if 'Z' in date_str:
+                                    date_str = date_str.replace('Z', '+00:00')
+                                dt = datetime.fromisoformat(date_str)
+                            else:
+                                dt = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
+                        else:
+                            dt = datetime.strptime(date_str, '%Y-%m-%d')
+                        
+                        # Adjust unreasonable years
+                        current_year = timezone.now().year
+                        if dt.year > current_year + 1 or dt.year < current_year - 1:
+                            logger.warning(f"Adjusting unreasonable year {dt.year} to {current_year}")
+                            dt = dt.replace(year=current_year)
+                        
+                        return dt.date()
+                    except Exception as e:
+                        logger.error(f"Error parsing date '{date_str}': {e}")
+                        return None
 
                 start = parse_date(start_date)
                 end = parse_date(end_date)
 
                 if start and end:
-                    queryset = queryset.filter(sale_date__range=[start, end])
+                    # Swap if reversed
+                    if start > end:
+                        start, end = end, start
+                        logger.warning(f"Swapped dates: start was after end")
+                    
+                    queryset = queryset.filter(sale_date__date__range=[start, end])
                 elif start:
-                    queryset = queryset.filter(sale_date__gte=start)
+                    queryset = queryset.filter(sale_date__date__gte=start)
                 elif end:
-                    queryset = queryset.filter(sale_date__lte=end)
+                    queryset = queryset.filter(sale_date__date__lte=end)
 
             except ValueError as e:
                 logger.error(f"Invalid date format: {e}")
@@ -500,3 +632,34 @@ class SaleAllListViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# -----------------------------
+# Utility function to fix existing bad data
+# -----------------------------
+def fix_sales_with_future_dates():
+    """Utility function to fix sales with future dates in database"""
+    try:
+        from sales.models import Sale
+        
+        current_time = timezone.now()
+        # Find sales with dates in 2025, 2026, etc.
+        future_year_sales = Sale.objects.filter(
+            sale_date__year__gt=current_time.year + 1
+        )
+        
+        count = 0
+        for sale in future_year_sales:
+            old_date = sale.sale_date
+            # Fix to current year, keep month/day/time
+            sale.sale_date = sale.sale_date.replace(year=current_time.year)
+            sale.save(update_fields=['sale_date'])
+            count += 1
+            print(f"Fixed sale {sale.invoice_no}: {old_date} -> {sale.sale_date}")
+        
+        print(f"Fixed {count} sales with future dates")
+        return count
+        
+    except Exception as e:
+        print(f"Error fixing future dates: {e}")
+        return 0
