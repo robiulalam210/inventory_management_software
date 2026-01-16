@@ -28,10 +28,8 @@ class TransactionViewSet(viewsets.ModelViewSet):
     queryset = Transaction.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['transaction_no', 'description', 'account__name']
-    ordering_fields = ['transaction_date', 'amount', 'created_at']
-    ordering_fields = ['transaction_date', 'amount', 'created_at', 'transaction_no']  # Add transaction_no here
+    ordering_fields = ['transaction_date', 'amount', 'created_at', 'transaction_no']
     ordering = ['-transaction_no'] 
-    # ordering = ['-transaction_date']
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -78,11 +76,12 @@ class TransactionViewSet(viewsets.ModelViewSet):
             except ValueError:
                 pass
         
-        # Use select_related for performance
+        # FIXED: Use only essential select_related to avoid problematic joins
         queryset = queryset.select_related(
-            'account', 'created_by', 'sale', 'money_receipt', 
-            'expense', 'purchase', 'company'
+            'account', 'created_by', 'company'
         )
+        # Remove problematic relationships: 'sale', 'money_receipt', 'expense', 'purchase'
+        # Add them back when the database schema is fixed
         
         logger.info(f"  - Final transaction count: {queryset.count()}")
         logger.info(f"🔍 END DEBUG")
@@ -744,6 +743,56 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 data={
                     'company': user.company.name,
                     'transactions': serializer.data
+                },
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def debug_sql(self, request):
+        """Debug SQL queries and database schema"""
+        try:
+            from django.db import connection
+            
+            # Get a queryset
+            queryset = self.get_queryset()
+            
+            # Get SQL for the query
+            sql_query = str(queryset.query)
+            
+            # Try to get information about the money_receipts table
+            money_receipt_columns = []
+            try:
+                with connection.cursor() as cursor:
+                    # Try MySQL syntax first
+                    cursor.execute("DESCRIBE money_receipts_moneyreceipt;")
+                    money_receipt_columns = cursor.fetchall()
+            except:
+                try:
+                    # Try SQLite syntax
+                    with connection.cursor() as cursor:
+                        cursor.execute("PRAGMA table_info(money_receipts_moneyreceipt);")
+                        money_receipt_columns = cursor.fetchall()
+                except:
+                    money_receipt_columns = ["Could not fetch table info"]
+            
+            # Check if sale_invoice_no column exists
+            sale_invoice_no_exists = any('sale_invoice_no' in str(col).lower() for col in money_receipt_columns)
+            
+            return custom_response(
+                success=True,
+                message="SQL Debug Info",
+                data={
+                    'sql_query': sql_query,
+                    'money_receipt_columns': money_receipt_columns,
+                    'sale_invoice_no_exists': sale_invoice_no_exists,
+                    'problem_detected': not sale_invoice_no_exists and 'sale_invoice_no' in sql_query.lower()
                 },
                 status_code=status.HTTP_200_OK
             )

@@ -53,16 +53,20 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
-
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = [
-            "id", "name", "company_code", "address", "phone", "email", 
-            "logo", "is_active", "plan_type", "start_date", "expiry_date",
-            "days_until_expiry", "active_user_count", "product_count"
-        ]
-        read_only_fields = ["company_code", "days_until_expiry", "active_user_count", "product_count"]
+        fields = "__all__"   # return full info
+
+# class CompanySerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = Company
+#         fields = [
+#             "id", "name", "company_code", "address", "phone", "email", 
+#             "logo", "is_active", "plan_type", "start_date", "expiry_date",
+#             "days_until_expiry", "active_user_count", "product_count"
+#         ]
+#         read_only_fields = ["company_code", "days_until_expiry", "active_user_count", "product_count"]
 
 
 class UserProfileSerializer(serializers.ModelSerializer):

@@ -9,7 +9,8 @@ from django.contrib.auth import get_user_model
 import logging
 import random
 import string
-
+# models.py - Add this at the top
+from decimal import Decimal  # Make sure this is imported
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
