@@ -143,6 +143,38 @@ DATABASES = {
 #         },
 #     }
 # }
+# -- 🔹 1. Database charset
+# ALTER DATABASE meherinm_meherinmart_db
+# CHARACTER SET = utf8mb4
+# COLLATE = utf8mb4_unicode_ci;
+
+# -- 🔹 2. All tables charset
+# SET @tables = NULL;
+# SELECT GROUP_CONCAT(TABLE_NAME) INTO @tables
+# FROM INFORMATION_SCHEMA.TABLES
+# WHERE TABLE_SCHEMA = 'meherinm_meherinmart_db';
+
+# -- Generate ALTER TABLE for each table
+# SET @sql = CONCAT('ALTER TABLE ', REPLACE(@tables, ',', ' CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; ALTER TABLE '), ' CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
+
+# PREPARE stmt FROM @sql;
+# EXECUTE stmt;
+# DEALLOCATE PREPARE stmt;
+
+# -- 🔹 3. Fix all VARCHAR / TEXT columns individually (Optional)
+# -- Example for customers_customer.name column
+# ALTER TABLE customers_customer
+# MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
+
+# -- Repeat for other columns that store Bengali text
+# -- e.g.,
+# -- ALTER TABLE products_product MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
+# -- ALTER TABLE suppliers_supplier MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
+
+
+# ALTER DATABASE meherinm_meherinmart_db
+# CHARACTER SET utf8mb4
+# COLLATE utf8mb4_unicode_ci;
 
 # -----------------------------
 # AUTH
