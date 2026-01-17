@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    CustomLoginView, CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet, CustomTokenObtainPairView, 
+    CustomLoginView, CompanyViewSet, UserViewSet, StaffRoleViewSet, StaffViewSet, CustomTokenObtainPairView, CompanyLogoUpdateAPIView, UserProfileImageUpdateAPIView,
     company_admin_signup, company_admin_login, dashboard, user_list, create_user, home, user_management
 )
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -23,6 +23,8 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
 from core.views import ProfileAPIView, UserPermissionsAPIView, user_dashboard_stats, ChangePasswordAPIView
+from django.conf import settings
+from django.conf.urls.static import static
 
 # Remove this import since we're importing functions directly above
 # from . import views
@@ -112,6 +114,15 @@ urlpatterns = [
     path('admin/dashboard/', dashboard, name='admin_dashboard'),
     path('admin/users/', user_list, name='user_list'),
     path('admin/users/create/', create_user, name='create_user'),
+
+    path('company/logo/', CompanyLogoUpdateAPIView.as_view(), name='company-logo-update-self'),
+    path('company/<int:pk>/logo/', CompanyLogoUpdateAPIView.as_view(), name='company-logo-update'),
+    path('user/profile-picture/', UserProfileImageUpdateAPIView.as_view(), name='user-profile-picture-self'),
+    path('user/<int:pk>/profile-picture/', UserProfileImageUpdateAPIView.as_view(), name='user-profile-picture'),
 ]
 
 
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

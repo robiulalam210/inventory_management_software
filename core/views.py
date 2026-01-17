@@ -12,6 +12,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework.parsers import MultiPartParser, FormParser
+from django.shortcuts import get_object_or_404
 
 import logging
 logger = logging.getLogger(__name__)
@@ -299,6 +301,91 @@ class UserPermissionsAPIView(APIView):
         except Exception as e:
             logger.error(f"Error fetching user permissions: {str(e)}")
             return custom_response(False, "Error fetching permissions", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+
+# --------------------------
+# Image update endpoints
+# --------------------------
+class CompanyLogoUpdateAPIView(APIView):
+    """
+    PATCH /api/company/<pk>/logo/         -> superadmin to update any company logo
+    PATCH /api/company/logo/              -> authenticated user updates their own company logo
+    Accepts multipart/form-data: 'logo' file.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request, pk=None, *args, **kwargs):
+        try:
+            # Determine target company:
+            if pk is not None:
+                # Only super admins can update arbitrary company by pk
+                if request.user.role != User.Role.SUPER_ADMIN:
+                    return custom_response(False, "Not authorized to update other company logos", None, status.HTTP_403_FORBIDDEN)
+                company = get_object_or_404(Company, pk=pk)
+            else:
+                company = getattr(request.user, 'company', None)
+                if not company:
+                    return custom_response(False, "User is not assigned to a company", None, status.HTTP_400_BAD_REQUEST)
+
+            # Validate file
+            file = request.FILES.get('logo')
+            if not file:
+                return custom_response(False, "No 'logo' file provided", None, status.HTTP_400_BAD_REQUEST)
+
+            # Optional: basic check for image content-type
+            content_type = getattr(file, 'content_type', '') or ''
+            if not content_type.startswith('image/'):
+                return custom_response(False, "Uploaded file is not an image", None, status.HTTP_400_BAD_REQUEST)
+
+            # Save and respond
+            company.logo = file
+            company.save()
+
+            serializer = CompanySerializer(company, context={'request': request})
+            return custom_response(True, "Company logo updated successfully", serializer.data, status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Company logo update failed")
+            return custom_response(False, f"Company logo update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class UserProfileImageUpdateAPIView(APIView):
+    """
+    PATCH /api/user/<pk>/profile-picture/   -> superadmin may update any user (if allowed)
+    PATCH /api/user/profile-picture/        -> authenticated user updates own profile picture
+    Accepts multipart/form-data: 'profile_picture' file.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request, pk=None, *args, **kwargs):
+        try:
+            # Determine target user
+            if pk is not None:
+                if request.user.role != User.Role.SUPER_ADMIN:
+                    return custom_response(False, "Not authorized to update other users' profile pictures", None, status.HTTP_403_FORBIDDEN)
+                target_user = get_object_or_404(User, pk=pk)
+            else:
+                target_user = request.user
+
+            file = request.FILES.get('profile_picture')
+            if not file:
+                return custom_response(False, "No 'profile_picture' file provided", None, status.HTTP_400_BAD_REQUEST)
+
+            content_type = getattr(file, 'content_type', '') or ''
+            if not content_type.startswith('image/'):
+                return custom_response(False, "Uploaded file is not an image", None, status.HTTP_400_BAD_REQUEST)
+
+            target_user.profile_picture = file
+            target_user.save()
+
+            # Use your existing serializer that returns profile_picture_url
+            serializer = UserProfileSerializer(target_user, context={'request': request})
+            return custom_response(True, "Profile picture updated successfully", serializer.data, status.HTTP_200_OK)
+        except Exception as e:
+            logger.exception("Profile picture update failed")
+            return custom_response(False, f"Profile picture update failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # --------------------------
 # Dashboard Stats

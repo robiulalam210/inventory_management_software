@@ -8,7 +8,6 @@ from django.shortcuts import render
 from core.views import home
 from django.conf import settings
 from django.conf.urls.static import static
-
 # def home(request):
 #     return HttpResponse("""
 #     <html>
@@ -37,3 +36,9 @@ urlpatterns = [
         path('api/', include('core.urls')),  # core app APIs
 
 ]
+
+
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
