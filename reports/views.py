@@ -1796,6 +1796,8 @@ class BadStockReportView(BaseReportView):
         except Exception as e:
             return self.handle_exception(e)
 
+
+
 class DashboardSummaryView(BaseReportView):
     @method_decorator(cache_page(300))
     def get(self, request):
@@ -1843,26 +1845,28 @@ class DashboardSummaryView(BaseReportView):
                 total_due=Sum('due_amount')
             )
 
-            # Sale items - use the same date range
+            # Sale items - use the same date range - FIXED: quantity -> sale_quantity
             today_sales_quantity = SaleItem.objects.filter(
                 sale__company=company,
                 sale__sale_date__gte=start_datetime,
                 sale__sale_date__lte=end_datetime
             ).aggregate(
-                total_quantity=Sum('quantity')
+                total_sale_quantity=Sum('sale_quantity'),  # FIXED
+                total_base_quantity=Sum('base_quantity')   # ADDED
             )
 
-            # Calculate profit
+            # Calculate profit - FIXED: quantity -> base_quantity
             sale_items = SaleItem.objects.filter(
                 sale__company=company,
                 sale__sale_date__gte=start_datetime,
                 sale__sale_date__lte=end_datetime
             ).select_related('product')
             
-            total_profit = 0
+            total_profit = Decimal('0.00')
             for item in sale_items:
-                purchase_price = item.product.purchase_price if item.product and item.product.purchase_price else 0
-                profit_per_item = (item.unit_price - purchase_price) * item.quantity
+                purchase_price = item.product.purchase_price if item.product and item.product.purchase_price else Decimal('0.00')
+                # FIXED: Use base_quantity for profit calculation
+                profit_per_item = (Decimal(str(item.unit_price)) - purchase_price) * Decimal(str(item.base_quantity))
                 total_profit += profit_per_item
 
             # ===== SALES RETURNS =====
@@ -1876,13 +1880,13 @@ class DashboardSummaryView(BaseReportView):
                     count=Count('id')
                 )
                 
-                # Get sales return quantity
+                # Get sales return quantity - FIXED if SalesReturnItem model has quantity field
                 today_sales_return_quantity = SalesReturnItem.objects.filter(
                     sales_return__company=company,
                     sales_return__return_date__gte=start_datetime,
                     sales_return__return_date__lte=end_datetime
                 ).aggregate(
-                    total_quantity=Sum('quantity')
+                    total_quantity=Sum('quantity')  # Keep this if SalesReturnItem has quantity
                 )
             except Exception as e:
                 print(f"Sales return error: {e}")
@@ -1902,7 +1906,7 @@ class DashboardSummaryView(BaseReportView):
                 total_due=Sum('due_amount')
             )
 
-            # Purchase items
+            # Purchase items - Keep as is (PurchaseItem has qty field)
             today_purchases_quantity = PurchaseItem.objects.filter(
                 purchase__company=company,
                 purchase__purchase_date__gte=start_datetime,
@@ -1947,7 +1951,8 @@ class DashboardSummaryView(BaseReportView):
             # ===== DEBUG OUTPUT =====
             print(f"\n=== METRICS DEBUG ===")
             print(f"Sales - Total: {today_sales['total']}, Count: {today_sales['count']}, Due: {today_sales['total_due']}")
-            print(f"Sales Quantity: {today_sales_quantity['total_quantity']}")
+            print(f"Sales Sale Quantity: {today_sales_quantity['total_sale_quantity']}")
+            print(f"Sales Base Quantity: {today_sales_quantity['total_base_quantity']}")
             print(f"Sales Profit: {total_profit}")
 
             # ===== FINANCIAL CALCULATIONS =====
@@ -1997,9 +2002,10 @@ class DashboardSummaryView(BaseReportView):
             
             recent_sales_data = []
             for sale in recent_sales:
-                sale_quantity = SaleItem.objects.filter(sale=sale).aggregate(
-                    total_quantity=Sum('quantity')
-                )['total_quantity'] or 0
+                sale_quantity_agg = SaleItem.objects.filter(sale=sale).aggregate(
+                    total_sale_quantity=Sum('sale_quantity'),  # FIXED
+                    total_base_quantity=Sum('base_quantity')   # ADDED
+                )
                 
                 # FIXED: No .date() call here
                 date_str = sale.sale_date
@@ -2015,7 +2021,8 @@ class DashboardSummaryView(BaseReportView):
                     'customer': sale.customer.name if sale.customer else "Walk-in",
                     'amount': float(sale.grand_total or 0),
                     'due_amount': float(sale.due_amount or 0),
-                    'quantity': sale_quantity,
+                    'sale_quantity': sale_quantity_agg['total_sale_quantity'] or 0,  # FIXED
+                    'base_quantity': sale_quantity_agg['total_base_quantity'] or 0,  # ADDED
                     'date': date_str
                 })
 
@@ -2052,7 +2059,8 @@ class DashboardSummaryView(BaseReportView):
                     'sales': {
                         'total': sales_total,
                         'count': today_sales['count'] or 0,
-                        'total_quantity': today_sales_quantity['total_quantity'] or 0,
+                        'sale_quantity': today_sales_quantity['total_sale_quantity'] or 0,  # FIXED
+                        'base_quantity': today_sales_quantity['total_base_quantity'] or 0,  # ADDED
                         'total_due': sales_due,
                         'net_total': sales_net_amount
                     },

@@ -109,6 +109,193 @@ class CompanyProductSequence(models.Model):
         return f"{self.company.name} - {self.last_number:05d}"
     
 
+# products/models.py - Update SaleMode model
+
+class SaleMode(models.Model):
+    """Sale Mode configuration (KG, GRAM, PACKET, BOSTA, DOZEN, etc.)"""
+    
+    PRICE_TYPE_CHOICES = [
+        ('unit', 'Unit Price'),
+        ('flat', 'Flat Price'),
+        ('tier', 'Tier Price'),
+    ]
+    
+    name = models.CharField(max_length=50, help_text="KG, GRAM, PACKET, BOSTA, DOZEN, etc.")
+    code = models.CharField(max_length=20, unique=True, help_text="Unique code for mode")
+    base_unit = models.ForeignKey('Unit', on_delete=models.CASCADE, related_name='sale_modes')
+    conversion_factor = models.DecimalField(
+        max_digits=12, 
+        decimal_places=6,
+        default=Decimal('1.00'),
+        help_text="Multiplier to convert to base unit (e.g., 0.001 for GRAM to KG)"
+    )
+    price_type = models.CharField(max_length=10, choices=PRICE_TYPE_CHOICES, default='unit')
+    is_active = models.BooleanField(default=True)
+    company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
+    
+    # Add these fields to track creation and updates
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='created_sale_modes'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'code'],
+                name='unique_sale_mode_per_company'
+            )
+        ]
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_price_type_display()})"
+    
+    def convert_to_base(self, quantity):
+        """Convert sale quantity to base unit quantity"""
+        return Decimal(str(quantity)) * self.conversion_factor
+
+
+class ProductSaleMode(models.Model):
+    """Link between Product and SaleMode with specific pricing"""
+    
+    product = models.ForeignKey('Product', on_delete=models.CASCADE, related_name='sale_modes')
+    sale_mode = models.ForeignKey('SaleMode', on_delete=models.CASCADE)
+    
+    # Unit Price (for price_type='unit')
+    unit_price = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        null=True, 
+        blank=True
+    )
+    
+    # Flat Price (for price_type='flat')
+    flat_price = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        null=True, 
+        blank=True
+    )
+    
+    # Additional fields for discounts
+    discount_type = models.CharField(
+        max_length=10, 
+        choices=[('fixed', 'Fixed'), ('percentage', 'Percentage')],
+        null=True, 
+        blank=True
+    )
+    discount_value = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        null=True, 
+        blank=True
+    )
+    
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'sale_mode'],
+                name='unique_product_sale_mode'
+            )
+        ]
+        ordering = ['sale_mode__name']
+    
+    def __str__(self):
+        return f"{self.product.name} - {self.sale_mode.name}"
+    
+    def get_final_price(self, quantity=1):
+        """Calculate final price based on price type and quantity"""
+        if not self.is_active:
+            return Decimal('0.00')
+        
+        base_quantity = self.sale_mode.convert_to_base(quantity)
+        
+        # Get base price based on price type
+        if self.sale_mode.price_type == 'flat':
+            price = self.flat_price or Decimal('0.00')
+            total = price * Decimal(str(quantity))
+        else:  # unit or tier
+            unit_price = self.get_unit_price(base_quantity)
+            total = base_quantity * unit_price
+        
+        # Apply discount if any
+        if self.discount_type == 'fixed' and self.discount_value:
+            total -= self.discount_value
+        elif self.discount_type == 'percentage' and self.discount_value:
+            total -= (total * self.discount_value / Decimal('100.00'))
+        
+        return max(Decimal('0.00'), total)
+    
+    def get_unit_price(self, base_quantity=None):
+        """Get unit price for the sale mode"""
+        if self.sale_mode.price_type == 'tier':
+            # Get tier price for the quantity
+            return self.get_tier_price(base_quantity)
+        else:
+            return self.unit_price or Decimal('0.00')
+    
+    def get_tier_price(self, base_quantity):
+        """Get tier price for given quantity"""
+        if not hasattr(self, 'tiers'):
+            return self.unit_price or Decimal('0.00')
+        
+        # Find appropriate tier
+        tiers = self.tiers.all().order_by('min_quantity')
+        for tier in tiers:
+            if base_quantity >= tier.min_quantity:
+                if tier.max_quantity is None or base_quantity <= tier.max_quantity:
+                    return tier.price
+        
+        # Return default price if no tier matches
+        return self.unit_price or Decimal('0.00')
+
+
+class PriceTier(models.Model):
+    """Tier pricing for products"""
+    
+    product_sale_mode = models.ForeignKey(
+        'ProductSaleMode', 
+        on_delete=models.CASCADE, 
+        related_name='tiers'
+    )
+    min_quantity = models.DecimalField(
+        max_digits=12, 
+        decimal_places=3,
+        help_text="Minimum quantity (in base unit) for this tier"
+    )
+    max_quantity = models.DecimalField(
+        max_digits=12, 
+        decimal_places=3,
+        null=True, 
+        blank=True,
+        help_text="Maximum quantity (in base unit) for this tier (null for unlimited)"
+    )
+    price = models.DecimalField(max_digits=12, decimal_places=2)
+    
+    class Meta:
+        ordering = ['min_quantity']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product_sale_mode', 'min_quantity'],
+                name='unique_tier_start'
+            )
+        ]
+    
+    def __str__(self):
+        max_qty = f" - {self.max_quantity}" if self.max_quantity else "+"
+        return f"{self.min_quantity}{max_qty}: {self.price}"
+
+
 class Product(models.Model):
     DISCOUNT_TYPE_CHOICES = [
         ('fixed', 'Fixed'),

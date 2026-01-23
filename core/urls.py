@@ -14,7 +14,7 @@ from suppliers.views import SupplierViewSet,SupplierNonPaginationViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,SaleAllListViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
 from customers.views import CustomerViewSet,CustomerNonPaginationViewSet
-from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet
+from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet, SaleModeViewSet, ProductSaleModeViewSet 
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 from accounts.views import AccountViewSet
 from account_transfer.views import AccountTransferViewSet
@@ -46,6 +46,8 @@ router.register(r'units', UnitViewSet, basename='unit')
 router.register(r'brands', BrandViewSet, basename='brand')
 router.register(r'groups', GroupViewSet, basename='group')
 router.register(r'sources', SourceViewSet, basename='source')
+router.register(r'sale-modes', SaleModeViewSet)
+router.register(r'product-sale-modes', ProductSaleModeViewSet)
 router.register(r'sales', SaleViewSet, basename='sale')
 router.register(r'sale-invoice', SaleAllListViewSet, basename='sale-invoice')
 

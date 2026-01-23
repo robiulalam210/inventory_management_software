@@ -20,7 +20,11 @@ import logging, traceback
 
 from products.pagination import StandardResultsSetPagination
 from .models import Product
-from .serializers import ProductSerializer, ProductCreateSerializer, ProductUpdateSerializer
+from .serializers import ProductSerializer, ProductCreateSerializer, ProductUpdateSerializer, SaleModeSerializer, ProductSaleModeSerializer, PriceTierSerializer
+from decimal import Decimal, InvalidOperation
+from .models import SaleMode, ProductSaleMode, PriceTier
+from django.db import transaction
+
 from .filters import ProductFilter
 from .base import BaseInventoryViewSet  # adjust import to your project layout
 
@@ -378,7 +382,222 @@ class SourceViewSet(BaseInventoryCRUDViewSet):
     item_name = "Source"
 
 
+
+class SaleModeViewSet(BaseInventoryCRUDViewSet):
+    """ViewSet for managing sale modes"""
+    queryset = SaleMode.objects.all()
+    serializer_class = SaleModeSerializer
+    permission_classes = [permissions.IsAuthenticated]
     
+    def get_queryset(self):
+        """Filter sale modes by user's company"""
+        user = self.request.user
+        if hasattr(user, 'company') and user.company:
+            return SaleMode.objects.filter(company=user.company)
+        return SaleMode.objects.none()
+    
+    def perform_create(self, serializer):
+        """Set company when creating sale mode"""
+        # Ensure company is set
+        if hasattr(self.request.user, 'company') and self.request.user.company:
+            serializer.save(company=self.request.user.company)
+        else:
+            # Try to get company from base_unit if provided
+            base_unit_id = self.request.data.get('base_unit')
+            if base_unit_id:
+                try:
+                    from .models import Unit
+                    unit = Unit.objects.get(id=base_unit_id)
+                    serializer.save(company=unit.company)
+                except Unit.DoesNotExist:
+                    serializer.save()
+            else:
+                serializer.save()
+    
+    def create(self, request, *args, **kwargs):
+        """Override create to handle data parsing"""
+        try:
+            # Parse base_unit from string to int if needed
+            data = request.data.copy()
+            
+            # Convert base_unit to int if it's a string
+            if 'base_unit' in data and isinstance(data['base_unit'], str):
+                try:
+                    data['base_unit'] = int(data['base_unit'])
+                except (ValueError, TypeError):
+                    return Response(
+                        {'status': False, 'message': 'Invalid base_unit value. Must be an integer.'},
+                        status=400
+                    )
+            
+            # Ensure conversion_factor is decimal
+            if 'conversion_factor' in data:
+                try:
+                    data['conversion_factor'] = Decimal(str(data['conversion_factor']))
+                except (InvalidOperation, ValueError):
+                    return Response(
+                        {'status': False, 'message': 'Invalid conversion_factor value.'},
+                        status=400
+                    )
+            
+            # Create serializer with parsed data
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            
+            return custom_response(
+                success=True,
+                message='Sale mode created successfully',
+                data=serializer.data,
+                status_code=201
+            )
+            
+        except Exception as e:
+            logger.exception(f"Error creating sale mode: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=500
+            )
+        
+# products/views.py - Simplify ProductSaleModeViewSet
+
+class ProductSaleModeViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing product-sale mode configurations"""
+    queryset = ProductSaleMode.objects.all()
+    serializer_class = ProductSaleModeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter by user's company"""
+        user = self.request.user
+        queryset = super().get_queryset()
+        
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(product__company=user.company)
+        
+        # Filter by product if provided
+        product_id = self.request.query_params.get('product_id')
+        if product_id:
+            queryset = queryset.filter(product_id=product_id)
+        
+        return queryset.select_related('product', 'sale_mode').prefetch_related('tiers')
+    
+    def create(self, request, *args, **kwargs):
+        """Override create to add request context to serializer"""
+        # Add request context to serializer for validation
+        serializer = self.get_serializer(data=request.data, context={'request': request})
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            
+            # Get the created instance with full data
+            instance = serializer.instance
+            full_serializer = self.get_serializer(instance)
+            
+            return Response({
+                'status': True,
+                'message': 'Sale mode configured successfully',
+                'data': full_serializer.data
+            }, status=201)
+            
+        except serializers.ValidationError as e:
+            logger.error(f"Validation error: {e.detail}")
+            return Response({
+                'status': False,
+                'message': str(e.detail),
+                'data': None
+            }, status=400)
+        except Exception as e:
+            logger.exception(f"Error creating ProductSaleMode: {e}")
+            return Response({
+                'status': False,
+                'message': str(e),
+                'data': None
+            }, status=500)
+    
+    def perform_create(self, serializer):
+        """Save the instance"""
+        serializer.save()
+    
+    def list(self, request, *args, **kwargs):
+        """Override list to handle product filtering"""
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Get product_id from query params
+            product_id = request.query_params.get('product_id')
+            if product_id:
+                # Verify product belongs to user's company
+                try:
+                    product = Product.objects.get(id=product_id, company=request.user.company)
+                    queryset = queryset.filter(product=product)
+                except Product.DoesNotExist:
+                    return custom_response(
+                        success=False,
+                        message="Product not found or doesn't belong to your company",
+                        status_code=404
+                    )
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return custom_response(
+                success=True,
+                message="Product sale modes fetched successfully",
+                data=serializer.data,
+                status_code=200
+            )
+            
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=500
+            )
+    
+    @action(detail=False, methods=['get'])
+    def by_product(self, request):
+        """Get all sale modes for a specific product"""
+        product_id = request.query_params.get('product_id')
+        if not product_id:
+            return custom_response(
+                success=False,
+                message="product_id parameter is required",
+                status_code=400
+            )
+        
+        try:
+            product_id = int(product_id)
+        except (ValueError, TypeError):
+            return custom_response(
+                success=False,
+                message="product_id must be an integer",
+                status_code=400
+            )
+        
+        # Verify product belongs to user's company
+        try:
+            product = Product.objects.get(id=product_id, company=request.user.company)
+        except Product.DoesNotExist:
+            return custom_response(
+                success=False,
+                message="Product not found or access denied",
+                status_code=404
+            )
+        
+        sale_modes = self.get_queryset().filter(product_id=product_id)
+        serializer = self.get_serializer(sale_modes, many=True)
+        
+        return custom_response(
+            success=True,
+            message="Product sale modes fetched successfully",
+            data=serializer.data,
+            status_code=200
+        )
+
+
 class ProductViewSet(BaseInventoryViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
@@ -1036,3 +1255,94 @@ class ProductViewSet(BaseInventoryViewSet):
 
  
 
+    @action(detail=True, methods=['get'])
+    def sale_modes(self, request, pk=None):
+        """Get sale modes for a specific product"""
+        try:
+            product = self.get_object()
+            sale_modes = ProductSaleMode.objects.filter(
+                product=product,
+                is_active=True
+            ).select_related('sale_mode')
+            
+            serializer = ProductSaleModeSerializer(sale_modes, many=True)
+            return custom_response(
+                success=True,
+                message="Sale modes fetched successfully",
+                data=serializer.data,
+                status_code=200
+            )
+        except Product.DoesNotExist:
+            return custom_response(
+                success=False,
+                message="Product not found",
+                status_code=404
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                status_code=500
+            )
+    
+    @action(detail=True, methods=['get'])
+    def available_sale_modes(self, request, pk=None):
+        """Get all available sale modes for a product"""
+        try:
+            product = self.get_object()
+            
+            # Get sale modes with same base unit
+            from .models import SaleMode
+            sale_modes = SaleMode.objects.filter(
+                base_unit=product.unit,
+                is_active=True
+            )
+            
+            data = []
+            for mode in sale_modes:
+                try:
+                    product_sale_mode = ProductSaleMode.objects.get(
+                        product=product,
+                        sale_mode=mode
+                    )
+                    mode_data = {
+                        'id': mode.id,
+                        'name': mode.name,
+                        'code': mode.code,
+                        'price_type': mode.price_type,
+                        'conversion_factor': float(mode.conversion_factor),
+                        'configured': True,
+                        'unit_price': float(product_sale_mode.unit_price) if product_sale_mode.unit_price else None,
+                        'flat_price': float(product_sale_mode.flat_price) if product_sale_mode.flat_price else None,
+                        'discount_type': product_sale_mode.discount_type,
+                        'discount_value': float(product_sale_mode.discount_value) if product_sale_mode.discount_value else None,
+                        'is_active': product_sale_mode.is_active
+                    }
+                except ProductSaleMode.DoesNotExist:
+                    mode_data = {
+                        'id': mode.id,
+                        'name': mode.name,
+                        'code': mode.code,
+                        'price_type': mode.price_type,
+                        'conversion_factor': float(mode.conversion_factor),
+                        'configured': False,
+                        'unit_price': None,
+                        'flat_price': None,
+                        'discount_type': None,
+                        'discount_value': None,
+                        'is_active': False
+                    }
+                data.append(mode_data)
+            
+            return custom_response(
+                success=True,
+                message="Available sale modes fetched successfully",
+                data=data,
+                status_code=200
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                status_code=500
+            )
