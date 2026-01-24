@@ -20,8 +20,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     
     search_fields = ['name', 'phone', 'email', 'address']
-    filterset_fields = ['is_active']
-    ordering_fields = ['name', 'client_no', 'date_created']
+    filterset_fields = ['is_active', 'special_customer']  # Added special_customer
+    ordering_fields = ['name', 'client_no', 'date_created', 'special_customer']
     ordering = ['client_no']
 
     def get_queryset(self):
@@ -90,6 +90,20 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(is_active=True)
             elif status_filter.lower() == 'inactive':
                 queryset = queryset.filter(is_active=False)
+        
+        # Customer type filter (special/regular)
+        customer_type = params.get('customer_type')
+        if customer_type:
+            if customer_type.lower() == 'special':
+                queryset = queryset.filter(special_customer=True)
+            elif customer_type.lower() == 'regular':
+                queryset = queryset.filter(special_customer=False)
+        
+        # Special customer filter (alternative)
+        is_special = params.get('is_special')
+        if is_special is not None:
+            is_special_bool = is_special.lower() in ['true', '1', 'yes']
+            queryset = queryset.filter(special_customer=is_special_bool)
         
         # Amount type filter (advance/due/paid)
         amount_type = params.get('amount_type')
@@ -215,6 +229,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
             due_count = queryset.filter(net_due_amount__gt=0).count()
             paid_count = queryset.filter(net_due_amount=0, advance_balance=0).count()
             
+            # Count special customers
+            special_count = queryset.filter(special_customer=True).count()
+            regular_count = queryset.filter(special_customer=False).count()
+            
             summary = {
                 'total_customers': total_customers,
                 'financial_summary': {
@@ -227,6 +245,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
                     'advance_customers': advance_count,
                     'due_customers': due_count,
                     'paid_customers': paid_count
+                },
+                'customer_type_counts': {
+                    'special_customers': special_count,
+                    'regular_customers': regular_count
                 }
             }
             
@@ -346,6 +368,113 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=True, methods=['post'])
+    def toggle_special(self, request, pk=None):
+        """Toggle special customer status"""
+        try:
+            customer = self.get_object()
+            action_type = request.data.get('action', 'toggle')
+            
+            if action_type == 'set_true':
+                customer.special_customer = True
+                message = "Customer marked as special"
+            elif action_type == 'set_false':
+                customer.special_customer = False
+                message = "Customer marked as regular"
+            else:  # toggle
+                customer.special_customer = not customer.special_customer
+                message = f"Customer marked as {'special' if customer.special_customer else 'regular'}"
+            
+            customer.save(update_fields=['special_customer'])
+            
+            return custom_response(
+                success=True,
+                message=message,
+                data={
+                    'customer_id': customer.id,
+                    'customer_name': customer.name,
+                    'is_special': customer.special_customer,
+                    'customer_type': 'Special' if customer.special_customer else 'Regular'
+                },
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error toggling special status for customer {pk}: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error updating customer status: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def special_summary(self, request):
+        """Get summary of special customers"""
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            
+            # Count special vs regular customers
+            total_customers = queryset.count()
+            special_customers = queryset.filter(special_customer=True).count()
+            regular_customers = queryset.filter(special_customer=False).count()
+            
+            # Calculate financial summary for special customers
+            special_summary = queryset.filter(special_customer=True).aggregate(
+                total_advance=Sum('advance_balance'),
+                total_sales=Sum('total_grand_total'),
+                total_paid=Sum('total_paid_amount'),
+                total_due=Sum('net_due_amount')
+            )
+            
+            # Calculate financial summary for regular customers
+            regular_summary = queryset.filter(special_customer=False).aggregate(
+                total_advance=Sum('advance_balance'),
+                total_sales=Sum('total_grand_total'),
+                total_paid=Sum('total_paid_amount'),
+                total_due=Sum('net_due_amount')
+            )
+            
+            summary = {
+                'total_customers': total_customers,
+                'customer_types': {
+                    'special': {
+                        'count': special_customers,
+                        'percentage': round((special_customers / total_customers * 100) if total_customers > 0 else 0, 2),
+                        'financials': {
+                            'total_advance': float(special_summary['total_advance'] or 0),
+                            'total_sales': float(special_summary['total_sales'] or 0),
+                            'total_paid': float(special_summary['total_paid'] or 0),
+                            'total_due': float(special_summary['total_due'] or 0)
+                        }
+                    },
+                    'regular': {
+                        'count': regular_customers,
+                        'percentage': round((regular_customers / total_customers * 100) if total_customers > 0 else 0, 2),
+                        'financials': {
+                            'total_advance': float(regular_summary['total_advance'] or 0),
+                            'total_sales': float(regular_summary['total_sales'] or 0),
+                            'total_paid': float(regular_summary['total_paid'] or 0),
+                            'total_due': float(regular_summary['total_due'] or 0)
+                        }
+                    }
+                }
+            }
+            
+            return custom_response(
+                success=True,
+                message="Special customer summary fetched successfully",
+                data=summary,
+                status_code=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error fetching special customer summary: {str(e)}")
+            return custom_response(
+                success=False,
+                message=f"Error fetching special customer summary: {str(e)}",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=True, methods=['get'])
     def check_receipts(self, request, pk=None):
         """Debug endpoint to check all money receipts for a customer"""
@@ -414,6 +543,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
                     data={
                         'customer_id': customer.id,
                         'customer_name': customer.name,
+                        'is_special_customer': customer.special_customer,
                         'stored_advance_balance': float(customer.advance_balance),
                         'total_money_receipts': len(receipts_data),
                         'money_receipts': receipts_data,
@@ -688,7 +818,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
                         'deletion_blocked': True,
                         'blocking_relationships': blocking_relationships,
                         'customer_id': instance.id,
-                        'customer_name': customer_name
+                        'customer_name': customer_name,
+                        'special_customer': instance.special_customer
                     },
                     status_code=status.HTTP_200_OK
                 )
@@ -717,6 +848,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
 class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
@@ -725,7 +857,7 @@ class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
     pagination_class = None
     
     search_fields = ['name', 'phone', 'email', 'address']
-    ordering_fields = ['name', 'date_created']
+    ordering_fields = ['name', 'date_created', 'special_customer']
     ordering = ['name']
 
     def get_queryset(self):
@@ -737,6 +869,20 @@ class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(company=user.company)
         else:
             return Customer.objects.none()
+        
+        # Apply special customer filter if provided
+        is_special = self.request.GET.get('is_special')
+        if is_special is not None:
+            is_special_bool = is_special.lower() in ['true', '1', 'yes']
+            queryset = queryset.filter(special_customer=is_special_bool)
+        
+        # Apply customer type filter
+        customer_type = self.request.GET.get('customer_type')
+        if customer_type:
+            if customer_type.lower() == 'special':
+                queryset = queryset.filter(special_customer=True)
+            elif customer_type.lower() == 'regular':
+                queryset = queryset.filter(special_customer=False)
         
         # Optimize queryset with annotations
         queryset = queryset.annotate(

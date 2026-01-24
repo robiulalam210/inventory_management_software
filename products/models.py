@@ -153,7 +153,7 @@ class SaleMode(models.Model):
     base_unit = models.ForeignKey('Unit', on_delete=models.CASCADE, related_name='sale_modes')
     conversion_factor = models.DecimalField(
         max_digits=12, 
-        decimal_places=6,
+        decimal_places=3,
         default=Decimal('1.00'),
         help_text="Multiplier to convert to base unit (e.g., 0.001 for GRAM to KG)"
     )

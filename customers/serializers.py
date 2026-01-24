@@ -12,6 +12,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     total_sales = serializers.SerializerMethodField()
     advance_balance = serializers.SerializerMethodField()
     payment_breakdown = serializers.SerializerMethodField()
+    customer_type = serializers.SerializerMethodField()
     
     class Meta:
         model = Customer
@@ -19,9 +20,10 @@ class CustomerSerializer(serializers.ModelSerializer):
             'id', 'name', 'phone', 'email', 'address', 'is_active',
             'client_no', 'total_due', 'total_paid', 'amount_type',
             'company', 'total_sales', 'date_created', 'created_by',
-            'advance_balance', 'payment_breakdown'
+            'advance_balance', 'payment_breakdown', 'special_customer',
+            'customer_type'
         ]
-        read_only_fields = ['date_created', 'created_by']
+        read_only_fields = ['date_created', 'created_by', 'customer_type']
 
     def get_client_no(self, obj):
         """Get client number - use existing or generate if missing"""
@@ -35,6 +37,10 @@ class CustomerSerializer(serializers.ModelSerializer):
             return f"CU-{1000 + new_id}"
         except:
             return f"CU-{1000 + obj.id}" if obj.id else "CU-1000"
+
+    def get_customer_type(self, obj):
+        """Get customer type display"""
+        return "Special" if obj.special_customer else "Regular"
 
     def get_total_sales(self, obj):
         if hasattr(obj, 'sales_count'):

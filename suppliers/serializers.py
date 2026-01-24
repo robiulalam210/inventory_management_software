@@ -16,14 +16,15 @@ class SupplierSerializer(serializers.ModelSerializer):
         model = Supplier
         fields = [
             'id', 'name', 'email', 'phone', 'address', 'is_active', 'supplier_no',
+            'shop_name', 'product_name',  # ADDED: New fields
             'total_due', 'total_paid', 'total_purchases', 'purchase_count',
-            'advance_balance',  # SUCCESS: ADD THIS LINE - CRITICAL FIX
+            'advance_balance',
             'amount_type', 'company', 'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'company', 'created_by', 'supplier_no', 'created_at', 'updated_at',
             'total_due', 'total_paid', 'total_purchases', 'purchase_count',
-            'advance_balance'  # SUCCESS: ADD THIS LINE
+            'advance_balance'
         ]
 
     def get_amount_type(self, obj):
@@ -31,7 +32,7 @@ class SupplierSerializer(serializers.ModelSerializer):
         if obj.total_due > 0:
             return "Due"
         elif obj.advance_balance > 0:
-            return "Advance"  # SUCCESS: NEW: Show "Advance" when there's advance balance
+            return "Advance"
         else:
             return "Paid"
 
@@ -43,8 +44,9 @@ class SupplierListSerializer(serializers.ModelSerializer):
         model = Supplier
         fields = [
             'id', 'supplier_no', 'name', 'phone', 'address', 'is_active',
+            'shop_name', 'product_name',  # ADDED: New fields
             'total_purchases', 'total_paid', 'total_due', 'purchase_count', 
-            'advance_balance',  # SUCCESS: ADD THIS LINE
+            'advance_balance',
             'amount_type'
         ]
 
@@ -53,7 +55,7 @@ class SupplierListSerializer(serializers.ModelSerializer):
         if obj.total_due > 0:
             return "Due"
         elif obj.advance_balance > 0:
-            return "Advance"  # SUCCESS: NEW
+            return "Advance"
         else:
             return "Paid"
 
@@ -61,7 +63,7 @@ class SupplierCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating suppliers"""
     class Meta:
         model = Supplier
-        fields = ['name', 'email', 'phone', 'address', 'is_active']
+        fields = ['name', 'email', 'phone', 'address', 'shop_name', 'product_name', 'is_active']  # UPDATED
         
     def validate_phone(self, value):
         """Validate phone number format"""
@@ -73,4 +75,9 @@ class SupplierCreateSerializer(serializers.ModelSerializer):
         """Ensure at least one contact method is provided"""
         if not data.get('email') and not data.get('phone'):
             raise serializers.ValidationError("Either email or phone must be provided")
+        
+        # Optional: Validate shop_name if provided
+        if data.get('shop_name') and len(data['shop_name']) > 255:
+            raise serializers.ValidationError("Shop name cannot exceed 255 characters")
+            
         return data

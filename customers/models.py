@@ -14,7 +14,8 @@ class Customer(models.Model):
     
     # Advance payment tracking
     advance_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    
+    special_customer = models.BooleanField(default=False)
+
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     date_created = models.DateTimeField(default=timezone.now)
     is_active = models.BooleanField(default=True)
@@ -41,6 +42,12 @@ class Customer(models.Model):
     @property
     def status(self):
         return "Active" if self.is_active else "Inactive"
+    
+    @property
+    def customer_type(self):
+        """Return customer type based on special flag"""
+        return "Special" if self.special_customer else "Regular"
+    
 
     def add_advance_direct(self, amount, created_by=None):
         """Add advance payment directly to customer balance AND create money receipt"""

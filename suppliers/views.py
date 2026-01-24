@@ -3,31 +3,54 @@ from rest_framework import viewsets, status, permissions, serializers
 from django.db.models import Q
 from core.utils import custom_response
 from core.pagination import CustomPageNumberPagination
-from .models import Supplier  # Import from models, not defined here
-from .serializers import SupplierSerializer
+from .models import Supplier
+from .serializers import SupplierSerializer, SupplierCreateSerializer  # Import the create serializer
 import logging
 
 logger = logging.getLogger(__name__)
-from core.views import BaseCompanyViewSet
+
+# Create a simplified base viewset if BaseCompanyViewSet doesn't exist
+class BaseCompanyViewSet(viewsets.ModelViewSet):
+    """Base ViewSet that automatically filters by user's company"""
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Filter by company if user has a company
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(company=user.company)
+        
+        return queryset
 
 class SupplierViewSet(BaseCompanyViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = CustomPageNumberPagination
+    
+    def get_serializer_class(self):
+        """Use different serializers for different actions"""
+        if self.action in ['create', 'update', 'partial_update']:
+            return SupplierCreateSerializer
+        return SupplierSerializer
 
     def get_queryset(self):
         """Apply filters and search to the queryset"""
         queryset = super().get_queryset()
-          # Filter by company
+        
+        # Filter by company
         user = self.request.user
         if hasattr(user, 'company') and user.company:
             queryset = queryset.filter(company=user.company)
         else:
-            return Customer.objects.none()
+            return Supplier.objects.none()  # FIXED: Use Supplier, not Customer
+        
         # Get filter parameters
         search = self.request.query_params.get('search')
         status_filter = self.request.query_params.get('status')
+        shop_name = self.request.query_params.get('shop_name')
+        product_name = self.request.query_params.get('product_name')
         
         # Apply filters
         if search:
@@ -36,8 +59,18 @@ class SupplierViewSet(BaseCompanyViewSet):
                 Q(name__icontains=search) |
                 Q(address__icontains=search) |
                 Q(email__icontains=search) |
-                Q(phone__icontains=search)
+                Q(phone__icontains=search) |
+                Q(shop_name__icontains=search) |  # ADDED: Search in shop_name
+                Q(product_name__icontains=search)  # ADDED: Search in product_name
             )
+            
+        # Filter by shop name
+        if shop_name:
+            queryset = queryset.filter(shop_name__icontains=shop_name)
+            
+        # Filter by product name
+        if product_name:
+            queryset = queryset.filter(product_name__icontains=product_name)
             
         if status_filter:
             if status_filter.lower() == 'active':
@@ -47,7 +80,8 @@ class SupplierViewSet(BaseCompanyViewSet):
         
         # Order by name by default
         order_by = self.request.query_params.get('order_by', 'supplier_no')
-        if order_by.lstrip('-') in ['name', 'email', 'created_at', 'updated_at', 'total_purchases']:
+        valid_order_fields = ['name', 'email', 'shop_name', 'created_at', 'updated_at', 'total_purchases']
+        if order_by.lstrip('-') in valid_order_fields:
             queryset = queryset.order_by(order_by)
         else:
             queryset = queryset.order_by('supplier_no')
@@ -114,12 +148,22 @@ class SupplierViewSet(BaseCompanyViewSet):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Check for duplicate supplier name in the same company
+            # Check for duplicate supplier phone in the same company
             phone = serializer.validated_data.get('phone')
-            if Supplier.objects.filter(company=company, phone=phone).exists():
+            if phone and Supplier.objects.filter(company=company, phone=phone).exists():
                 return custom_response(
                     success=False,
                     message="A supplier with this phone already exists in your company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # NEW: Check for duplicate shop name if provided
+            shop_name = serializer.validated_data.get('shop_name')
+            if shop_name and Supplier.objects.filter(company=company, shop_name=shop_name).exists():
+                return custom_response(
+                    success=False,
+                    message="A supplier with this shop name already exists in your company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
@@ -159,12 +203,22 @@ class SupplierViewSet(BaseCompanyViewSet):
             serializer.is_valid(raise_exception=True)
             company = getattr(self.request.user, "company", None)
             
-            # Check for duplicate supplier name (excluding current instance)
+            # Check for duplicate supplier phone (excluding current instance)
             phone = serializer.validated_data.get('phone')
-            if Supplier.objects.filter(company=company, phone=phone).exclude(id=instance.id).exists():
+            if phone and Supplier.objects.filter(company=company, phone=phone).exclude(id=instance.id).exists():
                 return custom_response(
                     success=False,
                     message="A supplier with this phone already exists in your company.",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # NEW: Check for duplicate shop name (excluding current instance)
+            shop_name = serializer.validated_data.get('shop_name')
+            if shop_name and Supplier.objects.filter(company=company, shop_name=shop_name).exclude(id=instance.id).exists():
+                return custom_response(
+                    success=False,
+                    message="A supplier with this shop name already exists in your company.",
                     data=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
@@ -273,7 +327,7 @@ class SupplierViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
-class SupplierNonPaginationViewSet(BaseCompanyViewSet):  # Correct spelling
+class SupplierNonPaginationViewSet(BaseCompanyViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -286,10 +340,13 @@ class SupplierNonPaginationViewSet(BaseCompanyViewSet):  # Correct spelling
         if hasattr(user, 'company') and user.company:
             queryset = queryset.filter(company=user.company)
         else:
-            return Customer.objects.none()
+            return Supplier.objects.none()  # FIXED: Use Supplier, not Customer
+        
         # Get filter parameters
         search = self.request.query_params.get('search')
         status_filter = self.request.query_params.get('status')
+        shop_name = self.request.query_params.get('shop_name')
+        product_name = self.request.query_params.get('product_name')
         
         # Apply filters
         if search:
@@ -298,8 +355,18 @@ class SupplierNonPaginationViewSet(BaseCompanyViewSet):  # Correct spelling
                 Q(name__icontains=search) |
                 Q(address__icontains=search) |
                 Q(email__icontains=search) |
-                Q(phone__icontains=search)
+                Q(phone__icontains=search) |
+                Q(shop_name__icontains=search) |  # ADDED
+                Q(product_name__icontains=search)  # ADDED
             )
+            
+        # Filter by shop name
+        if shop_name:
+            queryset = queryset.filter(shop_name__icontains=shop_name)
+            
+        # Filter by product name
+        if product_name:
+            queryset = queryset.filter(product_name__icontains=product_name)
             
         if status_filter:
             if status_filter.lower() == 'active':
@@ -309,7 +376,8 @@ class SupplierNonPaginationViewSet(BaseCompanyViewSet):  # Correct spelling
         
         # Order by name by default
         order_by = self.request.query_params.get('order_by', 'name')
-        if order_by.lstrip('-') in ['name', 'email', 'created_at', 'updated_at', 'total_purchases']:
+        valid_order_fields = ['name', 'email', 'shop_name', 'created_at', 'updated_at', 'total_purchases']
+        if order_by.lstrip('-') in valid_order_fields:
             queryset = queryset.order_by(order_by)
         else:
             queryset = queryset.order_by('name')

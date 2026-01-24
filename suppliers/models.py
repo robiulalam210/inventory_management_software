@@ -19,6 +19,11 @@ class Supplier(models.Model):
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
+    
+    # NEW FIELDS: Added shop_name and product_name
+    shop_name = models.CharField(max_length=255, blank=True, null=True, verbose_name="Shop/Business Name")
+    product_name = models.CharField(max_length=500, blank=True, null=True, verbose_name="Products/Services")
+    
     is_active = models.BooleanField(default=True)
 
     # Purchase statistics
@@ -134,6 +139,8 @@ class Supplier(models.Model):
     def get_payment_summary(self):
         return {
             'supplier': self.name,
+            'shop_name': self.shop_name,  # ADDED: Include shop_name
+            'product_name': self.product_name,  # ADDED: Include product_name
             'total_purchases': float(self.total_purchases),
             'total_paid': float(self.total_paid),
             'total_due': float(self.total_due),
