@@ -1,14 +1,13 @@
+# products/serializers.py
 from rest_framework import serializers
 from django.conf import settings
 from django.db import transaction, IntegrityError
 import time
 import random
-from decimal import Decimal, InvalidOperation  # ADD THIS IMPORT
-
+from decimal import Decimal, InvalidOperation
 import re
 import json
 from .models import Category, Unit, Brand, Group, Source, Product, ProductSaleMode, SaleMode, PriceTier
-from sales.models import Sale, SaleItem  # Assuming you have these models
 
 
 # Define a fallback CompanyProductSequence class
@@ -18,11 +17,9 @@ class CompanyProductSequence:
     def get_next_sequence(cls, company):
         """Get next sequence number for a company"""
         try:
-            # First try to import the real model
             from .models import CompanyProductSequence as RealSequence
             return RealSequence.get_next_sequence(company)
         except (ImportError, AttributeError):
-            # Fallback: use timestamp-based sequence
             import time
             timestamp = int(time.time())
             return timestamp % 1000000 + 1000
@@ -32,40 +29,33 @@ class CleanedChoiceField(serializers.ChoiceField):
     """Custom ChoiceField that cleans quoted strings BEFORE any validation"""
     
     def __init__(self, **kwargs):
-        # Set allow_blank to True by default to handle empty strings
         kwargs.setdefault('allow_blank', True)
         super().__init__(**kwargs)
     
     def to_internal_value(self, data):
         """Clean the data before validation"""
         if data is not None:
-            # Convert to string if it isn't already
             if not isinstance(data, str):
                 data = str(data)
             
-            # Clean the string - remove quotes and whitespace, convert to lowercase
             data = re.sub(r'["\']', '', data).strip().lower()
             
-            # Map common variations
             value_mapping = {
                 'percent': 'percentage',
                 'pct': 'percentage',
                 'perc': 'percentage',
                 'fixed_amount': 'fixed',
                 'flat': 'fixed',
-                'percentage': 'percentage',  # Explicit mapping
-                'fixed': 'fixed',  # Explicit mapping
+                'percentage': 'percentage',
+                'fixed': 'fixed',
             }
             
-            # Apply mapping if needed
             if data in value_mapping:
                 data = value_mapping[data]
             
-            # Handle empty string after cleaning
             if data == '':
                 data = None
         
-        # Now run the parent validation with cleaned data
         return super().to_internal_value(data)
 
 
@@ -113,16 +103,54 @@ class SourceSerializer(serializers.ModelSerializer):
         model = Source
         fields = '__all__'
 
-
+# serializers.py
 class PriceTierSerializer(serializers.ModelSerializer):
+    # Use IntegerField for product_sale_mode to ensure it's treated as ID
+    product_sale_mode = serializers.IntegerField(write_only=True)
+    
     class Meta:
         model = PriceTier
-        fields = ['id', 'min_quantity', 'max_quantity', 'price']
-        read_only_fields = ['id']
-# products/serializers.py - Update ProductSaleModeSerializer
+        fields = ['id', 'product_sale_mode', 'min_quantity', 'max_quantity', 'price', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def create(self, validated_data):
+        """Create PriceTier instance"""
+        # Get the ProductSaleMode instance from ID
+        product_sale_mode_id = validated_data.pop('product_sale_mode')
+        try:
+            product_sale_mode = ProductSaleMode.objects.get(id=product_sale_mode_id)
+        except ProductSaleMode.DoesNotExist:
+            raise serializers.ValidationError({
+                'product_sale_mode': f'ProductSaleMode with id {product_sale_mode_id} does not exist'
+            })
+        
+        # Check if product_sale_mode belongs to user's company
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'company'):
+            if product_sale_mode.product.company != request.user.company:
+                raise serializers.ValidationError({
+                    'product_sale_mode': 'Product sale mode does not belong to your company'
+                })
+        
+        # Create the PriceTier
+        return PriceTier.objects.create(
+            product_sale_mode=product_sale_mode,
+            **validated_data
+        )
+    
+    def to_representation(self, instance):
+        """Custom representation for GET requests"""
+        representation = super().to_representation(instance)
+        # Add product_sale_mode_id for responses
+        representation['product_sale_mode'] = instance.product_sale_mode_id
+        return representation
+
+
 
 class ProductSaleModeSerializer(serializers.ModelSerializer):
-    tiers = PriceTierSerializer(many=True, read_only=True)
+    """Serializer for ProductSaleMode with tiers"""
+    tiers = PriceTierSerializer(many=True, read_only=True)  # Make sure this is read_only=True
+    
     sale_mode_name = serializers.CharField(source='sale_mode.name', read_only=True)
     sale_mode_code = serializers.CharField(source='sale_mode.code', read_only=True)
     price_type = serializers.CharField(source='sale_mode.price_type', read_only=True)
@@ -132,80 +160,53 @@ class ProductSaleModeSerializer(serializers.ModelSerializer):
         decimal_places=6,
         read_only=True
     )
+    base_unit_name = serializers.CharField(source='sale_mode.base_unit.name', read_only=True)
     
-    # Make these fields write-only
-    product = serializers.PrimaryKeyRelatedField(
-        queryset=Product.objects.all(),
-        write_only=True,
-        required=True
-    )
-    sale_mode = serializers.PrimaryKeyRelatedField(
-        queryset=SaleMode.objects.all(),
-        write_only=True,
-        required=True
-    )
-    
-    # Add read-only display fields
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_sku = serializers.CharField(source='product.sku', read_only=True)
     
     class Meta:
         model = ProductSaleMode
         fields = [
-            'id', 'product', 'product_name', 'product_sku', 
+            'id', 'product', 'product_name', 'product_sku',
             'sale_mode', 'sale_mode_name', 'sale_mode_code',
             'unit_price', 'flat_price', 'price_type', 'conversion_factor',
-            'discount_type', 'discount_value', 'is_active',
-            'tiers', 'created_at', 'updated_at'
+            'base_unit_name', 'discount_type', 'discount_value', 'is_active',
+            'tiers',  # Include tiers here
+            'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-    
-    def validate(self, data):
-        """Validate the data"""
-        request = self.context.get('request')
-        
-        # Get product and sale mode
-        product = data.get('product')
-        sale_mode = data.get('sale_mode')
-        
-        if not product or not sale_mode:
-            raise serializers.ValidationError("Product and SaleMode are required")
-        
-        # Check if product belongs to user's company
-        if request and hasattr(request.user, 'company'):
-            if product.company != request.user.company:
-                raise serializers.ValidationError("Product does not belong to your company")
-            
-            if sale_mode.company != request.user.company:
-                raise serializers.ValidationError("SaleMode does not belong to your company")
-        
-        # Check if already exists
-        if ProductSaleMode.objects.filter(product=product, sale_mode=sale_mode).exists():
-            raise serializers.ValidationError("Sale mode already configured for this product")
-        
-        # Validate units match
-        if sale_mode.base_unit != product.unit:
-            raise serializers.ValidationError(
-                f"Sale mode base unit ({sale_mode.base_unit.name}) doesn't match product unit ({product.unit.name})"
-            )
-        
-        return data
-    
-    def to_internal_value(self, data):
-        """Handle field name conversions"""
-        data = data.copy()
-        
-        # Convert product_id to product
-        if 'product_id' in data and 'product' not in data:
-            data['product'] = data.pop('product_id')
-        
-        # Convert sale_mode_id to sale_mode (if needed)
-        if 'sale_mode_id' in data and 'sale_mode' not in data:
-            data['sale_mode'] = data.pop('sale_mode_id')
-        
-        return super().to_internal_value(data)
+        read_only_fields = [
+            'id', 'product_name', 'product_sku', 'sale_mode_name', 'sale_mode_code',
+            'price_type', 'conversion_factor', 'base_unit_name', 'created_at', 'updated_at'
+        ]
 
-# products/serializers.py - Update SaleModeSerializer
+
+class ProductSaleModeNestedSerializer(serializers.ModelSerializer):
+    """Serializer for ProductSaleMode when nested inside Product"""
+    sale_mode_id = serializers.IntegerField(source='sale_mode.id', read_only=True)
+    sale_mode_name = serializers.CharField(source='sale_mode.name', read_only=True)
+    sale_mode_code = serializers.CharField(source='sale_mode.code', read_only=True)
+    price_type = serializers.CharField(source='sale_mode.price_type', read_only=True)
+    conversion_factor = serializers.DecimalField(
+        source='sale_mode.conversion_factor', 
+        max_digits=12, 
+        decimal_places=6,
+        read_only=True
+    )
+    base_unit_name = serializers.CharField(source='sale_mode.base_unit.name', read_only=True)
+    
+    # Include tiers
+    tiers = PriceTierSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = ProductSaleMode
+        fields = [
+            'id', 'sale_mode_id', 'sale_mode_name', 'sale_mode_code',
+            'price_type', 'unit_price', 'flat_price', 'conversion_factor',
+            'base_unit_name', 'discount_type', 'discount_value', 'is_active',
+            'tiers',  # Include tiers
+            'created_at', 'updated_at'
+        ]
 
 class SaleModeSerializer(serializers.ModelSerializer):
     base_unit_name = serializers.CharField(source='base_unit.name', read_only=True)
@@ -217,10 +218,10 @@ class SaleModeSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'code', 'base_unit', 'base_unit_name',
             'conversion_factor', 'price_type', 'is_active', 
-            'company', 'company_name', 'created_by', 'created_by_name'
-            # Remove 'created_at' and 'updated_at' since they don't exist in model
+            'company', 'company_name', 'created_by', 'created_by_name',
+            'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'company', 'created_by']  # Remove 'created_at', 'updated_at'
+        read_only_fields = ['id', 'company', 'created_by', 'created_at', 'updated_at']
     
     def validate_base_unit(self, value):
         """Validate base_unit exists and belongs to user's company"""
@@ -229,7 +230,6 @@ class SaleModeSerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError("Base unit is required")
         
-        # Check if unit belongs to user's company
         if request and hasattr(request.user, 'company'):
             if value.company != request.user.company:
                 raise serializers.ValidationError(
@@ -250,24 +250,56 @@ class SaleModeSerializer(serializers.ModelSerializer):
         """Override create to ensure company is set"""
         request = self.context.get('request')
         
-        # Set company from user or base_unit
         if request and hasattr(request.user, 'company'):
             validated_data['company'] = request.user.company
         elif 'base_unit' in validated_data:
             validated_data['company'] = validated_data['base_unit'].company
         
-        # Set created_by if user is authenticated
         if request and request.user.is_authenticated:
             validated_data['created_by'] = request.user
         
         return super().create(validated_data)
 
 
+class ProductSaleModeSimpleSerializer(serializers.ModelSerializer):
+    """Simple serializer for nested product sale modes with tiers"""
+    sale_mode_id = serializers.IntegerField(source='sale_mode.id', read_only=True)
+    sale_mode_name = serializers.CharField(source='sale_mode.name', read_only=True)
+    sale_mode_code = serializers.CharField(source='sale_mode.code', read_only=True)
+    price_type = serializers.CharField(source='sale_mode.price_type', read_only=True)
+    
+    # Include tiers
+    tiers = PriceTierSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = ProductSaleMode
+        fields = [
+            'id', 'sale_mode_id', 'sale_mode_name', 'sale_mode_code',
+            'price_type', 'unit_price', 'flat_price', 'discount_type',
+            'discount_value', 'is_active', 'tiers'  # Add tiers
+        ]
+        
 class ProductDetailSerializer(serializers.ModelSerializer):
     """Extended product serializer with sale modes"""
-    sale_modes = ProductSaleModeSerializer(source='sale_modes.filter(is_active=True)', many=True, read_only=True)
+    # ========== FIXED: Use the new nested serializer ==========
+    sale_modes = ProductSaleModeNestedSerializer(
+        source='active_sale_modes',
+        many=True, 
+        read_only=True
+    )
+    # ========== END FIX ==========
+    
     available_sale_modes = serializers.SerializerMethodField()
     base_unit_name = serializers.CharField(source='unit.name', read_only=True)
+    base_unit_code = serializers.CharField(source='unit.code', read_only=True)
+    
+    # Foreign key info fields
+    category_info = serializers.SerializerMethodField(read_only=True)
+    unit_info = serializers.SerializerMethodField(read_only=True)
+    brand_info = serializers.SerializerMethodField(read_only=True)
+    group_info = serializers.SerializerMethodField(read_only=True)
+    source_info = serializers.SerializerMethodField(read_only=True)
+    created_by_info = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Product
@@ -278,26 +310,28 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'stock_qty', 'alert_quantity', 'description', 'image',
             'is_active', 'discount_type', 'discount_value',
             'discount_applied_on', 'created_at', 'updated_at',
-            'stock_status', 'final_price',
-            # Sale mode fields
-            'sale_modes', 'available_sale_modes', 'base_unit_name'
+            'stock_status', 'final_price', 'stock_status_code',
+            # Sale mode fields WITH tiers
+            'sale_modes', 'available_sale_modes', 'base_unit_name', 'base_unit_code',
+            # Foreign key info
+            'category_info', 'unit_info', 'brand_info', 'group_info', 
+            'source_info', 'created_by_info'
         ]
         read_only_fields = [
             'id', 'company', 'created_by', 'sku', 'stock_status',
-            'final_price', 'created_at', 'updated_at'
+            'final_price', 'stock_status_code', 'created_at', 'updated_at'
         ]
     
     def get_available_sale_modes(self, obj):
         """Get all available sale modes for this product type"""
         from .models import SaleMode
         
-        # Get all sale modes that use the same base unit as product
         sale_modes = SaleMode.objects.filter(
             base_unit=obj.unit,
-            is_active=True
+            is_active=True,
+            company=obj.company
         ).values('id', 'name', 'code', 'price_type', 'conversion_factor')
         
-        # Add current configuration status
         for mode in sale_modes:
             try:
                 product_sale_mode = ProductSaleMode.objects.get(
@@ -308,17 +342,53 @@ class ProductDetailSerializer(serializers.ModelSerializer):
                 mode['is_active'] = product_sale_mode.is_active
                 mode['unit_price'] = float(product_sale_mode.unit_price) if product_sale_mode.unit_price else None
                 mode['flat_price'] = float(product_sale_mode.flat_price) if product_sale_mode.flat_price else None
+                mode['discount_type'] = product_sale_mode.discount_type
+                mode['discount_value'] = float(product_sale_mode.discount_value) if product_sale_mode.discount_value else None
             except ProductSaleMode.DoesNotExist:
                 mode['configured'] = False
                 mode['is_active'] = False
                 mode['unit_price'] = None
                 mode['flat_price'] = None
+                mode['discount_type'] = None
+                mode['discount_value'] = None
         
         return list(sale_modes)
+    
+    def get_category_info(self, obj):
+        if obj.category:
+            return {'id': obj.category.id, 'name': obj.category.name}
+        return None
 
+    def get_unit_info(self, obj):
+        if obj.unit:
+            return {'id': obj.unit.id, 'name': obj.unit.name, 'code': obj.unit.code}
+        return None
 
+    def get_brand_info(self, obj):
+        if obj.brand:
+            return {'id': obj.brand.id, 'name': obj.brand.name}
+        return None
+
+    def get_group_info(self, obj):
+        if obj.group:
+            return {'id': obj.group.id, 'name': obj.group.name}
+        return None
+
+    def get_source_info(self, obj):
+        if obj.source:
+            return {'id': obj.source.id, 'name': obj.source.name}
+        return None
+
+    def get_created_by_info(self, obj):
+        if obj.created_by:
+            return {
+                'id': obj.created_by.id, 
+                'username': obj.created_by.username,
+                'email': obj.created_by.email
+            }
+        return None
+    
 class ProductCreateSerializer(serializers.ModelSerializer):
-    # Add discount fields to the serializer - use our custom CleanedChoiceField
     discount_type = CleanedChoiceField(
         choices=Product.DISCOUNT_TYPE_CHOICES,
         required=False,
@@ -336,7 +406,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         default=False
     )
     
-    # Make foreign key fields optional for creation
     category = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
         required=True
@@ -378,30 +447,21 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         }
 
     def to_internal_value(self, data):
-        """
-        Convert incoming data before validation
-        Handle field name mismatches and type conversions
-        """
         if isinstance(data, dict):
             data = data.copy()
             
-            # Handle 'groups' to 'group' mapping
             if 'groups' in data and 'group' not in data:
                 data['group'] = data.pop('groups')
             
-            # Handle discount_applied_on string to boolean conversion
             if 'discount_applied_on' in data:
                 value = data['discount_applied_on']
                 if isinstance(value, str):
                     value = value.strip().lower()
                     data['discount_applied_on'] = value in ['true', '1', 'yes', 'on']
-                elif isinstance(value, bool):
-                    data['discount_applied_on'] = value
         
         return super().to_internal_value(data)
 
     def validate_name(self, value):
-        """Ensure product name is unique within company"""
         request = self.context.get('request')
         if request and hasattr(request, 'user') and hasattr(request.user, 'company'):
             if Product.objects.filter(
@@ -414,9 +474,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        """
-        Custom validation for product data
-        """
         purchase_price = data.get('purchase_price', Decimal('0.00'))
         selling_price = data.get('selling_price', Decimal('0.00'))
         
@@ -462,9 +519,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """
-        Create product with automatic SKU generation and company assignment
-        """
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             raise serializers.ValidationError("Authentication required")
@@ -479,7 +533,6 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         opening_stock = validated_data.get('opening_stock', 0)
         validated_data['stock_qty'] = opening_stock
 
-        # Generate SKU
         if not validated_data.get('sku'):
             try:
                 next_num = CompanyProductSequence.get_next_sequence(company)
@@ -567,18 +620,14 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         if isinstance(data, dict):
             data = data.copy()
             
-            # Handle 'groups' to 'group' mapping
             if 'groups' in data and 'group' not in data:
                 data['group'] = data.pop('groups')
             
-            # Handle discount_applied_on string to boolean conversion
             if 'discount_applied_on' in data:
                 value = data['discount_applied_on']
                 if isinstance(value, str):
                     value = value.strip().lower()
                     data['discount_applied_on'] = value in ['true', '1', 'yes', 'on']
-                elif isinstance(value, bool):
-                    data['discount_applied_on'] = value
         
         return super().to_internal_value(data)
 
@@ -645,6 +694,14 @@ class ProductSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
     
+    # ========== FIXED: Use the new nested serializer ==========
+    sale_modes = ProductSaleModeNestedSerializer(
+        source='active_sale_modes',
+        many=True, 
+        read_only=True
+    )
+    # ========== END FIX ==========
+    
     category = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
         required=False
@@ -669,15 +726,20 @@ class ProductSerializer(serializers.ModelSerializer):
         allow_null=True
     )
     
+    # Info fields
     category_info = serializers.SerializerMethodField(read_only=True)
     unit_info = serializers.SerializerMethodField(read_only=True)
     brand_info = serializers.SerializerMethodField(read_only=True)
     group_info = serializers.SerializerMethodField(read_only=True)
     source_info = serializers.SerializerMethodField(read_only=True)
     created_by_info = serializers.SerializerMethodField(read_only=True)
+    
+    # Stock fields
     stock_status = serializers.ReadOnlyField()
     stock_status_display = serializers.SerializerMethodField(read_only=True)
-
+    stock_status_code = serializers.ReadOnlyField()
+    
+    # Discount fields
     discount_type = CleanedChoiceField(
         choices=Product.DISCOUNT_TYPE_CHOICES,
         required=False,
@@ -698,7 +760,7 @@ class ProductSerializer(serializers.ModelSerializer):
         decimal_places=2,
         read_only=True
     )
-
+    
     class Meta:
         model = Product
         fields = [
@@ -707,14 +769,20 @@ class ProductSerializer(serializers.ModelSerializer):
             'purchase_price', 'selling_price', 'opening_stock', 
             'stock_qty', 'alert_quantity', 'description', 'image',
             'is_active', 'created_at', 'updated_at',
+            # Info fields
             'category_info', 'unit_info', 'brand_info', 'group_info', 
-            'source_info', 'created_by_info', 'stock_status', 'stock_status_display',
+            'source_info', 'created_by_info',
+            # Stock fields
+            'stock_status', 'stock_status_display', 'stock_status_code',
+            # Discount fields
             'discount_type', 'discount_value', 'discount_applied_on',
-            'discount_applied', 'final_price'
+            'discount_applied', 'final_price',
+            # Sale modes WITH tiers
+            'sale_modes'
         ]
         read_only_fields = [
             'id', 'company', 'created_by', 'created_at', 'updated_at', 
-            'sku', 'stock_status', 'stock_qty', 'final_price'
+            'sku', 'stock_status', 'stock_status_code', 'stock_qty', 'final_price'
         ]
 
     def get_category_info(self, obj):
@@ -775,3 +843,42 @@ class ProductSerializer(serializers.ModelSerializer):
                 })
         
         return data
+
+class ProductBulkCreateSerializer(serializers.Serializer):
+    """Serializer for bulk product creation"""
+    products = ProductCreateSerializer(many=True)
+    
+    def create(self, validated_data):
+        products_data = validated_data['products']
+        products = []
+        
+        for product_data in products_data:
+            serializer = ProductCreateSerializer(
+                data=product_data,
+                context=self.context
+            )
+            if serializer.is_valid():
+                product = serializer.save()
+                products.append(product)
+            else:
+                raise serializers.ValidationError({
+                    'errors': serializer.errors
+                })
+        
+        return {'products': products}
+
+
+class ProductImportSerializer(serializers.Serializer):
+    """Serializer for product import from CSV/Excel"""
+    file = serializers.FileField()
+    overwrite = serializers.BooleanField(default=False)
+    
+    def validate_file(self, value):
+        valid_extensions = ['.csv', '.xlsx', '.xls']
+        import os
+        ext = os.path.splitext(value.name)[1]
+        if ext.lower() not in valid_extensions:
+            raise serializers.ValidationError(
+                f"Unsupported file format. Supported formats: {', '.join(valid_extensions)}"
+            )
+        return value

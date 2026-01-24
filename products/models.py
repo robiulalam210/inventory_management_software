@@ -5,6 +5,31 @@ from core.models import Company
 from decimal import Decimal
 import time
 import random
+from django.db.models import Prefetch
+
+# ========== ADD THIS CLASS AT THE TOP ==========
+class ProductQuerySet(models.QuerySet):
+    """Custom QuerySet for Product with optimized queries"""
+    
+    def with_details(self, company=None):
+        """Fetch products with all related details"""
+        # Prefetch active sale modes
+        sale_modes_prefetch = Prefetch(
+            'product_sale_modes',
+            queryset=ProductSaleMode.objects.filter(is_active=True)
+            .select_related('sale_mode')
+            .prefetch_related('tiers')
+        )
+        
+        queryset = self.select_related(
+            'category', 'unit', 'brand', 'group', 'source', 'created_by'
+        ).prefetch_related(sale_modes_prefetch)
+        
+        if company:
+            queryset = queryset.filter(company=company)
+            
+        return queryset
+# ========== END OF ADDED CODE ==========
 
 class Category(models.Model):
     name = models.CharField(max_length=120)
@@ -22,6 +47,7 @@ class Category(models.Model):
     def __str__(self):
         return self.name
 
+
 class Unit(models.Model):
     name = models.CharField(max_length=60)
     code = models.CharField(max_length=20, blank=True, null=True)
@@ -37,6 +63,7 @@ class Unit(models.Model):
     def __str__(self):
         return self.name
 
+
 class Brand(models.Model):
     name = models.CharField(max_length=120)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="brands")
@@ -50,6 +77,7 @@ class Brand(models.Model):
     
     def __str__(self):
         return self.name
+
 
 class Group(models.Model):
     name = models.CharField(max_length=120)
@@ -65,6 +93,7 @@ class Group(models.Model):
     def __str__(self):
         return self.name
 
+
 class Source(models.Model):
     name = models.CharField(max_length=120)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="sources")
@@ -79,12 +108,13 @@ class Source(models.Model):
     def __str__(self):
         return self.name
 
+
 class CompanyProductSequence(models.Model):
     """
     Model to generate sequential product numbers per company
     """
     company = models.OneToOneField('core.Company', on_delete=models.CASCADE, related_name="product_sequence")
-    last_number = models.PositiveIntegerField(default=10000)  # Changed from 0 to 1000
+    last_number = models.PositiveIntegerField(default=10000)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -99,17 +129,15 @@ class CompanyProductSequence(models.Model):
         with transaction.atomic():
             sequence, created = cls.objects.select_for_update().get_or_create(
                 company=company,
-                defaults={'last_number': 10000}  # Start from 1000
+                defaults={'last_number': 10000}
             )
             sequence.last_number += 1
             sequence.save()
-            return sequence.last_number  # This will return 1001, 1002, 1003, etc.
+            return sequence.last_number
 
     def __str__(self):
         return f"{self.company.name} - {self.last_number:05d}"
-    
 
-# products/models.py - Update SaleMode model
 
 class SaleMode(models.Model):
     """Sale Mode configuration (KG, GRAM, PACKET, BOSTA, DOZEN, etc.)"""
@@ -133,7 +161,6 @@ class SaleMode(models.Model):
     is_active = models.BooleanField(default=True)
     company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
     
-    # Add these fields to track creation and updates
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, 
         on_delete=models.SET_NULL, 
@@ -164,8 +191,8 @@ class SaleMode(models.Model):
 class ProductSaleMode(models.Model):
     """Link between Product and SaleMode with specific pricing"""
     
-    product = models.ForeignKey('Product', on_delete=models.CASCADE, related_name='sale_modes')
-    sale_mode = models.ForeignKey('SaleMode', on_delete=models.CASCADE)
+    product = models.ForeignKey('Product', on_delete=models.CASCADE, related_name='product_sale_modes')
+    sale_mode = models.ForeignKey('SaleMode', on_delete=models.CASCADE, related_name='product_sale_modes')
     
     # Unit Price (for price_type='unit')
     unit_price = models.DecimalField(
@@ -260,6 +287,8 @@ class ProductSaleMode(models.Model):
         return self.unit_price or Decimal('0.00')
 
 
+
+# models.py
 class PriceTier(models.Model):
     """Tier pricing for products"""
     
@@ -282,6 +311,10 @@ class PriceTier(models.Model):
     )
     price = models.DecimalField(max_digits=12, decimal_places=2)
     
+    # Add these if not present
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
     class Meta:
         ordering = ['min_quantity']
         constraints = [
@@ -294,7 +327,6 @@ class PriceTier(models.Model):
     def __str__(self):
         max_qty = f" - {self.max_quantity}" if self.max_quantity else "+"
         return f"{self.min_quantity}{max_qty}: {self.price}"
-
 
 class Product(models.Model):
     DISCOUNT_TYPE_CHOICES = [
@@ -309,7 +341,7 @@ class Product(models.Model):
     sku = models.CharField(max_length=120, blank=True, null=True, unique=True)
 
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, blank=True, related_name="products")
-    unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True, blank=True)
+    unit = models.ForeignKey('Unit', on_delete=models.SET_NULL, null=True, blank=True, related_name="products")
     brand = models.ForeignKey('Brand', on_delete=models.SET_NULL, null=True, blank=True)
     group = models.ForeignKey('Group', on_delete=models.SET_NULL, null=True, blank=True)
     source = models.ForeignKey('Source', on_delete=models.SET_NULL, null=True, blank=True)
@@ -341,6 +373,21 @@ class Product(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    # ========== ADD THIS LINE ==========
+    objects = ProductQuerySet.as_manager()  # Add custom manager
+    
+    # ========== FIXED: KEEP ONLY THIS ONE PROPERTY ==========
+    @property
+    def active_sale_modes(self):
+        """Get active sale modes, using prefetched data if available"""
+        # Check if we have prefetched data
+        if hasattr(self, '_prefetched_objects_cache') and 'product_sale_modes' in self._prefetched_objects_cache:
+            # Filter prefetched data for active sale modes
+            return [psm for psm in self._prefetched_objects_cache['product_sale_modes'] if psm.is_active]
+        # Fallback to database query
+        return self.product_sale_modes.filter(is_active=True).select_related('sale_mode')
+    # ========== END FIX ==========
 
     class Meta:
         ordering = ['-created_at']
@@ -401,19 +448,49 @@ class Product(models.Model):
             
         return final_price.quantize(Decimal('0.01'))
 
+    def get_sale_mode_price(self, sale_mode_id, quantity=1):
+        """Get price for specific sale mode and quantity"""
+        try:
+            product_sale_mode = ProductSaleMode.objects.select_related('sale_mode').get(
+                product=self,
+                sale_mode_id=sale_mode_id,
+                is_active=True
+            )
+            return product_sale_mode.get_final_price(quantity)
+        except ProductSaleMode.DoesNotExist:
+            return None
+
+    def get_sale_mode_by_code(self, sale_mode_code, quantity=1):
+        """Get price for sale mode by code"""
+        try:
+            product_sale_mode = ProductSaleMode.objects.select_related('sale_mode').get(
+                product=self,
+                sale_mode__code=sale_mode_code,
+                is_active=True
+            )
+            return {
+                'sale_mode_id': product_sale_mode.sale_mode.id,
+                'sale_mode_name': product_sale_mode.sale_mode.name,
+                'sale_mode_code': product_sale_mode.sale_mode.code,
+                'price_type': product_sale_mode.sale_mode.price_type,
+                'price': float(product_sale_mode.get_final_price(quantity)),
+                'unit_price': float(product_sale_mode.unit_price) if product_sale_mode.unit_price else None,
+                'flat_price': float(product_sale_mode.flat_price) if product_sale_mode.flat_price else None,
+                'discount_type': product_sale_mode.discount_type,
+                'discount_value': float(product_sale_mode.discount_value) if product_sale_mode.discount_value else None,
+            }
+        except ProductSaleMode.DoesNotExist:
+            return None
+
     def _generate_company_sku(self):
-        """Generate company-specific sequential SKU in format: PDT-{company_id}-{sequential_number}"""
+        """Generate company-specific sequential SKU"""
         if not self.company:
             raise ValueError("Company is required to generate SKU")
         
         try:
-            # Get next sequence number for this company
             next_num = CompanyProductSequence.get_next_sequence(self.company)
-            # Format: PDT-2-01001, PDT-2-01002, etc.
-            # Remove the leading zero from the format since we're starting from 1001
-            return f"PDT-{self.company.id}-{next_num}"  # This will give PDT-2-1001, PDT-2-1002, etc.
+            return f"PDT-{self.company.id}-{next_num}"
         except Exception as e:
-            # Fallback if sequence fails
             return self._generate_fallback_sku()
 
     def _generate_fallback_sku(self):
@@ -436,7 +513,6 @@ class Product(models.Model):
         if self.discount_value and self.discount_value < 0:
             raise ValidationError("Discount value cannot be negative")
         
-        # Validate discount type and value consistency
         if self.discount_value and not self.discount_type:
             raise ValidationError("Discount type is required when discount value is set")
         
@@ -447,42 +523,33 @@ class Product(models.Model):
         """Custom save with SKU generation and validation"""
         is_new = self.pk is None
         
-        # Validate data
         self.clean()
         
         if is_new:
-            # Set initial stock
             if self.stock_qty == 0 and self.opening_stock > 0:
                 self.stock_qty = self.opening_stock
 
-            # Generate company-scoped SKU if not provided
             if not self.sku and self.company:
                 try:
                     self.sku = self._generate_company_sku()
                 except Exception as e:
                     self.sku = self._generate_fallback_sku()
 
-        # Save with retry logic for IntegrityError (SKU conflicts)
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 with transaction.atomic():
                     super().save(*args, **kwargs)
-                break  # Success, exit the loop
+                break
             except IntegrityError as e:
                 if 'sku' in str(e).lower() and is_new and attempt < max_retries - 1:
-                    # Regenerate SKU and retry
                     self.sku = self._generate_fallback_sku()
                     continue
                 else:
-                    # Re-raise the exception if we've exhausted retries or it's not a SKU error
                     raise
 
     def can_be_deleted(self):
-        """
-        Check if product can be safely deleted
-        (no related purchase/sale transactions)
-        """
+        """Check if product can be safely deleted"""
         try:
             from purchases.models import PurchaseItem
             from sales.models import SaleItem
@@ -492,14 +559,10 @@ class Product(models.Model):
             
             return not (has_purchases or has_sales)
         except (ImportError, Exception):
-            # If models aren't available (during migrations) or any error, assume safe to delete
             return True
 
     def update_stock(self, quantity, transaction_type, update_product=True):
-        """
-        Update product stock quantity
-        transaction_type: 'in' for increase, 'out' for decrease
-        """
+        """Update product stock quantity"""
         if transaction_type == 'in':
             self.stock_qty += quantity
         elif transaction_type == 'out':
@@ -547,12 +610,28 @@ class Product(models.Model):
 
     def get_product_summary(self):
         """Get product summary for API responses"""
+        sale_modes_summary = []
+        for sale_mode in self.active_sale_modes:
+            sale_modes_summary.append({
+                'id': sale_mode.id,
+                'sale_mode_id': sale_mode.sale_mode.id,
+                'sale_mode_name': sale_mode.sale_mode.name,
+                'sale_mode_code': sale_mode.sale_mode.code,
+                'price_type': sale_mode.sale_mode.price_type,
+                'unit_price': float(sale_mode.unit_price) if sale_mode.unit_price else None,
+                'flat_price': float(sale_mode.flat_price) if sale_mode.flat_price else None,
+                'discount_type': sale_mode.discount_type,
+                'discount_value': float(sale_mode.discount_value) if sale_mode.discount_value else None,
+                'is_active': sale_mode.is_active,
+            })
+        
         return {
             'id': self.id,
             'name': self.name,
             'sku': self.sku,
             'category': self.category.name if self.category else None,
             'brand': self.brand.name if self.brand else None,
+            'unit': self.unit.name if self.unit else None,
             'purchase_price': float(self.purchase_price),
             'selling_price': float(self.selling_price),
             'final_price': float(self.final_price),
@@ -561,5 +640,6 @@ class Product(models.Model):
             'stock_status': self.stock_status,
             'stock_status_code': self.stock_status_code,
             'is_active': self.is_active,
+            'sale_modes': sale_modes_summary,
             'created_at': self.created_at.isoformat(),
         }

@@ -383,23 +383,26 @@ class Sale(models.Model):
 
 
 class SaleItem(models.Model):
-    sale = models.ForeignKey(Sale, related_name='items', on_delete=models.CASCADE)
+    sale = models.ForeignKey('Sale', related_name='items', on_delete=models.CASCADE)
     product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
     
-    # ============ NEW FIELDS FOR MULTI-MODE SYSTEM ============
+    # ============ MULTI-MODE SYSTEM FIELDS ============
     sale_mode = models.ForeignKey(
         'products.SaleMode', 
         on_delete=models.SET_NULL, 
         null=True, 
         blank=True,
-        help_text="Sale mode used for this item (KG, GRAM, BOSTA, etc.)"
+        help_text="Sale mode used for this item (KG, GRAM, BOSTA, etc.) - Optional"
     )
-    sale_quantity = models.DecimalField(
+    
+    # Keep the original quantity field (for backward compatibility)
+    quantity = models.DecimalField(
         max_digits=12, 
         decimal_places=3,
         default=Decimal('1.00'),
-        help_text="Quantity in sale mode unit (e.g., 2 BOSTA, 3 DOZEN)"
+        help_text="Quantity (acts as sale_quantity for compatibility)"
     )
+    
     base_quantity = models.DecimalField(
         max_digits=12, 
         decimal_places=3,
@@ -414,7 +417,8 @@ class SaleItem(models.Model):
         choices=[
             ('unit', 'Unit Price'),
             ('flat', 'Flat Price'),
-            ('tier', 'Tier Price')
+            ('tier', 'Tier Price'),
+            ('normal', 'Normal Price')
         ], 
         default='unit'
     )
@@ -444,41 +448,59 @@ class SaleItem(models.Model):
     
     def __str__(self):
         if self.sale_mode:
-            return f"{self.product.name} - {self.sale_quantity} {self.sale_mode.name}"
-        return f"{self.product.name} - {self.sale_quantity}"
+            return f"{self.product.name} - {self.quantity} {self.sale_mode.name}"
+        return f"{self.product.name} - {self.quantity} {self.product.unit.name if self.product.unit else 'units'}"
+    
+    # Property for backward compatibility (sale_quantity alias)
+    @property
+    def sale_quantity(self):
+        return self.quantity
+    
+    @sale_quantity.setter
+    def sale_quantity(self, value):
+        self.quantity = value
     
     def save(self, *args, **kwargs):
         """Save sale item with multi-mode support"""
         is_new = self.pk is None
         
         # If sale_mode is provided, calculate base quantity
-        if self.sale_mode:
-            self.base_quantity = self.sale_mode.convert_to_base(self.sale_quantity)
-            self.price_type = self.sale_mode.price_type
+        if self.sale_mode and hasattr(self.sale_mode, 'convert_to_base'):
+            try:
+                self.base_quantity = self.sale_mode.convert_to_base(self.quantity)
+                self.price_type = self.sale_mode.price_type
+            except:
+                # Fallback if convert_to_base fails
+                self.base_quantity = self.quantity
+                self.price_type = 'unit'
         else:
-            # Default to product's base unit
-            self.base_quantity = self.sale_quantity
-            self.price_type = 'unit'
+            # For normal products without sale mode
+            self.base_quantity = self.quantity
+            self.price_type = 'normal'
         
         # Get or calculate unit price
-        if not self.unit_price and self.sale_mode:
-            try:
-                from products.models import ProductSaleMode
-                product_sale_mode = ProductSaleMode.objects.get(
-                    product=self.product,
-                    sale_mode=self.sale_mode,
-                    is_active=True
-                )
-                
-                if self.sale_mode.price_type == 'flat' and product_sale_mode.flat_price:
-                    self.flat_price = product_sale_mode.flat_price
-                    self.unit_price = product_sale_mode.flat_price / self.sale_quantity if self.sale_quantity else Decimal('0.00')
-                elif self.sale_mode.price_type == 'tier':
-                    self.unit_price = product_sale_mode.get_tier_price(self.base_quantity)
-                else:
-                    self.unit_price = product_sale_mode.get_unit_price()
-            except ProductSaleMode.DoesNotExist:
-                # Fallback to product selling price
+        if not self.unit_price:
+            if self.sale_mode:
+                try:
+                    from products.models import ProductSaleMode
+                    product_sale_mode = ProductSaleMode.objects.get(
+                        product=self.product,
+                        sale_mode=self.sale_mode,
+                        is_active=True
+                    )
+                    
+                    if self.sale_mode.price_type == 'flat' and product_sale_mode.flat_price:
+                        self.flat_price = product_sale_mode.flat_price
+                        self.unit_price = product_sale_mode.flat_price / self.quantity if self.quantity else Decimal('0.00')
+                    elif self.sale_mode.price_type == 'tier':
+                        self.unit_price = product_sale_mode.get_tier_price(self.base_quantity)
+                    else:
+                        self.unit_price = product_sale_mode.get_unit_price()
+                except ProductSaleMode.DoesNotExist:
+                    # Fallback to product selling price
+                    self.unit_price = self.product.selling_price
+            else:
+                # For normal products without sale mode
                 self.unit_price = self.product.selling_price
         
         # Validate stock before saving
@@ -490,8 +512,7 @@ class SaleItem(models.Model):
                 raise ValidationError(
                     f"Not enough stock for {self.product.name}. "
                     f"Available: {product_stock} {self.product.unit.name if self.product.unit else 'units'}, "
-                    f"Requested: {self.sale_quantity} {self.sale_mode.name if self.sale_mode else 'units'} "
-                    f"({base_quantity_decimal} base units)"
+                    f"Requested: {self.quantity} {self.sale_mode.name if self.sale_mode else self.product.unit.name if self.product.unit else 'units'}"
                 )
         
         super().save(*args, **kwargs)
@@ -540,7 +561,8 @@ class SaleItem(models.Model):
             'product_sku': self.product.sku,
             'sale_mode_id': self.sale_mode.id if self.sale_mode else None,
             'sale_mode_name': self.sale_mode.name if self.sale_mode else self.product.unit.name if self.product.unit else 'Unit',
-            'sale_quantity': float(self.sale_quantity),
+            'quantity': float(self.quantity),
+            'sale_quantity': float(self.quantity),  # For backward compatibility
             'base_quantity': float(self.base_quantity),
             'unit_price': float(self.unit_price),
             'price_type': self.price_type,

@@ -1,40 +1,29 @@
+# products/views.py
 from rest_framework import viewsets, permissions, filters, status, serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.decorators import action
 from django_filters import rest_framework as django_filters
 from django.db import models
 from core.base_viewsets import BaseCompanyViewSet
-from .models import Product, Category, Unit, Brand, Group, Source
+from .models import Product, Category, Unit, Brand, Group, Source, SaleMode, ProductSaleMode, PriceTier
 from .serializers import (
     ProductSerializer, CategorySerializer, UnitSerializer,
-    BrandSerializer, GroupSerializer, SourceSerializer
+    BrandSerializer, GroupSerializer, SourceSerializer,
+    SaleModeSerializer, ProductSaleModeSerializer, PriceTierSerializer,
+    ProductCreateSerializer, ProductUpdateSerializer
 )
-from django.shortcuts import render, redirect
-from django.db import models
-from rest_framework import status, filters
-from rest_framework.decorators import action
 from rest_framework.response import Response
-
 from django_filters.rest_framework import DjangoFilterBackend
 import logging, traceback
-
-from products.pagination import StandardResultsSetPagination
-from .models import Product
-from .serializers import ProductSerializer, ProductCreateSerializer, ProductUpdateSerializer, SaleModeSerializer, ProductSaleModeSerializer, PriceTierSerializer
 from decimal import Decimal, InvalidOperation
-from .models import SaleMode, ProductSaleMode, PriceTier
 from django.db import transaction
 
+from products.pagination import StandardResultsSetPagination
 from .filters import ProductFilter
-from .base import BaseInventoryViewSet  # adjust import to your project layout
+from core.utils import custom_response
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-    
-
-# Import your project custom_response helper here. Replace the fallback below if needed.
-
-from core.utils import custom_response
 
 # Custom Filter for Product with Stock Status
 class ProductFilter(django_filters.FilterSet):
@@ -120,8 +109,6 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
         try:
             queryset = self.filter_queryset(self.get_queryset())
             
-         
-            
             serializer = self.get_serializer(queryset, many=True)
             return custom_response(
                 success=True,
@@ -186,35 +173,37 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
     def update(self, request, *args, **kwargs):
-            partial = kwargs.pop('partial', False)
-            instance = self.get_object()
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
             
-            serializer = self.get_serializer(instance, data=request.data, partial=partial)
-            try:
-                serializer.is_valid(raise_exception=True)
-                self.perform_update(serializer)
-                
-                return custom_response(
-                    success=True,
-                    message=f"{self.item_name} updated successfully.",
-                    data=serializer.data,
-                    status_code=status.HTTP_200_OK,
-                )
-            except serializers.ValidationError as e:
-                return custom_response(
-                    success=False,
-                    message="Validation Error",
-                    data=e.detail,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            except Exception as e:
-                return custom_response(
-                    success=False,
-                    message=str(e),
-                    data=None,
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
+            return custom_response(
+                success=True,
+                message=f"{self.item_name} updated successfully.",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK,
+            )
+        except serializers.ValidationError as e:
+            return custom_response(
+                success=False,
+                message="Validation Error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def destroy(self, request, *args, **kwargs):
         """
         Custom delete method that prevents deletion if item has products
@@ -238,7 +227,6 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
             if not has_products:
                 # Check if there are any products referencing this instance
                 try:
-                    from .models import Product
                     if self.model_class == Category:
                         has_products = Product.objects.filter(category=instance).exists()
                     elif self.model_class == Unit:
@@ -283,8 +271,6 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
                 
-        
-
     @action(detail=False, methods=['get'])
     def active(self, request):
         """
@@ -381,8 +367,6 @@ class SourceViewSet(BaseInventoryCRUDViewSet):
     model_class = Source
     item_name = "Source"
 
-
-
 class SaleModeViewSet(BaseInventoryCRUDViewSet):
     """ViewSet for managing sale modes"""
     queryset = SaleMode.objects.all()
@@ -406,7 +390,6 @@ class SaleModeViewSet(BaseInventoryCRUDViewSet):
             base_unit_id = self.request.data.get('base_unit')
             if base_unit_id:
                 try:
-                    from .models import Unit
                     unit = Unit.objects.get(id=base_unit_id)
                     serializer.save(company=unit.company)
                 except Unit.DoesNotExist:
@@ -460,8 +443,6 @@ class SaleModeViewSet(BaseInventoryCRUDViewSet):
                 data=None,
                 status_code=500
             )
-        
-# products/views.py - Simplify ProductSaleModeViewSet
 
 class ProductSaleModeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing product-sale mode configurations"""
@@ -597,6 +578,82 @@ class ProductSaleModeViewSet(viewsets.ModelViewSet):
             status_code=200
         )
 
+# views.py
+class PriceTierViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing PriceTier instances
+    """
+    queryset = PriceTier.objects.all()
+    serializer_class = PriceTierSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    ordering_fields = ['min_quantity']
+    ordering = ['min_quantity']
+    
+    def get_queryset(self):
+        """Filter price tiers by user's company"""
+        user = self.request.user
+        queryset = super().get_queryset()
+        
+        if hasattr(user, 'company') and user.company:
+            queryset = queryset.filter(
+                product_sale_mode__product__company=user.company
+            )
+        
+        # Filter by product_sale_mode if provided
+        product_sale_mode_id = self.request.query_params.get('product_sale_mode_id')
+        if product_sale_mode_id:
+            queryset = queryset.filter(product_sale_mode_id=product_sale_mode_id)
+        
+        # Filter by product_id if provided
+        product_id = self.request.query_params.get('product_id')
+        if product_id:
+            queryset = queryset.filter(product_sale_mode__product_id=product_id)
+        
+        return queryset.select_related(
+            'product_sale_mode__product',
+            'product_sale_mode__sale_mode'
+        )
+    
+    def create(self, request, *args, **kwargs):
+        """Override create to add request context to serializer"""
+        # Add debug logging
+        logger.info(f"Creating PriceTier. Raw data: {request.data}")
+        logger.info(f"Content-Type: {request.content_type}")
+        
+        # Add request context to serializer
+        serializer = self.get_serializer(data=request.data, context={'request': request})
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            
+            return custom_response(
+                success=True,
+                message="Price tier created successfully",
+                data=serializer.data,
+                status_code=status.HTTP_201_CREATED
+            )
+        except serializers.ValidationError as e:
+            logger.error(f"Validation error: {e.detail}")
+            return custom_response(
+                success=False,
+                message="Validation error",
+                data=e.detail,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.exception(f"Error creating price tier: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def perform_create(self, serializer):
+        """Let serializer handle the creation"""
+        serializer.save()
 
 class ProductViewSet(BaseInventoryViewSet):
     queryset = Product.objects.all()
@@ -665,9 +722,7 @@ class ProductViewSet(BaseInventoryViewSet):
         """Filter products by user's company with optimized queries"""
         user = self.request.user
         if hasattr(user, 'company') and user.company:
-            return Product.objects.filter(company=user.company).select_related(
-                'category', 'unit', 'brand', 'group', 'source', 'created_by'
-            ).prefetch_related('category__products')
+            return Product.objects.with_details(user.company)
         return Product.objects.none()
 
     def retrieve(self, request, *args, **kwargs):
@@ -1253,8 +1308,6 @@ class ProductViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
- 
-
     @action(detail=True, methods=['get'])
     def sale_modes(self, request, pk=None):
         """Get sale modes for a specific product"""
@@ -1292,7 +1345,6 @@ class ProductViewSet(BaseInventoryViewSet):
             product = self.get_object()
             
             # Get sale modes with same base unit
-            from .models import SaleMode
             sale_modes = SaleMode.objects.filter(
                 base_unit=product.unit,
                 is_active=True

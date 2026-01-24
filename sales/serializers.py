@@ -1,4 +1,4 @@
-# sales/serializers.py (UPDATE THIS FILE)
+# sales/serializers.py (UPDATED)
 
 from rest_framework import serializers
 from .models import Sale, SaleItem
@@ -32,13 +32,22 @@ class SaleItemSerializer(serializers.ModelSerializer):
     )
     sale_mode_name = serializers.CharField(source='sale_mode.name', read_only=True)
     
-    # Quantity fields
+    # Quantity fields - accept BOTH quantity and sale_quantity for backward compatibility
+    quantity = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=3,
+        required=False,  # Optional if sale_quantity provided
+        min_value=Decimal('0.001'),
+        write_only=True
+    )
     sale_quantity = serializers.DecimalField(
         max_digits=12, 
         decimal_places=3,
-        required=True,
-        min_value=Decimal('0.001')
+        required=False,  # Optional if quantity provided
+        min_value=Decimal('0.001'),
+        write_only=True
     )
+    
     base_quantity = serializers.DecimalField(
         max_digits=12, 
         decimal_places=3,
@@ -64,7 +73,7 @@ class SaleItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'product_id', 'product_name', 'product_sku',
             'sale_mode_id', 'sale_mode_name',
-            'sale_quantity', 'base_quantity',
+            'quantity', 'sale_quantity', 'base_quantity',
             'unit_price', 'price_type', 'flat_price',
             'discount', 'discount_type', 'subtotal'
         ]
@@ -90,70 +99,97 @@ class SaleItemSerializer(serializers.ModelSerializer):
         raise serializers.ValidationError('Invalid discount_type. Allowed: fixed, percent, percentage')
 
     def validate(self, data):
-        """Validate sale item with sale mode"""
+        """Validate sale item with sale mode and handle backward compatibility"""
         product = data.get('product')
         sale_mode = data.get('sale_mode')
-        sale_quantity = data.get('sale_quantity', Decimal('1.00'))
         
-        # If no sale mode specified, use product's base unit
+        # Handle backward compatibility: use sale_quantity if provided, otherwise use quantity
+        quantity = data.get('quantity')
+        sale_quantity = data.get('sale_quantity')
+        
+        if sale_quantity is not None:
+            # Use sale_quantity if provided (new way)
+            final_quantity = sale_quantity
+            # Remove sale_quantity from validated data as it will be saved as quantity
+            data.pop('sale_quantity', None)
+        elif quantity is not None:
+            # Use quantity if provided (old way)
+            final_quantity = quantity
+        else:
+            # Neither provided, use default
+            final_quantity = Decimal('1.00')
+        
+        # Set the quantity in validated data
+        data['quantity'] = final_quantity
+        
+        # If no sale mode specified, use product's base unit or keep None for normal products
         if not sale_mode and product and product.unit:
             try:
-                sale_mode = SaleMode.objects.get(
+                # Try to find a default sale mode for this unit
+                sale_mode = SaleMode.objects.filter(
                     base_unit=product.unit,
                     conversion_factor=Decimal('1.00'),
                     price_type='unit'
-                )
-                data['sale_mode'] = sale_mode
-            except SaleMode.DoesNotExist:
-                # Create default sale mode
-                sale_mode = SaleMode.objects.create(
-                    name=product.unit.name,
-                    code=f"{product.unit.code or product.unit.name}",
-                    base_unit=product.unit,
-                    conversion_factor=Decimal('1.00'),
-                    price_type='unit',
-                    company=product.company
-                )
-                data['sale_mode'] = sale_mode
+                ).first()
+                if sale_mode:
+                    data['sale_mode'] = sale_mode
+            except Exception:
+                # If no sale mode found, product will be sold in normal mode
+                pass
         
         # Validate stock if sale mode is provided
         if sale_mode and product:
-            base_quantity = sale_mode.convert_to_base(sale_quantity)
-            
-            # Check stock
-            if base_quantity > Decimal(str(product.stock_qty)):
-                raise serializers.ValidationError({
-                    'sale_quantity': f"Insufficient stock. Available: {product.stock_qty} {product.unit.name if product.unit else 'units'}, "
-                                    f"Requested: {sale_quantity} {sale_mode.name} ({float(base_quantity)} base units)"
-                })
-            
-            # Validate sale mode configuration
             try:
-                product_sale_mode = ProductSaleMode.objects.get(
-                    product=product,
-                    sale_mode=sale_mode,
-                    is_active=True
-                )
-                
-                # Set default prices if not provided
-                if 'unit_price' not in data or not data['unit_price']:
+                base_quantity = sale_mode.convert_to_base(final_quantity)
+            except:
+                # If convert_to_base fails, use quantity as base
+                base_quantity = final_quantity
+        else:
+            # For normal products without sale mode
+            base_quantity = final_quantity
+        
+        # Check stock
+        if product and base_quantity > Decimal(str(product.stock_qty)):
+            raise serializers.ValidationError({
+                'quantity': f"Insufficient stock. Available: {product.stock_qty} {product.unit.name if product.unit else 'units'}, "
+                          f"Requested: {final_quantity} {sale_mode.name if sale_mode else product.unit.name if product.unit else 'units'}"
+            })
+        
+        # Get unit price if not provided
+        if 'unit_price' not in data or not data['unit_price']:
+            if sale_mode:
+                try:
+                    product_sale_mode = ProductSaleMode.objects.get(
+                        product=product,
+                        sale_mode=sale_mode,
+                        is_active=True
+                    )
+                    
                     if sale_mode.price_type == 'flat' and product_sale_mode.flat_price:
                         data['flat_price'] = product_sale_mode.flat_price
-                        data['unit_price'] = product_sale_mode.flat_price / sale_quantity if sale_quantity else Decimal('0.00')
+                        data['unit_price'] = product_sale_mode.flat_price / final_quantity if final_quantity else Decimal('0.00')
                     elif sale_mode.price_type == 'tier':
                         data['unit_price'] = product_sale_mode.get_tier_price(base_quantity)
                     else:
                         data['unit_price'] = product_sale_mode.get_unit_price()
                         
-            except ProductSaleMode.DoesNotExist:
-                # Fallback to product selling price
-                if 'unit_price' not in data or not data['unit_price']:
+                except ProductSaleMode.DoesNotExist:
+                    # Fallback to product selling price
                     data['unit_price'] = product.selling_price
+            else:
+                # For normal products without sale mode
+                data['unit_price'] = product.selling_price
         
         return data
 
     def get_subtotal(self, obj):
         return float(obj.subtotal()) if obj.subtotal() else 0.0
+    
+    def to_representation(self, instance):
+        """Add sale_quantity to output for backward compatibility"""
+        representation = super().to_representation(instance)
+        representation['sale_quantity'] = representation.get('quantity', 0)
+        return representation
 
 
 class SaleSerializer(serializers.ModelSerializer):
@@ -229,16 +265,26 @@ class SaleSerializer(serializers.ModelSerializer):
                     'items': f'Item {i+1}: Product is required'
                 })
             
-            if 'sale_quantity' not in item or item['sale_quantity'] <= 0:
+            # Check for either quantity or sale_quantity
+            quantity = item.get('quantity')
+            sale_quantity = item.get('sale_quantity')
+            
+            if quantity is None and sale_quantity is None:
                 raise serializers.ValidationError({
-                    'items': f'Item {i+1}: Sale quantity must be greater than 0'
+                    'items': f'Item {i+1}: Either quantity or sale_quantity is required'
+                })
+            
+            final_quantity = sale_quantity if sale_quantity is not None else quantity
+            if final_quantity <= 0:
+                raise serializers.ValidationError({
+                    'items': f'Item {i+1}: Quantity must be greater than 0'
                 })
         
         return attrs
 
     def create(self, validated_data):
         """
-        Create sale with multi-mode items
+        Create sale with multi-mode items and backward compatibility
         """
         items_data = validated_data.pop('items', [])
 
@@ -261,8 +307,12 @@ class SaleSerializer(serializers.ModelSerializer):
                 # Create the sale
                 sale = Sale.objects.create(**validated_data)
 
-                # Create items with multi-mode support
+                # Create items with backward compatibility
                 for item_data in items_data:
+                    # Ensure quantity field is set (handles sale_quantity to quantity conversion)
+                    if 'sale_quantity' in item_data and 'quantity' not in item_data:
+                        item_data['quantity'] = item_data.pop('sale_quantity')
+                    
                     SaleItem.objects.create(sale=sale, **item_data)
 
                 # Recalculate totals
@@ -280,7 +330,7 @@ class SaleSerializer(serializers.ModelSerializer):
         """Return sale representation including item details"""
         rep = super().to_representation(instance)
         
-        # Add item details
+        # Add item details with sale_quantity field for backward compatibility
         rep['items'] = SaleItemSerializer(instance.items.all(), many=True).data
         rep['customer_name'] = instance.get_customer_display()
 
