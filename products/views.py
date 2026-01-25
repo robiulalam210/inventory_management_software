@@ -1,4 +1,5 @@
 # products/views.py
+
 from rest_framework import viewsets, permissions, filters, status, serializers
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.decorators import action
@@ -1451,7 +1452,84 @@ class ProductViewSet(BaseInventoryViewSet):
                 message=str(e),
                 status_code=500
             )
-    
+
+    @action(detail=True, methods=['get'], url_path='full-details')
+    def full_details(self, request, pk=None):
+        """
+        Get complete product details including all history and transactions
+        """
+        try:
+            product = self.get_object()
+            
+            # Get sale modes with tiers
+            sale_modes = ProductSaleMode.objects.filter(
+                product=product
+            ).select_related('sale_mode').prefetch_related('tiers')
+            
+            # Collect all relevant data
+            data = {
+                'product': self.get_serializer(product).data,
+                'sale_modes': ProductSaleModeSerializer(sale_modes, many=True).data,
+                'stock_history': self._get_stock_history(product),
+                'sales_history': self._get_sales_history(product),
+                'purchases_history': self._get_purchases_history(product),
+                'stock_movements': self._get_stock_movements(product),
+                'price_history': self._get_price_history(product),
+                'summary': self._get_product_summary(product)
+            }
+            
+            return custom_response(
+                success=True,
+                message="Product full details fetched successfully",
+                data=data,
+                status_code=status.HTTP_200_OK
+            )
+                
+        except Product.DoesNotExist:
+            return custom_response(
+                success=False,
+                message="Product not found",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception(f"Error fetching product full details: {e}")
+            return custom_response(
+                success=False,
+                message=str(e),
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # Helper methods for history - These should be INSIDE the class
+    def _get_stock_history(self, product):
+        """Get stock history for the product"""
+        try:
+            from inventory.models import StockHistory
+            
+            stock_history = StockHistory.objects.filter(
+                product=product
+            ).order_by('-created_at')[:100]  # Limit to 100 recent records
+            
+            # Create a simple serializer or return dict
+            return [
+                {
+                    'id': history.id,
+                    'date': history.created_at,
+                    'type': history.movement_type,
+                    'quantity': history.quantity,
+                    'reference': history.reference,
+                    'previous_stock': history.previous_stock,
+                    'new_stock': history.new_stock,
+                    'notes': history.notes,
+                    'created_by': history.created_by.username if history.created_by else None
+                }
+                for history in stock_history
+            ]
+        except (ImportError, AttributeError):
+            return []
+
+
     @action(detail=True, methods=['get'])
     def available_sale_modes(self, request, pk=None):
         """Get all available sale modes for a product"""

@@ -1,3 +1,4 @@
+# sales/models.py
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -65,58 +66,19 @@ class Sale(models.Model):
             models.Index(fields=['invoice_no']),
         ]
 
-    def add_product_with_mode(self, product, sale_mode, quantity, unit_price=None, discount=0, discount_type='fixed'):
-        """Add product with sale mode to sale"""
-        try:
-            from products.models import ProductSaleMode
-            
-            # Get product sale mode configuration
-            product_sale_mode = ProductSaleMode.objects.get(
-                product=product,
-                sale_mode=sale_mode,
-                is_active=True
-            )
-            
-            # Calculate base quantity
-            base_quantity = sale_mode.convert_to_base(quantity)
-            
-            # Calculate price
-            if sale_mode.price_type == 'flat':
-                flat_price = product_sale_mode.flat_price or Decimal('0.00')
-                total_price = flat_price * Decimal(str(quantity))
-                calculated_unit_price = total_price / quantity if quantity else Decimal('0.00')
-            else:
-                calculated_unit_price = product_sale_mode.get_unit_price(base_quantity)
-                total_price = base_quantity * calculated_unit_price
-            
-            # Create sale item
-            sale_item = SaleItem.objects.create(
-                sale=self,
-                product=product,
-                sale_mode=sale_mode,
-                sale_quantity=quantity,
-                base_quantity=base_quantity,
-                unit_price=calculated_unit_price,
-                price_type=sale_mode.price_type,
-                flat_price=product_sale_mode.flat_price if sale_mode.price_type == 'flat' else None,
-                discount=discount,
-                discount_type=discount_type
-            )
-            
-            # Recalculate totals
-            self.calculate_totals()
-            
-            return sale_item
-            
-        except ProductSaleMode.DoesNotExist:
-            raise ValidationError(f"Sale mode '{sale_mode.name}' is not configured for product '{product.name}'")
-        except Exception as e:
-            logger.exception(f"Error adding product with sale mode: {e}")
-            raise
+    def __str__(self):
+        return f"{self.invoice_no} - {self.get_customer_display()}"
+
+    def get_customer_display(self):
+        if self.customer_type == 'walk_in':
+            return self.customer_name or "Walk-in Customer"
+        elif self.customer:
+            return self.customer.name
+        return "Unknown Customer"
+
     def save(self, *args, **kwargs):
-        """Safe save with recursion prevention using _saving flag."""
+        """Safe save with recursion prevention"""
         if getattr(self, '_saving', False):
-            # If already in the process of saving, perform a plain save to update DB fields without re-entering logic.
             return super().save(*args, **kwargs)
 
         self._saving = True
@@ -148,7 +110,7 @@ class Sale(models.Model):
             if self.account and self.account.company and self.company and self.account.company != self.company:
                 self.account = None
 
-            # Save to get pk and run DB-level constraints
+            # Save to get pk
             super().save(*args, **kwargs)
 
             # Recalculate totals and handle payment processing
@@ -187,38 +149,67 @@ class Sale(models.Model):
     def calculate_totals(self):
         """Compute gross/net/payable/grand totals, due/change and update payment status."""
         try:
+            # Calculate total from items
             items_total = sum(item.subtotal() for item in self.items.all())
             self.gross_total = self._round_decimal(items_total)
             self.net_total = self.gross_total
 
-            vat_amount = self._calculate_charge(self.overall_vat_amount, self.overall_vat_type, self.net_total)
-            service_amount = self._calculate_charge(self.overall_service_charge, self.overall_service_type, self.net_total)
-            delivery_amount = self._calculate_charge(self.overall_delivery_charge, self.overall_delivery_type, self.net_total)
-
-            overall_discount_amount = self._calculate_charge(self.overall_discount, self.overall_discount_type, self.net_total)
+            # Calculate charges using the actual stored values
+            vat_amount = self._calculate_charge(
+                self.overall_vat_amount, 
+                self.overall_vat_type, 
+                self.net_total
+            )
+            service_amount = self._calculate_charge(
+                self.overall_service_charge, 
+                self.overall_service_type, 
+                self.net_total
+            )
+            delivery_amount = self._calculate_charge(
+                self.overall_delivery_charge, 
+                self.overall_delivery_type, 
+                self.net_total
+            )
+            overall_discount_amount = self._calculate_charge(
+                self.overall_discount, 
+                self.overall_discount_type, 
+                self.net_total
+            )
 
             total_charges = vat_amount + service_amount + delivery_amount
             self.payable_amount = self.net_total + total_charges - overall_discount_amount
+            
             if self.payable_amount < Decimal('0.00'):
                 self.payable_amount = Decimal('0.00')
 
             self.grand_total = self.payable_amount
-
             self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
             self.change_amount = max(Decimal('0.00'), self.paid_amount - self.grand_total)
 
             self._update_payment_status()
 
+            # Save calculated fields
             update_fields = [
                 'gross_total', 'net_total', 'payable_amount', 'grand_total',
                 'due_amount', 'change_amount', 'payment_status'
             ]
-            super().save(update_fields=update_fields)
-        except Exception:
+            
+            # Avoid recursion by using super().save()
+            super(Sale, self).save(update_fields=update_fields)
+            
+            logger.info(f"Sale {self.invoice_no} totals calculated: "
+                       f"Gross={self.gross_total}, "
+                       f"VAT={vat_amount}, "
+                       f"Service={service_amount}, "
+                       f"Delivery={delivery_amount}, "
+                       f"GrandTotal={self.grand_total}")
+            
+        except Exception as e:
             logger.exception("Error calculating totals")
             raise
 
     def _calculate_charge(self, amount, charge_type, base_amount):
+        """Calculate charge amount based on type (fixed or percent)"""
         if not amount or amount <= 0:
             return Decimal('0.00')
         if charge_type == 'percent':
@@ -226,6 +217,7 @@ class Sale(models.Model):
         return self._round_decimal(amount)
 
     def _round_decimal(self, value):
+        """Helper to round decimals safely"""
         try:
             if value is None:
                 return Decimal('0.00')
@@ -236,6 +228,7 @@ class Sale(models.Model):
             return Decimal('0.00')
 
     def _update_payment_status(self):
+        """Update payment status based on paid amount"""
         try:
             if self.paid_amount >= self.grand_total:
                 self.payment_status = 'paid'
@@ -266,6 +259,7 @@ class Sale(models.Model):
             self.create_transaction()
 
     def create_transaction(self):
+        """Create transaction for the sale"""
         try:
             from transactions.models import Transaction
             existing_transaction = Transaction.objects.filter(
@@ -293,6 +287,7 @@ class Sale(models.Model):
         return None
 
     def create_money_receipt(self):
+        """Create money receipt for the sale"""
         if self.paid_amount <= 0:
             return None
         try:
@@ -322,6 +317,7 @@ class Sale(models.Model):
             return None
 
     def clean(self):
+        """Validate sale data"""
         super().clean()
         if not self.company:
             raise ValidationError({'company': 'Sale must be associated with a company.'})
@@ -332,17 +328,8 @@ class Sale(models.Model):
         if self.paid_amount > 0 and not self.payment_method:
             raise ValidationError({'payment_method': 'Payment method is required when payment is made.'})
 
-    def __str__(self):
-        return f"{self.invoice_no} - {self.get_customer_display()}"
-
-    def get_customer_display(self):
-        if self.customer_type == 'walk_in':
-            return self.customer_name or "Walk-in Customer"
-        elif self.customer:
-            return self.customer.name
-        return "Unknown Customer"
-
     def add_payment(self, amount, payment_method=None, account=None):
+        """Add payment to existing sale"""
         if amount <= 0:
             raise ValueError("Payment amount must be greater than 0")
         if payment_method:
@@ -354,6 +341,7 @@ class Sale(models.Model):
         return self.paid_amount
 
     def get_payment_summary(self):
+        """Get payment summary"""
         return {
             'invoice_no': self.invoice_no,
             'grand_total': float(self.grand_total),
@@ -365,10 +353,12 @@ class Sale(models.Model):
         }
 
     def can_add_payment(self):
+        """Check if payment can be added"""
         return self.due_amount > 0 and self.payment_status in ['pending', 'partial']
 
     @classmethod
     def get_sales_summary(cls, company, start_date=None, end_date=None):
+        """Get sales summary for a company"""
         queryset = cls.objects.filter(company=company)
         if start_date:
             queryset = queryset.filter(sale_date__gte=start_date)
@@ -386,21 +376,20 @@ class SaleItem(models.Model):
     sale = models.ForeignKey('Sale', related_name='items', on_delete=models.CASCADE)
     product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
     
-    # ============ MULTI-MODE SYSTEM FIELDS ============
+    # Multi-mode system fields
     sale_mode = models.ForeignKey(
         'products.SaleMode', 
         on_delete=models.SET_NULL, 
         null=True, 
         blank=True,
-        help_text="Sale mode used for this item (KG, GRAM, BOSTA, etc.) - Optional"
+        help_text="Sale mode used for this item (KG, GRAM, BOSTA, etc.)"
     )
     
-    # Keep the original quantity field (for backward compatibility)
     quantity = models.DecimalField(
         max_digits=12, 
         decimal_places=3,
         default=Decimal('1.00'),
-        help_text="Quantity (acts as sale_quantity for compatibility)"
+        help_text="Quantity"
     )
     
     base_quantity = models.DecimalField(
@@ -451,7 +440,6 @@ class SaleItem(models.Model):
             return f"{self.product.name} - {self.quantity} {self.sale_mode.name}"
         return f"{self.product.name} - {self.quantity} {self.product.unit.name if self.product.unit else 'units'}"
     
-    # Property for backward compatibility (sale_quantity alias)
     @property
     def sale_quantity(self):
         return self.quantity
@@ -470,11 +458,9 @@ class SaleItem(models.Model):
                 self.base_quantity = self.sale_mode.convert_to_base(self.quantity)
                 self.price_type = self.sale_mode.price_type
             except:
-                # Fallback if convert_to_base fails
                 self.base_quantity = self.quantity
                 self.price_type = 'unit'
         else:
-            # For normal products without sale mode
             self.base_quantity = self.quantity
             self.price_type = 'normal'
         
@@ -497,10 +483,8 @@ class SaleItem(models.Model):
                     else:
                         self.unit_price = product_sale_mode.get_unit_price()
                 except ProductSaleMode.DoesNotExist:
-                    # Fallback to product selling price
                     self.unit_price = self.product.selling_price
             else:
-                # For normal products without sale mode
                 self.unit_price = self.product.selling_price
         
         # Validate stock before saving
@@ -562,7 +546,7 @@ class SaleItem(models.Model):
             'sale_mode_id': self.sale_mode.id if self.sale_mode else None,
             'sale_mode_name': self.sale_mode.name if self.sale_mode else self.product.unit.name if self.product.unit else 'Unit',
             'quantity': float(self.quantity),
-            'sale_quantity': float(self.quantity),  # For backward compatibility
+            'sale_quantity': float(self.quantity),
             'base_quantity': float(self.base_quantity),
             'unit_price': float(self.unit_price),
             'price_type': self.price_type,

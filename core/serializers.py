@@ -1,14 +1,41 @@
 from rest_framework import serializers
-from .models import Company, User, StaffRole, Staff
-from rest_framework_simplejwt.views import TokenObtainPairView
+from .models import Company, User, StaffRole, Staff, RolePermission
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework import serializers as drf_serializers
-from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken    
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
+
+
 # -----------------------------
-# Custom Token Serializer (TokenObtainPair)
+# Custom Token Serializer
 # -----------------------------
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user = self.user
+        
+        # Check company license
+        if hasattr(user, "company") and user.company and not user.company.is_active:
+            raise serializers.ValidationError("Company license expired. Please contact support.")
+        
+        # Get user permissions
+        permissions = user.get_permissions()
+        
+        # Extra data returned in login response
+        data["user"] = {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "is_staff": user.is_staff,
+            "is_superuser": user.is_superuser,
+            "company_id": user.company.id if hasattr(user, "company") and user.company else None,
+            "company_name": user.company.name if hasattr(user, "company") and user.company else None,
+            "permissions": permissions
+        }
+        
+        return data
 
     @classmethod
     def get_token(cls, user):
@@ -16,7 +43,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         
         # Custom claims
         token["username"] = user.username
-        token["role"] = getattr(user, "role", None)
+        token["role"] = user.role
         token["user_id"] = user.id
 
         # Company fields
@@ -29,49 +56,35 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         
         return token
 
-    def validate(self, attrs):
-        data = super().validate(attrs)
-        user = self.user
 
-        # Check company license
-        if hasattr(user, "company") and user.company and not user.company.is_active:
-            raise serializers.ValidationError("Company license expired. Please contact support.")
-
-        # Extra data returned in login response
-        data["user"] = {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "role": getattr(user, "role", None),
-            "company_id": user.company.id if hasattr(user, "company") and user.company else None,
-            "company_name": user.company.name if hasattr(user, "company") and user.company else None,
-        }
-
-        return data
-
-
-class CustomTokenObtainPairView(TokenObtainPairView):
-    serializer_class = CustomTokenObtainPairSerializer
-
+# -----------------------------
+# Company Serializers
+# -----------------------------
 class CompanySerializer(serializers.ModelSerializer):
+    active_user_count = serializers.IntegerField(read_only=True)
+    product_count = serializers.IntegerField(read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    days_until_expiry = serializers.IntegerField(read_only=True)
+    
     class Meta:
         model = Company
-        fields = "__all__"   # return full info
-
-# class CompanySerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = Company
-#         fields = [
-#             "id", "name", "company_code", "address", "phone", "email", 
-#             "logo", "is_active", "plan_type", "start_date", "expiry_date",
-#             "days_until_expiry", "active_user_count", "product_count"
-#         ]
-#         read_only_fields = ["company_code", "days_until_expiry", "active_user_count", "product_count"]
+        fields = [
+            'id', 'name', 'trade_license', 'address', 'phone', 'email',
+            'website', 'logo', 'currency', 'timezone', 'fiscal_year_start',
+            'plan_type', 'start_date', 'expiry_date', 'is_active',
+            'max_users', 'max_products', 'max_branches', 'company_code',
+            'active_user_count', 'product_count', 'is_expired', 'days_until_expiry',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['company_code', 'created_at', 'updated_at']
 
 
+# -----------------------------
+# User Serializers
+# -----------------------------
 class UserProfileSerializer(serializers.ModelSerializer):
     company_info = CompanySerializer(source='company', read_only=True)
-    full_name = serializers.SerializerMethodField()  # <-- Use SerializerMethodField
+    full_name = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
     
     class Meta:
@@ -80,11 +93,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 'full_name',
             'role', 'company', 'company_info', 'phone', 'profile_picture',
             'date_of_birth', 'is_verified', 'last_login', 'date_joined',
-            'permissions', 'is_active'
+            'permissions', 'is_active', 'is_staff', 'is_superuser'
         ]
         read_only_fields = [
-            'id', 'role', 'company', 'company_info', 'is_verified', 
-            'last_login', 'date_joined', 'permissions', 'is_active'
+            'id', 'is_verified', 'last_login', 'date_joined', 
+            'permissions', 'is_active', 'is_staff', 'is_superuser'
         ]
 
     def get_full_name(self, obj):
@@ -93,42 +106,167 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_permissions(self, obj):
         return obj.get_permissions()
 
+
+class UserSerializer(serializers.ModelSerializer):
+    company = CompanySerializer(read_only=True)
+    company_id = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.all(), 
+        source="company", 
+        write_only=True, 
+        required=False,
+        allow_null=True
+    )
+    password = serializers.CharField(write_only=True, required=False)
+    full_name = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = User
+        fields = [
+            "id", "username", "email", "password", "first_name", "last_name", "full_name",
+            "role", "company", "company_id", "phone", "is_active", "is_staff", "is_superuser",
+            "is_verified", "permissions", "date_joined", "last_login"
+        ]
+        extra_kwargs = {
+            'password': {'write_only': True, 'required': False},
+            'role': {'required': True}
+        }
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_permissions(self, obj):
+        return obj.get_permissions()
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        
+        # Set default role if not provided
+        if 'role' not in validated_data:
+            validated_data['role'] = User.Role.STAFF
+        
+        user = User.objects.create(**validated_data)
+        
+        if password:
+            user.set_password(password)
+        else:
+            # Set default password
+            user.set_password('password123')
+        
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        if password:
+            instance.set_password(password)
+        
+        instance.save()
+        return instance
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=True)
+    
+    class Meta:
+        model = User
+        fields = [
+            "id", "username", "email", "password", "first_name", "last_name",
+            "role", "company", "phone", "is_active"
+        ]
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'role': {'required': True}
+        }
+
+    def create(self, validated_data):
+        user = User.objects.create_user(**validated_data)
+        return user
+
+
+# -----------------------------
+# Staff Role Serializers
+# -----------------------------
+class RolePermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RolePermission
+        fields = ['id', 'module', 'can_view', 'can_create', 'can_edit', 'can_delete', 'can_export']
+
+
+class StaffRoleSerializer(serializers.ModelSerializer):
+    permissions = serializers.SerializerMethodField()
+    permission_details = RolePermissionSerializer(source='permissions', many=True, read_only=True)
+    
+    class Meta:
+        model = StaffRole
+        fields = [
+            'id', 'name', 'role_type', 'description', 'company',
+            'default_permissions', 'permissions', 'permission_details',
+            'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_permissions(self, obj):
+        return obj.get_permissions_dict()
+
+
+class StaffRoleCreateUpdateSerializer(serializers.ModelSerializer):
+    permissions = serializers.JSONField(write_only=True, required=False)
+    
+    class Meta:
+        model = StaffRole
+        fields = [
+            'id', 'name', 'role_type', 'description', 'company',
+            'permissions', 'is_active'
+        ]
+
+    def create(self, validated_data):
+        permissions_data = validated_data.pop('permissions', None)
+        instance = super().create(validated_data)
+        
+        if permissions_data:
+            instance.update_permissions(permissions_data)
+        
+        return instance
+
+    def update(self, instance, validated_data):
+        permissions_data = validated_data.pop('permissions', None)
+        instance = super().update(instance, validated_data)
+        
+        if permissions_data is not None:
+            instance.update_permissions(permissions_data)
+        
+        return instance
+
+
+# -----------------------------
+# Staff Serializers
+# -----------------------------
 class StaffProfileSerializer(serializers.ModelSerializer):
-    user_name = serializers.CharField(source='user.username', read_only=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
-    role_name = serializers.CharField(source='role.name', read_only=True)
+    user_info = serializers.SerializerMethodField()
+    role_info = StaffRoleSerializer(source='role', read_only=True)
+    is_currently_active = serializers.BooleanField(read_only=True)
+    employment_duration = serializers.IntegerField(read_only=True)
+    total_compensation = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     
     class Meta:
         model = Staff
         fields = [
-            'id', 'user_name', 'user_email', 'role', 'role_name',
+            'id', 'user', 'user_info', 'company', 'role', 'role_info',
             'phone', 'alternate_phone', 'image', 'designation',
             'employment_type', 'employee_id', 'department',
-            'salary', 'commission', 'bonus', 'is_main_user',
-            'status', 'joining_date', 'leaving_date', 'contract_end_date',
+            'salary', 'commission', 'bonus', 'total_compensation',
+            'is_main_user', 'status', 'joining_date', 'leaving_date', 'contract_end_date',
             'address', 'emergency_contact', 'emergency_phone',
-            'is_currently_active', 'employment_duration', 'total_compensation'
+            'is_currently_active', 'employment_duration', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'employee_id', 'is_currently_active', 
-                          'employment_duration', 'total_compensation']
-
-class StaffRoleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = StaffRole
-        fields = "__all__"
-
-
-class StaffSerializer(serializers.ModelSerializer):
-    role_name = serializers.CharField(source="role.name", read_only=True)
-    user_info = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Staff
-        fields = [
-            "id", "user_info", "role", "role_name", "phone", "designation", 
-            "employment_type", "salary", "commission", "bonus", "total_compensation",
-            "is_main_user", "status", "joining_date", "employment_duration",
-            "address", "created_at"
+        read_only_fields = [
+            'id', 'employee_id', 'is_currently_active', 
+            'employment_duration', 'total_compensation', 'created_at', 'updated_at'
         ]
 
     def get_user_info(self, obj):
@@ -140,103 +278,77 @@ class StaffSerializer(serializers.ModelSerializer):
                 "first_name": obj.user.first_name,
                 "last_name": obj.user.last_name,
                 "role": obj.user.role,
+                "full_name": obj.user.full_name,
             }
         return None
 
 
-class CustomUserSerializer(serializers.ModelSerializer):
-    company = CompanySerializer(read_only=True)
-    staff_profile = StaffSerializer(read_only=True)
-
-    class Meta:
-        model = User
-        fields = [
-            "id", "username", "email", "first_name", "last_name", "role", 
-            "company", "phone", "is_active", "is_staff", "is_verified",
-            "last_login", "date_joined", "staff_profile"
-        ]
-
-
-class UserSerializer(serializers.ModelSerializer):
-    company = CompanySerializer(read_only=True)
-    company_id = serializers.PrimaryKeyRelatedField(
-        queryset=Company.objects.all(), source="company", write_only=True, required=False
-    )
-    password = serializers.CharField(write_only=True, required=False)
-
-    class Meta:
-        model = User
-        fields = [
-            "id", "username", "email", "password", "first_name", "last_name",
-            "role", "company", "company_id", "phone", "is_active", "is_staff"
-        ]
-        extra_kwargs = {
-            'password': {'write_only': True, 'required': False}
-        }
-
-    def create(self, validated_data):
-        password = validated_data.pop('password', None)
-        user = User.objects.create(**validated_data)
-        if password:
-            user.set_password(password)
-        user.save()
-        return user
-
-    def update(self, instance, validated_data):
-        password = validated_data.pop('password', None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)
-        instance.save()
-        return instance
+class StaffSerializer(serializers.ModelSerializer):
+    user_info = serializers.SerializerMethodField()
+    role_name = serializers.CharField(source='role.name', read_only=True)
+    role_type = serializers.CharField(source='role.role_type', read_only=True)
+    is_currently_active = serializers.BooleanField(read_only=True)
+    total_compensation = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     
+    class Meta:
+        model = Staff
+        fields = [
+            "id", "user", "user_info", "company", "role", "role_name", "role_type",
+            "phone", "designation", "employment_type", "employee_id", "department",
+            "salary", "commission", "bonus", "total_compensation",
+            "is_main_user", "status", "joining_date", "employment_duration",
+            "is_currently_active", "created_at", "updated_at"
+        ]
+
+    def get_user_info(self, obj):
+        if obj.user:
+            return {
+                "id": obj.user.id,
+                "username": obj.user.username,
+                "email": obj.user.email,
+                "first_name": obj.user.first_name,
+                "last_name": obj.user.last_name,
+                "role": obj.user.role,
+                "full_name": obj.user.full_name,
+                "is_active": obj.user.is_active,
+            }
+        return None
 
 
-# Example of what your login serializer should return
+# -----------------------------
+# Login Serializer
+# -----------------------------
 class UserLoginSerializer(serializers.Serializer):
-    username = serializers.CharField()
+    username = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False)
     password = serializers.CharField()
 
     def validate(self, attrs):
         username = attrs.get('username')
+        email = attrs.get('email')
         password = attrs.get('password')
 
-        if username and password:
-            user = authenticate(username=username, password=password)
-            
-            if not user:
-                raise serializers.ValidationError('Invalid credentials')
-                
-            if not user.is_active:
-                raise serializers.ValidationError('User account is disabled')
-                
-            attrs['user'] = user
-            return attrs
-        else:
-            raise serializers.ValidationError('Must include "username" and "password"')
+        if not (username or email):
+            raise serializers.ValidationError('Must include "username" or "email"')
+        
+        if not password:
+            raise serializers.ValidationError('Must include "password"')
 
-# In your login view
-def login_view(request):
-    serializer = UserLoginSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.validated_data['user']
+        # Authenticate user
+        if email:
+            try:
+                user_obj = User.objects.get(email=email)
+                username = user_obj.username
+            except User.DoesNotExist:
+                raise serializers.ValidationError('Invalid credentials')
         
-        # Generate tokens
-        refresh = RefreshToken.for_user(user)
+        user = authenticate(username=username, password=password)
         
-        return Response({
-            'message': 'Login successful',
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'role': user.role,  # This should be SUPER_ADMIN, not STAFF
-                'company_id': user.company.id if user.company else None,
-                'company_name': user.company.name if user.company else None
-            },
-            'tokens': {
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            }
-        })
+        if not user:
+            raise serializers.ValidationError('Invalid credentials')
+            
+        if not user.is_active:
+            raise serializers.ValidationError('User account is disabled')
+        
+        attrs['user'] = user
+        return attrs

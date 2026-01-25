@@ -1,5 +1,4 @@
-# sales/views.py - COMPLETE FIXED VERSION
-
+# sales/views.py
 from rest_framework import viewsets, status, serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -29,10 +28,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------
 @api_view(['GET'])
 def get_due_sales(request):
-    """
-    Get due sales for a customer
-    URL: /api/sales/due/?customer_id=1&due=true
-    """
+    """Get due sales for a customer"""
     customer_id = request.GET.get('customer_id')
     due_only = request.GET.get('due', 'true').lower() == 'true'
     
@@ -54,7 +50,7 @@ def get_due_sales(request):
                 "data": []
             }, status=404)
 
-        # Filter sales by customer AND company (multi-tenant)
+        # Filter sales by customer AND company
         queryset = Sale.objects.filter(
             customer_id=customer_id,
             company=request.user.company
@@ -64,7 +60,7 @@ def get_due_sales(request):
         if due_only:
             queryset = queryset.filter(due_amount__gt=0)
         
-        # Order by sale date (oldest first)
+        # Order by sale date
         queryset = queryset.order_by('sale_date')
         
         serializer = SaleSerializer(queryset, many=True)
@@ -99,9 +95,7 @@ class SaleViewSet(BaseCompanyViewSet):
         return queryset
 
     def apply_filters(self, queryset):
-        """
-        Apply comprehensive filtering to sales queryset
-        """
+        """Apply comprehensive filtering to sales queryset"""
         params = self.request.GET
 
         # Customer filter
@@ -129,18 +123,16 @@ class SaleViewSet(BaseCompanyViewSet):
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
 
-        # Date range filters - FIXED VERSION
+        # Date range filters
         start_date = params.get('start_date')
         end_date = params.get('end_date')
         
         if start_date and end_date:
             try:
-                # Parse dates
                 start = self._parse_date(start_date)
                 end = self._parse_date(end_date)
                 
                 if start and end:
-                    # FIX: Adjust unreasonable years (2025, 2026, etc.)
                     current_year = timezone.now().year
                     
                     if start.year > current_year + 1 or start.year < current_year - 1:
@@ -151,12 +143,10 @@ class SaleViewSet(BaseCompanyViewSet):
                         logger.warning(f"Adjusting unreasonable end year {end.year} to {current_year}")
                         end = end.replace(year=current_year)
                     
-                    # Swap dates if start is after end
                     if start > end:
                         start, end = end, start
                         logger.warning(f"Swapped dates: start was after end")
                     
-                    # Ensure end date includes full day
                     end = end + timedelta(days=1) - timedelta(seconds=1)
                     
                     queryset = queryset.filter(sale_date__range=[start, end])
@@ -168,7 +158,6 @@ class SaleViewSet(BaseCompanyViewSet):
             try:
                 start = self._parse_date(start_date)
                 if start:
-                    # Adjust unreasonable years
                     current_year = timezone.now().year
                     if start.year > current_year + 1 or start.year < current_year - 1:
                         logger.warning(f"Adjusting unreasonable start year {start.year} to {current_year}")
@@ -182,13 +171,11 @@ class SaleViewSet(BaseCompanyViewSet):
             try:
                 end = self._parse_date(end_date)
                 if end:
-                    # Adjust unreasonable years
                     current_year = timezone.now().year
                     if end.year > current_year + 1 or end.year < current_year - 1:
                         logger.warning(f"Adjusting unreasonable end year {end.year} to {current_year}")
                         end = end.replace(year=current_year)
                     
-                    # Ensure end date includes full day
                     end = end + timedelta(days=1) - timedelta(seconds=1)
                     
                     queryset = queryset.filter(sale_date__lte=end)
@@ -218,18 +205,14 @@ class SaleViewSet(BaseCompanyViewSet):
             if not date_str:
                 return None
             
-            # Remove timezone info if present
             if 'T' in date_str:
-                # Handle ISO format with timezone
                 if '+' in date_str or 'Z' in date_str:
                     if 'Z' in date_str:
                         date_str = date_str.replace('Z', '+00:00')
                     return datetime.fromisoformat(date_str)
                 else:
-                    # Handle ISO format without timezone
                     return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
             else:
-                # Handle simple date format
                 return datetime.strptime(date_str, '%Y-%m-%d')
         except ValueError as e:
             logger.error(f"Date parsing error for '{date_str}': {e}")
@@ -238,28 +221,40 @@ class SaleViewSet(BaseCompanyViewSet):
     def create(self, request, *args, **kwargs):
         """Create a new sale"""
         try:
+            logger.info(f"Creating sale with data: {request.data}")
+            
+            # Validate stock before creating sale
+            items = request.data.get('items', [])
+            for item in items:
+                product_id = item.get('product_id')
+                quantity = Decimal(str(item.get('quantity', 0)))
+                if product_id and quantity > 0:
+                    try:
+                        from products.models import Product
+                        product = Product.objects.get(id=product_id)
+                        if product.stock_qty < float(quantity):
+                            return custom_response(
+                                success=False,
+                                message=f'Insufficient stock for {product.name}. '
+                                       f'Available: {product.stock_qty}, '
+                                       f'Requested: {quantity}',
+                                data=None,
+                                status_code=status.HTTP_400_BAD_REQUEST
+                            )
+                    except Product.DoesNotExist:
+                        return custom_response(
+                            success=False,
+                            message=f'Product with id {product_id} does not exist',
+                            data=None,
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
+            
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
-            # Log incoming data for debugging
-            logger.info(f"Creating sale with data: {request.data}")
-            
-            # FIX: Ensure sale_date is not in future
-            sale_date = request.data.get('sale_date')
-            if sale_date:
-                try:
-                    sale_date_obj = datetime.fromisoformat(sale_date.replace('Z', '+00:00'))
-                    current_time = timezone.now()
-                    
-                    # Prevent dates more than 1 day in future
-                    if sale_date_obj > current_time + timedelta(days=1):
-                        logger.warning(f"Sale date {sale_date_obj} is too far in future. Adjusting to current time.")
-                        # Update the data with current time
-                        request.data['sale_date'] = current_time.isoformat()
-                except Exception as e:
-                    logger.error(f"Error validating sale date: {e}")
-            
             sale = serializer.save()
+            
+            logger.info(f"Sale created successfully: {sale.invoice_no}")
             
             return custom_response(
                 success=True,
@@ -343,7 +338,6 @@ class SaleViewSet(BaseCompanyViewSet):
                 total_due=Coalesce(Sum('due_amount'), Decimal('0.00'))
             )
             
-            # Convert Decimal to float for JSON
             summary_data = {
                 'total_sales': summary['total_sales'],
                 'total_amount': float(summary['total_amount']),
@@ -428,34 +422,6 @@ class SaleViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['get'])
-    def fix_future_dates(self, request):
-        """Admin endpoint to fix sales with future dates"""
-        try:
-            if not request.user.is_superuser:
-                return Response({"error": "Permission denied"}, status=403)
-            
-            current_time = timezone.now()
-            future_sales = Sale.objects.filter(sale_date__gt=current_time)
-            
-            count = 0
-            for sale in future_sales:
-                # Fix to current time
-                sale.sale_date = current_time
-                sale.save(update_fields=['sale_date'])
-                count += 1
-                logger.info(f"Fixed sale {sale.invoice_no} date from {sale.sale_date} to {current_time}")
-            
-            return Response({
-                "status": True,
-                "message": f"Fixed {count} sales with future dates",
-                "data": {"fixed_count": count}
-            })
-            
-        except Exception as e:
-            logger.error(f"Error fixing future dates: {str(e)}")
-            return Response({"error": str(e)}, status=500)
-
 
 # -----------------------------
 # SaleItem ViewSet
@@ -517,7 +483,7 @@ class SaleAllListViewSet(BaseCompanyViewSet):
         return queryset
 
     def apply_filters(self, queryset):
-        """Apply comprehensive filtering to sales queryset"""
+        """Apply filtering to sales queryset"""
         params = self.request.GET
 
         # Customer filter
@@ -545,7 +511,7 @@ class SaleAllListViewSet(BaseCompanyViewSet):
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
 
-        # Date range filter - FIXED VERSION
+        # Date range filter
         start_date = params.get('start_date')
         end_date = params.get('end_date')
         
@@ -565,7 +531,6 @@ class SaleAllListViewSet(BaseCompanyViewSet):
                         else:
                             dt = datetime.strptime(date_str, '%Y-%m-%d')
                         
-                        # Adjust unreasonable years
                         current_year = timezone.now().year
                         if dt.year > current_year + 1 or dt.year < current_year - 1:
                             logger.warning(f"Adjusting unreasonable year {dt.year} to {current_year}")
@@ -580,7 +545,6 @@ class SaleAllListViewSet(BaseCompanyViewSet):
                 end = parse_date(end_date)
 
                 if start and end:
-                    # Swap if reversed
                     if start > end:
                         start, end = end, start
                         logger.warning(f"Swapped dates: start was after end")
@@ -612,7 +576,7 @@ class SaleAllListViewSet(BaseCompanyViewSet):
         return queryset
 
     def list(self, request, *args, **kwargs):
-        """Enhanced list method with filtering"""
+        """List method with filtering"""
         try:
             queryset = self.filter_queryset(self.get_queryset())
             serializer = self.get_serializer(queryset, many=True)
@@ -632,34 +596,3 @@ class SaleAllListViewSet(BaseCompanyViewSet):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-# -----------------------------
-# Utility function to fix existing bad data
-# -----------------------------
-def fix_sales_with_future_dates():
-    """Utility function to fix sales with future dates in database"""
-    try:
-        from sales.models import Sale
-        
-        current_time = timezone.now()
-        # Find sales with dates in 2025, 2026, etc.
-        future_year_sales = Sale.objects.filter(
-            sale_date__year__gt=current_time.year + 1
-        )
-        
-        count = 0
-        for sale in future_year_sales:
-            old_date = sale.sale_date
-            # Fix to current year, keep month/day/time
-            sale.sale_date = sale.sale_date.replace(year=current_time.year)
-            sale.save(update_fields=['sale_date'])
-            count += 1
-            print(f"Fixed sale {sale.invoice_no}: {old_date} -> {sale.sale_date}")
-        
-        print(f"Fixed {count} sales with future dates")
-        return count
-        
-    except Exception as e:
-        print(f"Error fixing future dates: {e}")
-        return 0

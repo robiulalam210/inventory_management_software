@@ -25,6 +25,7 @@ ALLOWED_HOSTS = [
     '127.0.0.1',
     '10.0.2.2',
     '0.0.0.0',
+   '192.168.0.140'
 ]
 
 APPEND_SLASH = True
@@ -252,6 +253,8 @@ else:
     CORS_ALLOWED_ORIGINS = [
         "https://inventory.meherinmart.xyz",
         "https://www.inventory.meherinmart.xyz",
+        "https://robi.meherinmart.xyz",
+        "https://www.robi.meherinmart.xyz",
     ]
 
 # -----------------------------

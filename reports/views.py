@@ -14,6 +14,11 @@ from purchases.models import Purchase, PurchaseItem
 from returns.models import SalesReturn, PurchaseReturn, BadStock,SalesReturnItem, PurchaseReturnItem
 from products.models import Product
 from expenses.models import Expense
+# Add this import at the TOP of the file (with other imports)
+from django.db.models import F, Sum, Avg, Count, Q, FloatField, Value
+from django.db.models.functions import Coalesce  # Coalesce is in functions module
+from django.db.models.expressions import ExpressionWrapper
+from django.db.models import DecimalField, IntegerField
 from core.base_viewsets import BaseReportView
 from .utils import custom_response, build_summary, build_advanced_summary
 from .serializers import (
@@ -29,6 +34,10 @@ from .serializers import (
     CustomerLedgerFilterSerializer, SupplierLedgerFilterSerializer,
     SupplierDueAdvanceFilterSerializer, CustomerDueAdvanceFilterSerializer
 )
+from django.db.models import F, Sum, ExpressionWrapper, DecimalField, IntegerField
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
+from datetime import datetime
 
 from django.db.models import Q  
 from django.utils.timezone import make_aware
@@ -411,6 +420,8 @@ class LowStockReportView(BaseReportView):
 # --------------------
 # Top Sold Products Report - FIXED VERSION
 # --------------------
+# Top Sold Products Report - FIXED VERSION with correct imports
+# --------------------
 class TopSoldProductsReportView(BaseReportView):
     @method_decorator(cache_page(600))
     def get(self, request):
@@ -446,7 +457,7 @@ class TopSoldProductsReportView(BaseReportView):
             # Get limit
             limit = int(request.GET.get('limit', 10))
             
-            # Group by product and aggregate
+            # FIX: Group by product and aggregate with proper output fields
             product_stats = sale_items_query.values(
                 'product__id',
                 'product__name',
@@ -454,11 +465,21 @@ class TopSoldProductsReportView(BaseReportView):
                 'product__purchase_price',
                 'product__stock_qty'
             ).annotate(
-                total_quantity_sold=Coalesce(Sum('quantity'), 0),
-                total_sales_amount=Coalesce(
-                    Sum(F('quantity') * F('unit_price')),
+                total_quantity_sold=Coalesce(
+                    Sum('quantity'),
                     0,
-                    output_field=FloatField()
+                    output_field=IntegerField()
+                ),
+                # FIXED: Use ExpressionWrapper for mixed field types
+                total_sales_amount=Coalesce(
+                    Sum(
+                        ExpressionWrapper(
+                            F('quantity') * F('unit_price'),
+                            output_field=DecimalField(max_digits=15, decimal_places=2)
+                        )
+                    ),
+                    0,
+                    output_field=DecimalField(max_digits=15, decimal_places=2)
                 )
             ).order_by('-total_quantity_sold')[:limit]
             
@@ -481,7 +502,7 @@ class TopSoldProductsReportView(BaseReportView):
                     'selling_price': float(selling_price),
                     'purchase_price': float(purchase_price),
                     'total_sold_quantity': stat['total_quantity_sold'],
-                    'total_sold_price': float(stat['total_sales_amount']),
+                    'total_sold_price': float(stat.get('total_sales_amount', 0)),
                     'total_profit': float(total_profit),
                     'current_stock': stat.get('product__stock_qty', 0),
                     'product_id': stat['product__id']
@@ -538,8 +559,6 @@ class TopSoldProductsReportView(BaseReportView):
             import traceback
             traceback.print_exc()
             return self.handle_exception(e)
-
-# --------------------
 # Supplier Due & Advance Report - Updated Format
 # --------------------
 class SupplierDueAdvanceReportView(BaseReportView):
@@ -639,7 +658,7 @@ class SupplierLedgerReportView(BaseReportView):
             start, end = self.get_date_range(request)
             
             if not filters.get('supplier'):
-                return custom_response(False, "Supplier ID is required for ledger report", None, 400)
+                return custom_response(False, "Supplier  is required for ledger report", None, 400)
             
             from suppliers.models import Supplier
             try:

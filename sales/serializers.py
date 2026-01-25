@@ -1,5 +1,4 @@
-# sales/serializers.py (UPDATED)
-
+# sales/serializers.py
 from rest_framework import serializers
 from .models import Sale, SaleItem
 from products.models import Product, SaleMode, ProductSaleMode
@@ -32,18 +31,18 @@ class SaleItemSerializer(serializers.ModelSerializer):
     )
     sale_mode_name = serializers.CharField(source='sale_mode.name', read_only=True)
     
-    # Quantity fields - accept BOTH quantity and sale_quantity for backward compatibility
+    # Quantity fields
     quantity = serializers.DecimalField(
         max_digits=12, 
         decimal_places=3,
-        required=False,  # Optional if sale_quantity provided
+        required=False,
         min_value=Decimal('0.001'),
         write_only=True
     )
     sale_quantity = serializers.DecimalField(
         max_digits=12, 
         decimal_places=3,
-        required=False,  # Optional if quantity provided
+        required=False,
         min_value=Decimal('0.001'),
         write_only=True
     )
@@ -64,8 +63,6 @@ class SaleItemSerializer(serializers.ModelSerializer):
     )
     
     subtotal = serializers.SerializerMethodField()
-    
-    # Accept client aliases and normalize to model choices ('fixed'|'percent')
     discount_type = serializers.CharField(required=False, default='fixed')
 
     class Meta:
@@ -83,14 +80,13 @@ class SaleItemSerializer(serializers.ModelSerializer):
         ]
 
     def validate_discount_type(self, value):
-        """Normalize and validate discount_type values from clients."""
+        """Normalize discount_type values"""
         if value is None or value == '':
             return 'fixed'
         if not isinstance(value, str):
             raise serializers.ValidationError('Invalid discount_type.')
 
         v = value.strip().lower()
-        # Accept "percentage" from clients, normalize to model's "percent"
         if v == 'percentage':
             return 'percent'
         if v in ('percent', 'fixed'):
@@ -99,33 +95,27 @@ class SaleItemSerializer(serializers.ModelSerializer):
         raise serializers.ValidationError('Invalid discount_type. Allowed: fixed, percent, percentage')
 
     def validate(self, data):
-        """Validate sale item with sale mode and handle backward compatibility"""
+        """Validate sale item"""
         product = data.get('product')
         sale_mode = data.get('sale_mode')
         
-        # Handle backward compatibility: use sale_quantity if provided, otherwise use quantity
+        # Handle quantity/sale_quantity
         quantity = data.get('quantity')
         sale_quantity = data.get('sale_quantity')
         
         if sale_quantity is not None:
-            # Use sale_quantity if provided (new way)
             final_quantity = sale_quantity
-            # Remove sale_quantity from validated data as it will be saved as quantity
             data.pop('sale_quantity', None)
         elif quantity is not None:
-            # Use quantity if provided (old way)
             final_quantity = quantity
         else:
-            # Neither provided, use default
             final_quantity = Decimal('1.00')
         
-        # Set the quantity in validated data
         data['quantity'] = final_quantity
         
-        # If no sale mode specified, use product's base unit or keep None for normal products
+        # If no sale mode specified, try to find default
         if not sale_mode and product and product.unit:
             try:
-                # Try to find a default sale mode for this unit
                 sale_mode = SaleMode.objects.filter(
                     base_unit=product.unit,
                     conversion_factor=Decimal('1.00'),
@@ -134,18 +124,15 @@ class SaleItemSerializer(serializers.ModelSerializer):
                 if sale_mode:
                     data['sale_mode'] = sale_mode
             except Exception:
-                # If no sale mode found, product will be sold in normal mode
                 pass
         
-        # Validate stock if sale mode is provided
+        # Validate stock
         if sale_mode and product:
             try:
                 base_quantity = sale_mode.convert_to_base(final_quantity)
             except:
-                # If convert_to_base fails, use quantity as base
                 base_quantity = final_quantity
         else:
-            # For normal products without sale mode
             base_quantity = final_quantity
         
         # Check stock
@@ -174,10 +161,8 @@ class SaleItemSerializer(serializers.ModelSerializer):
                         data['unit_price'] = product_sale_mode.get_unit_price()
                         
                 except ProductSaleMode.DoesNotExist:
-                    # Fallback to product selling price
                     data['unit_price'] = product.selling_price
             else:
-                # For normal products without sale mode
                 data['unit_price'] = product.selling_price
         
         return data
@@ -186,13 +171,13 @@ class SaleItemSerializer(serializers.ModelSerializer):
         return float(obj.subtotal()) if obj.subtotal() else 0.0
     
     def to_representation(self, instance):
-        """Add sale_quantity to output for backward compatibility"""
         representation = super().to_representation(instance)
         representation['sale_quantity'] = representation.get('quantity', 0)
         return representation
 
 
 class SaleSerializer(serializers.ModelSerializer):
+    # Foreign key fields
     customer_id = serializers.PrimaryKeyRelatedField(
         queryset=Customer.objects.all(),
         source='customer',
@@ -216,8 +201,36 @@ class SaleSerializer(serializers.ModelSerializer):
     sale_by_name = serializers.CharField(source='sale_by.username', read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     
-    # Sale items with multi-mode support
+    # Sale items
     items = SaleItemSerializer(many=True, write_only=True)
+    
+    # CRITICAL FIX: Add fields to accept charge values from frontend
+    vat = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        required=False, 
+        default=Decimal('0.00'),
+        write_only=True,
+        min_value=Decimal('0.00')
+    )
+    
+    service_charge = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        required=False, 
+        default=Decimal('0.00'),
+        write_only=True,
+        min_value=Decimal('0.00')
+    )
+    
+    delivery_charge = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        required=False, 
+        default=Decimal('0.00'),
+        write_only=True,
+        min_value=Decimal('0.00')
+    )
     
     # Read-only calculated fields
     gross_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -243,7 +256,9 @@ class SaleSerializer(serializers.ModelSerializer):
             'overall_service_charge', 'overall_service_type',
             'overall_vat_amount', 'overall_vat_type',
             'payment_method', 'account_id', 'account_name',
-            'with_money_receipt', 'remark', 'items', 'payment_status'
+            'with_money_receipt', 'remark', 'items', 'payment_status',
+            # Add the write-only fields that frontend sends
+            'vat', 'service_charge', 'delivery_charge'
         ]
         read_only_fields = [
             'id', 'invoice_no', 'sale_date', 'payment_status',
@@ -252,20 +267,19 @@ class SaleSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        """Validate sale-level data with multi-mode support"""
+        """Validate sale-level data"""
         items = attrs.get('items', [])
         
         if not items:
             raise serializers.ValidationError({'items': 'At least one item is required.'})
         
-        # Validate each item has required fields
+        # Validate each item
         for i, item in enumerate(items):
             if 'product' not in item:
                 raise serializers.ValidationError({
                     'items': f'Item {i+1}: Product is required'
                 })
             
-            # Check for either quantity or sale_quantity
             quantity = item.get('quantity')
             sale_quantity = item.get('sale_quantity')
             
@@ -284,11 +298,27 @@ class SaleSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Create sale with multi-mode items and backward compatibility
+        Create sale with proper charge mapping
         """
+        # CRITICAL: Extract charge values from frontend data
+        vat_amount = validated_data.pop('vat', Decimal('0.00'))
+        service_charge_amount = validated_data.pop('service_charge', Decimal('0.00'))
+        delivery_charge_amount = validated_data.pop('delivery_charge', Decimal('0.00'))
+        
+        # CRITICAL: Map to model fields
+        validated_data['overall_vat_amount'] = vat_amount
+        validated_data['overall_service_charge'] = service_charge_amount
+        validated_data['overall_delivery_charge'] = delivery_charge_amount
+        
+        logger.info(f"Sale creation - Charges mapped: "
+                   f"VAT={vat_amount} -> overall_vat_amount={validated_data['overall_vat_amount']}, "
+                   f"Service={service_charge_amount} -> overall_service_charge={validated_data['overall_service_charge']}, "
+                   f"Delivery={delivery_charge_amount} -> overall_delivery_charge={validated_data['overall_delivery_charge']}")
+        
+        # Extract items
         items_data = validated_data.pop('items', [])
 
-        # Attach metadata from request user if available
+        # Attach metadata from request user
         request = self.context.get('request')
         if request and hasattr(request, 'user') and request.user and request.user.is_authenticated:
             validated_data['created_by'] = request.user
@@ -307,9 +337,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 # Create the sale
                 sale = Sale.objects.create(**validated_data)
 
-                # Create items with backward compatibility
+                # Create items
                 for item_data in items_data:
-                    # Ensure quantity field is set (handles sale_quantity to quantity conversion)
+                    # Handle sale_quantity to quantity conversion
                     if 'sale_quantity' in item_data and 'quantity' not in item_data:
                         item_data['quantity'] = item_data.pop('sale_quantity')
                     
@@ -318,6 +348,8 @@ class SaleSerializer(serializers.ModelSerializer):
                 # Recalculate totals
                 sale.calculate_totals()
                 sale.refresh_from_db()
+                
+                logger.info(f"Sale created successfully: {sale.invoice_no}")
                 return sale
 
         except serializers.ValidationError:
@@ -330,7 +362,7 @@ class SaleSerializer(serializers.ModelSerializer):
         """Return sale representation including item details"""
         rep = super().to_representation(instance)
         
-        # Add item details with sale_quantity field for backward compatibility
+        # Add item details
         rep['items'] = SaleItemSerializer(instance.items.all(), many=True).data
         rep['customer_name'] = instance.get_customer_display()
 

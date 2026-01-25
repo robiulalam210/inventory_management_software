@@ -89,6 +89,9 @@ urlpatterns = [
     path('profile/permissions/', UserPermissionsAPIView.as_view(), name='user-permissions'),
     path('dashboard/stats/', user_dashboard_stats, name='user-dashboard-stats'),
   
+
+
+  
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
     path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),
