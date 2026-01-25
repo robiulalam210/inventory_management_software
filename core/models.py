@@ -63,17 +63,6 @@ class Company(models.Model):
             
         super().save(*args, **kwargs)
 
-    def has_perm(self, perm, obj=None):
-        """Does the user have a specific permission?"""
-        # This method is for user permissions, not company
-        # Keeping it for compatibility
-        return True
-
-    def has_module_perms(self, app_label):
-        """Does the user have permissions to view the app `app_label`?"""
-        # This method is for user permissions, not company
-        return True
-
     def _generate_company_code(self):
         code = ''.join(random.choices(string.ascii_uppercase, k=3)) + str(random.randint(100, 999))
         while Company.objects.filter(company_code=code).exists():
@@ -122,7 +111,7 @@ class User(AbstractUser):
     role = models.CharField(
         max_length=20, 
         choices=Role.choices, 
-        default=Role.STAFF  # Changed default to STAFF
+        default=Role.STAFF
     )
     company = models.ForeignKey(
         'Company', 
@@ -148,7 +137,6 @@ class User(AbstractUser):
     sales_create = models.BooleanField(default=False)
     pos_sales_create = models.BooleanField(default=False)
     short_sales_create = models.BooleanField(default=False)
-
     sales_edit = models.BooleanField(default=False)
     sales_delete = models.BooleanField(default=False)
     
@@ -235,43 +223,37 @@ class User(AbstractUser):
         ]
 
     def save(self, *args, **kwargs):
-        # First set is_staff and is_superuser based on role
+        # সুপারইউজারের জন্য বিশেষ হ্যান্ডলিং
         if self.role == self.Role.SUPER_ADMIN:
             self.is_staff = True
             self.is_superuser = True
             self._set_all_permissions(True)
+            # সুপারইউজারের জন্য কোম্পানি বাধ্যতামূলক নয়
         elif self.role in [self.Role.ADMIN, self.Role.MANAGER]:
             self.is_staff = True
             self.is_superuser = False
-            self._set_all_permissions(True)
+            if self.role == self.Role.ADMIN:
+                self._set_all_permissions(True)
+            else:
+                self._set_manager_permissions()
         else:
             self.is_staff = False
             self.is_superuser = False
-            # For staff and viewer, set role-based permissions
             if self.role == self.Role.STAFF:
                 self._set_staff_permissions()
             elif self.role == self.Role.VIEWER:
                 self._set_viewer_permissions()
         
-        # Call parent save
         super().save(*args, **kwargs)
-        
-        # If user has staff_profile, update it
-        if hasattr(self, 'staff_profile') and self.staff_profile and self.staff_profile.role:
-            self.assign_role_permissions(self.staff_profile.role)
 
     def assign_role_permissions(self, role):
         """Assign permissions from StaffRole to user"""
         if not role:
             return
         
-        # Clear all permissions first
         self._clear_all_permissions()
-        
-        # Get permissions from role
         permissions_dict = role.get_permissions_dict()
         
-        # Apply permissions
         for module, perms in permissions_dict.items():
             self._apply_module_permissions(module, perms)
         
@@ -281,7 +263,8 @@ class User(AbstractUser):
         """Clear all permission fields"""
         permission_fields = [
             'can_access_dashboard',
-            'sales_view', 'sales_create','sales_pos','sales_short' 'sales_edit', 'sales_delete',
+            'sales_view', 'sales_create', 'pos_sales_create', 'short_sales_create', 
+            'sales_edit', 'sales_delete',
             'money_receipt_view', 'money_receipt_create', 'money_receipt_edit', 'money_receipt_delete',
             'purchases_view', 'purchases_create', 'purchases_edit', 'purchases_delete',
             'products_view', 'products_create', 'products_edit', 'products_delete',
@@ -391,326 +374,224 @@ class User(AbstractUser):
 
     def _set_all_permissions(self, value):
         """Set all permissions to given value"""
-        # Dashboard
         self.can_access_dashboard = value
-        
-        # Sales
         self.sales_view = value
         self.sales_create = value
         self.pos_sales_create = value
         self.short_sales_create = value
         self.sales_edit = value
         self.sales_delete = value
-        
-        # Money Receipt
         self.money_receipt_view = value
         self.money_receipt_create = value
         self.money_receipt_edit = value
         self.money_receipt_delete = value
-        
-        # Purchases
         self.purchases_view = value
         self.purchases_create = value
         self.purchases_edit = value
         self.purchases_delete = value
-        
-        # Products
         self.products_view = value
         self.products_create = value
         self.products_edit = value
         self.products_delete = value
-        
-        # Accounts
         self.accounts_view = value
         self.accounts_create = value
         self.accounts_edit = value
         self.accounts_delete = value
-        
-        # Customers
         self.customers_view = value
         self.customers_create = value
         self.customers_edit = value
         self.customers_delete = value
-        
-        # Suppliers
         self.suppliers_view = value
         self.suppliers_create = value
         self.suppliers_edit = value
         self.suppliers_delete = value
-        
-        # Expense
         self.expense_view = value
         self.expense_create = value
         self.expense_edit = value
         self.expense_delete = value
-        
-        # Return
         self.return_view = value
         self.return_create = value
         self.return_edit = value
         self.return_delete = value
-        
-        # Reports
         self.reports_view = value
         self.reports_create = value
         self.reports_export = value
-        
-        # Users
         self.users_view = value
         self.users_create = value
         self.users_edit = value
         self.users_delete = value
-        
-        # Administration
         self.administration_view = value
         self.administration_create = value
         self.administration_edit = value
         self.administration_delete = value
-        
-        # Settings
         self.settings_view = value
         self.settings_edit = value
 
     def _set_manager_permissions(self):
         """Set permissions for Manager role"""
-        # Dashboard
         self.can_access_dashboard = True
-        
-        # Sales
         self.sales_view = True
         self.sales_create = True
         self.sales_edit = True
         self.sales_delete = True
-        
-        # Money Receipt
         self.money_receipt_view = True
         self.money_receipt_create = True
         self.money_receipt_edit = True
         self.money_receipt_delete = True
-        
-        # Purchases
         self.purchases_view = True
         self.purchases_create = True
         self.purchases_edit = True
         self.purchases_delete = True
-        
-        # Products
         self.products_view = True
         self.products_create = True
         self.products_edit = True
         self.products_delete = True
-        
-        # Accounts
         self.accounts_view = True
         self.accounts_create = True
         self.accounts_edit = True
         self.accounts_delete = True
-        
-        # Customers
         self.customers_view = True
         self.customers_create = True
         self.customers_edit = True
         self.customers_delete = True
-        
-        # Suppliers
         self.suppliers_view = True
         self.suppliers_create = True
         self.suppliers_edit = True
         self.suppliers_delete = True
-        
-        # Expense
         self.expense_view = True
         self.expense_create = True
         self.expense_edit = True
         self.expense_delete = True
-        
-        # Return
         self.return_view = True
         self.return_create = True
         self.return_edit = True
         self.return_delete = True
-        
-        # Reports
         self.reports_view = True
         self.reports_create = True
         self.reports_export = True
-        
-        # Users
         self.users_view = True
         self.users_create = False
         self.users_edit = False
         self.users_delete = False
-        
-        # Administration
         self.administration_view = True
         self.administration_create = True
         self.administration_edit = True
         self.administration_delete = True
-        
-        # Settings
         self.settings_view = True
         self.settings_edit = True
 
     def _set_staff_permissions(self):
         """Set permissions for Staff role"""
-        # Dashboard
         self.can_access_dashboard = True
-        
-        # Sales
         self.sales_view = True
         self.sales_create = True
         self.pos_sales_create = True
         self.short_sales_create = True
         self.sales_edit = True
         self.sales_delete = False
-        
-        # Money Receipt
         self.money_receipt_view = True
         self.money_receipt_create = True
         self.money_receipt_edit = True
         self.money_receipt_delete = False
-        
-        # Purchases
         self.purchases_view = True
         self.purchases_create = False
         self.purchases_edit = False
         self.purchases_delete = False
-        
-        # Products
         self.products_view = True
         self.products_create = False
         self.products_edit = True
         self.products_delete = False
-        
-        # Accounts
         self.accounts_view = True
         self.accounts_create = False
         self.accounts_edit = False
         self.accounts_delete = False
-        
-        # Customers
         self.customers_view = True
         self.customers_create = True
         self.customers_edit = True
         self.customers_delete = False
-        
-        # Suppliers
         self.suppliers_view = True
         self.suppliers_create = False
         self.suppliers_edit = False
         self.suppliers_delete = False
-        
-        # Expense
         self.expense_view = True
         self.expense_create = False
         self.expense_edit = False
         self.expense_delete = False
-        
-        # Return
         self.return_view = True
         self.return_create = True
         self.return_edit = True
         self.return_delete = False
-        
-        # Reports
         self.reports_view = True
         self.reports_create = False
         self.reports_export = True
-        
-        # Users
         self.users_view = False
         self.users_create = False
         self.users_edit = False
         self.users_delete = False
-        
-        # Administration
         self.administration_view = False
         self.administration_create = False
         self.administration_edit = False
         self.administration_delete = False
-        
-        # Settings
         self.settings_view = True
         self.settings_edit = False
 
     def _set_viewer_permissions(self):
         """Set permissions for Viewer role"""
-        # Dashboard
         self.can_access_dashboard = True
-        
-        # All modules - View only
         self.sales_view = True
         self.sales_create = False
         self.sales_edit = False
         self.sales_delete = False
-        
         self.money_receipt_view = True
         self.money_receipt_create = False
         self.money_receipt_edit = False
         self.money_receipt_delete = False
-        
         self.purchases_view = True
         self.purchases_create = False
         self.purchases_edit = False
         self.purchases_delete = False
-        
         self.products_view = True
         self.products_create = False
         self.products_edit = False
         self.products_delete = False
-        
         self.accounts_view = True
         self.accounts_create = False
         self.accounts_edit = False
         self.accounts_delete = False
-        
         self.customers_view = True
         self.customers_create = False
         self.customers_edit = False
         self.customers_delete = False
-        
         self.suppliers_view = True
         self.suppliers_create = False
         self.suppliers_edit = False
         self.suppliers_delete = False
-        
         self.expense_view = True
         self.expense_create = False
         self.expense_edit = False
         self.expense_delete = False
-        
         self.return_view = True
         self.return_create = False
         self.return_edit = False
         self.return_delete = False
-        
-        # Reports
         self.reports_view = True
         self.reports_create = False
         self.reports_export = True
-        
-        # Users
         self.users_view = False
         self.users_create = False
         self.users_edit = False
         self.users_delete = False
-        
-        # Administration
         self.administration_view = False
         self.administration_create = False
         self.administration_edit = False
         self.administration_delete = False
-        
-        # Settings
         self.settings_view = True
         self.settings_edit = False
 
     def get_permissions(self):
         """Return all permissions as a structured dictionary"""
         return {
-            'dashboard': {
-                'view': self.can_access_dashboard
-            },
+            'dashboard': {'view': self.can_access_dashboard},
             'sales': {
                 'view': self.sales_view,
                 'create': self.sales_create,
@@ -798,7 +679,6 @@ class User(AbstractUser):
             return False
             
         if action is None:
-            # Check if user has any permission for this module
             return any(permissions[module].values())
         
         if action not in permissions[module]:
@@ -807,19 +687,15 @@ class User(AbstractUser):
         return permissions[module][action]
 
     def can_create(self, module):
-        """Check if user can create in module"""
         return self.has_permission(module, 'create')
 
     def can_edit(self, module):
-        """Check if user can edit in module"""
         return self.has_permission(module, 'edit')
 
     def can_delete(self, module):
-        """Check if user can delete in module"""
         return self.has_permission(module, 'delete')
 
     def can_view(self, module):
-        """Check if user can view module"""
         return self.has_permission(module, 'view')
 
     def has_company_access(self, company):
@@ -832,7 +708,7 @@ class User(AbstractUser):
         return f"{self.first_name} {self.last_name}".strip()
 
     def __str__(self):
-        company_name = self.company.name if self.company else 'No Company'
+        company_name = self.company.name if self.company else 'System'
         return f"{self.username} - {self.get_role_display()} ({company_name})"
 
 
@@ -915,7 +791,6 @@ class StaffRole(models.Model):
             self.generate_default_permissions()
 
     def generate_default_permissions(self):
-        """Generate default permissions based on role type"""
         default_permissions = {
             'management': {
                 'dashboard': {'view': True},
@@ -935,9 +810,7 @@ class StaffRole(models.Model):
             },
             'sales': {
                 'dashboard': {'view': True},
-                'sales': {'view': True, 'create': True, 
-                        
-                          'edit': True, 'delete': False},
+                'sales': {'view': True, 'create': True, 'edit': True, 'delete': False},
                 'money_receipt': {'view': True, 'create': True, 'edit': True, 'delete': False},
                 'customers': {'view': True, 'create': True, 'edit': True, 'delete': False},
                 'products': {'view': True, 'create': False, 'edit': False, 'delete': False},
@@ -967,7 +840,6 @@ class StaffRole(models.Model):
         permissions_map = default_permissions.get(self.role_type, {})
         self.default_permissions = permissions_map
         
-        # Create RolePermission instances
         for module, perms in permissions_map.items():
             RolePermission.objects.create(
                 staff_role=self,
@@ -982,10 +854,8 @@ class StaffRole(models.Model):
         self.save()
 
     def update_permissions(self, permissions_data):
-        """Update permissions for this role"""
         self.default_permissions = permissions_data
         
-        # Update or create RolePermission instances
         for module, perms in permissions_data.items():
             RolePermission.objects.update_or_create(
                 staff_role=self,
@@ -999,18 +869,15 @@ class StaffRole(models.Model):
                 }
             )
         
-        # Delete permissions not in the new data
         module_names = permissions_data.keys()
         self.permissions.exclude(module__in=module_names).delete()
         
         self.save()
 
     def get_permissions_dict(self):
-        """Get all permissions as a dictionary"""
         if not self.default_permissions and self.role_type != 'custom':
             self.generate_default_permissions()
         
-        # Build from RolePermission objects
         permissions = {}
         for perm in self.permissions.all():
             permissions[perm.module] = {
@@ -1123,7 +990,6 @@ class Staff(models.Model):
             
         super().save(*args, **kwargs)
         
-        # Update user permissions if role is assigned
         if self.role and self.user:
             self.user.assign_role_permissions(self.role)
 
