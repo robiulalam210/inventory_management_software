@@ -25,7 +25,8 @@ ALLOWED_HOSTS = [
     '127.0.0.1',
     '10.0.2.2',
     '0.0.0.0',
-   '192.168.0.140'
+     '192.168.0.140'
+
 ]
 
 APPEND_SLASH = True
@@ -107,13 +108,14 @@ WSGI_APPLICATION = 'inventory_api.wsgi.application'
 # DATABASE CONFIGURATION
 # -----------------------------
 # SQLite (development)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 
+# If you use MySQL in production, enable utf8mb4 for emojis:
 # DATABASES = {
 #     'default': {
 #         'ENGINE': 'django.db.backends.mysql',
@@ -128,54 +130,20 @@ DATABASES = {
 #         },
 #     }
 # }
-
-#Letest DB Credentials
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#          'NAME': 'meherinm_meherinmart_db',
-#         'USER': 'meherinm_robi2',
-#         'PASSWORD': 'meherinmart@123',
-#         'HOST': 'localhost',
-#         'PORT': '3306',
-#         'OPTIONS': {
-#             'charset': 'utf8mb4',
-#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-#         },
-#     }
-# }
-# -- 🔹 1. Database charset
-# ALTER DATABASE meherinm_meherinmart_db
-# CHARACTER SET = utf8mb4
-# COLLATE = utf8mb4_unicode_ci;
-
-# -- 🔹 2. All tables charset
-# SET @tables = NULL;
-# SELECT GROUP_CONCAT(TABLE_NAME) INTO @tables
-# FROM INFORMATION_SCHEMA.TABLES
-# WHERE TABLE_SCHEMA = 'meherinm_meherinmart_db';
-
-# -- Generate ALTER TABLE for each table
-# SET @sql = CONCAT('ALTER TABLE ', REPLACE(@tables, ',', ' CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; ALTER TABLE '), ' CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;');
-
-# PREPARE stmt FROM @sql;
-# EXECUTE stmt;
-# DEALLOCATE PREPARE stmt;
-
-# -- 🔹 3. Fix all VARCHAR / TEXT columns individually (Optional)
-# -- Example for customers_customer.name column
-# ALTER TABLE customers_customer
-# MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
-
-# -- Repeat for other columns that store Bengali text
-# -- e.g.,
-# -- ALTER TABLE products_product MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
-# -- ALTER TABLE suppliers_supplier MODIFY COLUMN name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL;
-
-
-# ALTER DATABASE meherinm_meherinmart_db
-# CHARACTER SET utf8mb4
-# COLLATE utf8mb4_unicode_ci;
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+         'NAME': 'meherinm_meherinmart_db',
+        'USER': 'meherinm_robi2',
+        'PASSWORD': 'meherinmart@123',
+        'HOST': 'localhost',
+        'PORT': '3306',
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    }
+}
 
 # -----------------------------
 # AUTH
@@ -253,7 +221,7 @@ else:
     CORS_ALLOWED_ORIGINS = [
         "https://inventory.meherinmart.xyz",
         "https://www.inventory.meherinmart.xyz",
-        "https://robi.meherinmart.xyz",
+         "https://robi.meherinmart.xyz",
         "https://www.robi.meherinmart.xyz",
     ]
 
