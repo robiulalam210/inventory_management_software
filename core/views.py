@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
 User = get_user_model()
 
-from .models import Company, StaffRole, Staff, RolePermission
+# সংশোধিত import - RolePermission রিমুভ করা হয়েছে
+from .models import Company, StaffRole, Staff, UserPermission
 from .serializers import (
     CompanySerializer,
     UserSerializer,
@@ -32,7 +33,12 @@ from .serializers import (
     StaffProfileSerializer,
     UserProfileSerializer,
     CustomTokenObtainPairSerializer,
-    UserLoginSerializer
+    UserLoginSerializer,
+    UserPermissionUpdateSerializer,
+    UserPermissionResetSerializer,
+    UserListSerializer,
+    PermissionCheckSerializer,
+    UserPermissionSerializer
 )
 from .utils import custom_response
 
@@ -51,25 +57,29 @@ except ImportError:
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
 
-
 class CustomLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         serializer = UserLoginSerializer(data=request.data)
-        
+
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            
-            # Generate JWT tokens
+
+            # JWT tokens
             token_serializer = CustomTokenObtainPairSerializer()
             refresh = token_serializer.get_token(user)
-            access_token = refresh.access_token
 
-            # Get user permissions
+            # Permissions
             permissions = user.get_permissions()
-            
-            # Prepare response data
+
+            # Company data
+            company_data = (
+                CompanySerializer(user.company).data
+                if getattr(user, "company", None)
+                else None
+            )
+
             response_data = {
                 "success": True,
                 "message": "Login successful",
@@ -82,27 +92,29 @@ class CustomLoginView(APIView):
                         "last_name": user.last_name,
                         "full_name": user.full_name,
                         "role": user.role,
+                        "permission_source": user.permission_source,
                         "is_staff": user.is_staff,
                         "is_superuser": user.is_superuser,
-                        "company_id": getattr(user.company, "id", None),
-                        "company_name": getattr(user.company, "name", None),
-                        "permissions": permissions
+                        "permissions": permissions,
                     },
+                    "company": company_data,
                     "tokens": {
                         "refresh": str(refresh),
-                        "access": str(access_token),
-                    }
-                }
+                        "access": str(refresh.access_token),
+                    },
+                },
             }
 
             return Response(response_data, status=status.HTTP_200_OK)
-        else:
-            return custom_response(
-                False, 
-                "Login failed", 
-                serializer.errors, 
-                status.HTTP_401_UNAUTHORIZED
-            )
+
+        return Response(
+            {
+                "success": False,
+                "message": "Login failed",
+                "errors": serializer.errors,
+            },
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
 
 
 # --------------------------
@@ -191,13 +203,29 @@ class UserViewSet(viewsets.ModelViewSet):
             # Regular users can only see their own profile
             return User.objects.filter(id=user.id)
 
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return UserCreateSerializer
-        return UserSerializer
+    def list(self, request, *args, **kwargs):
+        """Override list to enforce permission"""
+        user = request.user
+
+        # STAFF or anyone without 'view' permission cannot see the list
+        if not user.has_permission('users', 'view'):
+            return custom_response(
+                False,
+                "You don't have permission to view users",
+                None,
+                status.HTTP_403_FORBIDDEN
+            )
+        
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return custom_response(
+            True,
+            "Users fetched successfully",
+            serializer.data,
+            status.HTTP_200_OK
+        )
 
     def create(self, request, *args, **kwargs):
-        # Check if user has permission to create users
         user = request.user
         if not user.has_permission('users', 'create'):
             return custom_response(
@@ -207,7 +235,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status.HTTP_403_FORBIDDEN
             )
         
-        # Set company for non-super admins
         if user.role != User.Role.SUPER_ADMIN and user.company:
             request.data['company'] = user.company.id
         
@@ -230,7 +257,6 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
     def update(self, request, *args, **kwargs):
-        # Check if user has permission to edit users
         user = request.user
         if not user.has_permission('users', 'edit'):
             return custom_response(
@@ -243,7 +269,6 @@ class UserViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        # Check if user has permission to delete users
         user = request.user
         if not user.has_permission('users', 'delete'):
             return custom_response(
@@ -253,7 +278,6 @@ class UserViewSet(viewsets.ModelViewSet):
                 status.HTTP_403_FORBIDDEN
             )
         
-        # Prevent deleting own account
         instance = self.get_object()
         if instance.id == request.user.id:
             return custom_response(
@@ -267,11 +291,9 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def assign_role(self, request, pk=None):
-        """Assign a staff role to user"""
         user = self.get_object()
         request_user = request.user
         
-        # Check permission
         if not request_user.has_permission('users', 'edit'):
             return custom_response(
                 False, 
@@ -290,10 +312,8 @@ class UserViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            # Get the role
             role = StaffRole.objects.get(id=role_id, company=request_user.company)
             
-            # Create or update staff profile
             staff_profile, created = Staff.objects.get_or_create(
                 user=user,
                 defaults={'company': request_user.company}
@@ -302,7 +322,6 @@ class UserViewSet(viewsets.ModelViewSet):
             staff_profile.role = role
             staff_profile.save()
             
-            # Update user permissions from role
             user.assign_role_permissions(role)
             
             return custom_response(
@@ -330,6 +349,190 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 # --------------------------
+# User Permission Management Views
+# --------------------------
+class UserPermissionManagementView(APIView):
+    """View for managing user permissions (Admin only)"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """Update user permissions"""
+        serializer = UserPermissionUpdateSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            user = serializer.save()
+            return custom_response(
+                True,
+                "User permissions updated successfully",
+                {
+                    'user_id': user.id,
+                    'username': user.username,
+                    'permissions': user.get_permissions(),
+                    'permission_source': user.permission_source
+                },
+                status.HTTP_200_OK
+            )
+        
+        return custom_response(
+            False,
+            "Permission update failed",
+            serializer.errors,
+            status.HTTP_400_BAD_REQUEST
+        )
+    
+    def delete(self, request):
+        """Reset user permissions to role defaults"""
+        serializer = UserPermissionResetSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            user = serializer.save()
+            return custom_response(
+                True,
+                "User permissions reset to role defaults",
+                {
+                    'user_id': user.id,
+                    'username': user.username,
+                    'permissions': user.get_permissions(),
+                    'permission_source': user.permission_source
+                },
+                status.HTTP_200_OK
+            )
+        
+        return custom_response(
+            False,
+            "Permission reset failed",
+            serializer.errors,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+
+class UserPermissionListView(APIView):
+    """List all user permissions for a specific user"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, user_id):
+        try:
+            target_user = User.objects.get(id=user_id)
+            request_user = request.user
+            
+            # Check permissions
+            if not request_user.can_manage_user(target_user):
+                return custom_response(
+                    False,
+                    "You don't have permission to view this user's permissions",
+                    None,
+                    status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get all permissions
+            permissions = target_user.get_permissions()
+            custom_perms = UserPermission.objects.filter(user=target_user, is_active=True)
+            
+            return custom_response(
+                True,
+                "User permissions fetched successfully",
+                {
+                    'user': {
+                        'id': target_user.id,
+                        'username': target_user.username,
+                        'full_name': target_user.full_name,
+                        'role': target_user.role,
+                        'permission_source': target_user.permission_source
+                    },
+                    'permissions': permissions,
+                    'custom_permissions': UserPermissionSerializer(custom_perms, many=True).data
+                },
+                status.HTTP_200_OK
+            )
+            
+        except User.DoesNotExist:
+            return custom_response(
+                False,
+                "User not found",
+                None,
+                status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error fetching user permissions: {str(e)}")
+            return custom_response(
+                False,
+                "Error fetching user permissions",
+                None,
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CompanyUsersView(APIView):
+    """Get all users in a company (for admin dashboard)"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        if user.role == User.Role.SUPER_ADMIN:
+            users = User.objects.all()
+        elif user.role == User.Role.ADMIN and user.company:
+            users = User.objects.filter(company=user.company).exclude(role=User.Role.SUPER_ADMIN)
+        else:
+            return custom_response(
+                False,
+                "You don't have permission to view company users",
+                None,
+                status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = UserListSerializer(users, many=True)
+        
+        return custom_response(
+            True,
+            "Company users fetched successfully",
+            {
+                'total_users': users.count(),
+                'users': serializer.data
+            },
+            status.HTTP_200_OK
+        )
+
+
+class PermissionCheckView(APIView):
+    """Check if user has specific permission"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        serializer = PermissionCheckSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            module = serializer.validated_data['module']
+            action = serializer.validated_data.get('action')
+            
+            has_perm = request.user.has_permission(module, action)
+            
+            return custom_response(
+                True,
+                "Permission check completed",
+                {
+                    'has_permission': has_perm,
+                    'module': module,
+                    'action': action
+                },
+                status.HTTP_200_OK
+            )
+        
+        return custom_response(
+            False,
+            "Invalid request data",
+            serializer.errors,
+            status.HTTP_400_BAD_REQUEST
+        )
+
+
+# --------------------------
 # Staff Role ViewSet
 # --------------------------
 class StaffRoleViewSet(viewsets.ModelViewSet):
@@ -352,7 +555,6 @@ class StaffRoleViewSet(viewsets.ModelViewSet):
         return StaffRoleSerializer
 
     def create(self, request, *args, **kwargs):
-        # Check permission
         if not request.user.has_permission('administration', 'create'):
             return custom_response(
                 False, 
@@ -361,14 +563,12 @@ class StaffRoleViewSet(viewsets.ModelViewSet):
                 status.HTTP_403_FORBIDDEN
             )
         
-        # Set company for non-super admins
         if request.user.role != User.Role.SUPER_ADMIN and request.user.company:
             request.data['company'] = request.user.company.id
         
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
-        # Check permission
         if not request.user.has_permission('administration', 'edit'):
             return custom_response(
                 False, 
@@ -380,7 +580,6 @@ class StaffRoleViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        # Check permission
         if not request.user.has_permission('administration', 'delete'):
             return custom_response(
                 False, 
@@ -411,7 +610,6 @@ class StaffViewSet(BaseCompanyViewSet):
         return Staff.objects.none()
 
     def create(self, request, *args, **kwargs):
-        # Check permission
         if not request.user.has_permission('administration', 'create'):
             return custom_response(
                 False, 
@@ -498,6 +696,7 @@ class ProfileAPIView(APIView):
                 'user': UserProfileSerializer(user).data,
                 'staff_profile': StaffProfileSerializer(user.staff_profile).data if has_staff_profile else None,
                 'permissions': user.get_permissions(),
+                'permission_source': user.permission_source,
                 'company_info': CompanySerializer(user.company).data if hasattr(user, "company") and user.company else None
             }
 
@@ -537,6 +736,7 @@ class ProfileAPIView(APIView):
                     'user': UserProfileSerializer(user).data,
                     'staff_profile': StaffProfileSerializer(user.staff_profile).data if has_staff_profile else None,
                     'permissions': user.get_permissions(),
+                    'permission_source': user.permission_source,
                     'company_info': {
                         'id': user.company.id if user.company else None,
                         'name': user.company.name if user.company else None,
@@ -579,9 +779,11 @@ class UserPermissionsAPIView(APIView):
             user = request.user
             permissions_data = {
                 'role': user.role,
+                'permission_source': user.permission_source,
                 'is_superuser': user.is_superuser,
                 'is_staff': user.is_staff,
                 'permissions': user.get_permissions(),
+                'can_manage_users': user.can_manage_user(user),  # Check if can manage self (admin check)
                 'can_manage_company': user.role in [user.Role.SUPER_ADMIN, user.Role.ADMIN],
             }
             return custom_response(
@@ -600,15 +802,14 @@ class UserPermissionsAPIView(APIView):
             )
     
     def post(self, request):
-        """Check if user has specific permission"""
         try:
             module = request.data.get('module')
             action = request.data.get('action')
             
-            if not module or not action:
+            if not module:
                 return custom_response(
                     False, 
-                    "Module and action are required", 
+                    "Module is required", 
                     None, 
                     status.HTTP_400_BAD_REQUEST
                 )
@@ -618,7 +819,11 @@ class UserPermissionsAPIView(APIView):
             return custom_response(
                 True, 
                 "Permission check completed", 
-                {'has_permission': has_perm}, 
+                {
+                    'has_permission': has_perm,
+                    'module': module,
+                    'action': action or 'any'
+                }, 
                 status.HTTP_200_OK
             )
         except Exception as e:
@@ -640,9 +845,7 @@ class CompanyLogoUpdateAPIView(APIView):
 
     def patch(self, request, pk=None, *args, **kwargs):
         try:
-            # Determine target company
             if pk is not None:
-                # Only super admins can update arbitrary company by pk
                 if request.user.role != User.Role.SUPER_ADMIN:
                     return custom_response(
                         False, 
@@ -661,7 +864,6 @@ class CompanyLogoUpdateAPIView(APIView):
                         status.HTTP_400_BAD_REQUEST
                     )
 
-            # Validate file
             file = request.FILES.get('logo')
             if not file:
                 return custom_response(
@@ -671,7 +873,6 @@ class CompanyLogoUpdateAPIView(APIView):
                     status.HTTP_400_BAD_REQUEST
                 )
 
-            # Check file size (max 5MB)
             if file.size > 5 * 1024 * 1024:
                 return custom_response(
                     False, 
@@ -680,7 +881,6 @@ class CompanyLogoUpdateAPIView(APIView):
                     status.HTTP_400_BAD_REQUEST
                 )
 
-            # Check content type
             content_type = getattr(file, 'content_type', '') or ''
             if not content_type.startswith('image/'):
                 return custom_response(
@@ -690,7 +890,6 @@ class CompanyLogoUpdateAPIView(APIView):
                     status.HTTP_400_BAD_REQUEST
                 )
 
-            # Save logo
             company.logo = file
             company.save()
 
@@ -710,6 +909,54 @@ class CompanyLogoUpdateAPIView(APIView):
                 status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class ResetPermissionsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """
+        Reset user permissions to role defaults
+        Expected JSON: {"user_id": 123}
+        """
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response({
+                'status': False,
+                'message': 'user_id is required'
+            }, status=400)
+        
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({
+                'status': False,
+                'message': 'User not found'
+            }, status=404)
+        
+        # Check if current user has permission to reset permissions
+        if not request.user.has_permission('users', 'edit'):
+            return Response({
+                'status': False,
+                'message': 'You do not have permission to reset user permissions'
+            }, status=403)
+        
+        # Reset user permissions to role defaults
+        user.reset_to_role_permissions()
+        
+        return Response({
+            'status': True,
+            'message': 'Permissions reset to role defaults successfully',
+            'data': {
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'role': user.role,
+                    'permission_source': user.permission_source,
+                }
+            }
+        })
+
+
 
 class UserProfileImageUpdateAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -717,7 +964,6 @@ class UserProfileImageUpdateAPIView(APIView):
 
     def patch(self, request, pk=None, *args, **kwargs):
         try:
-            # Determine target user
             if pk is not None:
                 if request.user.role != User.Role.SUPER_ADMIN:
                     return custom_response(
@@ -739,7 +985,6 @@ class UserProfileImageUpdateAPIView(APIView):
                     status.HTTP_400_BAD_REQUEST
                 )
 
-            # Check file size (max 2MB)
             if file.size > 2 * 1024 * 1024:
                 return custom_response(
                     False, 
@@ -794,7 +1039,6 @@ def user_dashboard_stats(request):
                 status.HTTP_400_BAD_REQUEST
             )
 
-        # Import related models
         try:
             from sales.models import Sale
             from purchases.models import Purchase
@@ -812,13 +1056,11 @@ def user_dashboard_stats(request):
                 'due_sales': Sale.objects.filter(company=company, due_amount__gt=0).aggregate(total_due=Sum('due_amount'))['total_due'] or 0,
             }
             
-            # Convert Decimal to float for JSON serialization
             for key, value in stats.items():
                 if hasattr(value, '__float__'):
                     stats[key] = float(value)
                     
         except ImportError:
-            # If modules don't exist yet, return empty stats
             stats = {
                 'today_sales': 0,
                 'today_orders': 0,

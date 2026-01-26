@@ -4,7 +4,7 @@ from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import Group
-from .models import User, Company, StaffRole, Staff, RolePermission
+from .models import User, Company, StaffRole, Staff, UserPermission
 
 
 class SuperUserAdmin(admin.ModelAdmin):
@@ -157,59 +157,6 @@ class CompanyAdmin(SuperUserAdmin):
         return qs.filter(users=request.user)
 
 
-@admin.register(RolePermission)
-class RolePermissionAdmin(admin.ModelAdmin):
-    list_display = (
-        "staff_role",
-        "module",
-        "permission_badges",
-        "can_export"
-    )
-    
-    list_filter = (
-        "module",
-        "staff_role__role_type",
-        "staff_role__company"
-    )
-    
-    search_fields = (
-        "staff_role__name",
-        "module"
-    )
-    
-    fieldsets = (
-        ("Basic Information", {
-            "fields": ("staff_role", "module")
-        }),
-        ("Permissions", {
-            "fields": ("can_view", "can_create", "can_edit", "can_delete", "can_export")
-        }),
-    )
-    
-    def permission_badges(self, obj):
-        badges = []
-        if obj.can_view:
-            badges.append('<span style="background: #5bc0de; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px;">View</span>')
-        if obj.can_create:
-            badges.append('<span style="background: #5cb85c; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px;">Create</span>')
-        if obj.can_edit:
-            badges.append('<span style="background: #f0ad4e; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px;">Edit</span>')
-        if obj.can_delete:
-            badges.append('<span style="background: #d9534f; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px;">Delete</span>')
-        
-        return format_html(" ".join(badges))
-    permission_badges.short_description = "Permissions"
-    permission_badges.allow_tags = True
-    
-    def get_queryset(self, request):
-        qs = super().get_queryset(request).select_related('staff_role', 'staff_role__company')
-        if request.user.is_superuser:
-            return qs
-        if request.user.company:
-            return qs.filter(staff_role__company=request.user.company)
-        return qs.none()
-
-
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     fieldsets = (
@@ -219,6 +166,7 @@ class UserAdmin(BaseUserAdmin):
         ("Company & Role", {
             "fields": (
                 "role", 
+                "permission_source",
                 "company",
                 "phone",
                 "profile_picture",
@@ -231,7 +179,7 @@ class UserAdmin(BaseUserAdmin):
         }),
         ("Sales & Money Receipt Permissions", {
             "fields": (
-                "sales_view", "sales_create", "sales_edit", "sales_delete",
+                "sales_view", "sales_create", "pos_sales_create", "short_sales_create", "sales_edit", "sales_delete",
                 "money_receipt_view", "money_receipt_create", "money_receipt_edit", "money_receipt_delete",
             ),
             "classes": ("collapse",)
@@ -308,17 +256,20 @@ class UserAdmin(BaseUserAdmin):
         "email", 
         "full_name",
         "role", 
+        "permission_source_display",
         "company", 
         "is_staff", 
         "is_superuser",
         "is_active", 
         "is_verified",
         "last_login",
-        "permissions_summary"
+        "permissions_summary",
+        "custom_permissions_count"
     )
     
     list_filter = (
         "role", 
+        "permission_source",
         "company", 
         "is_staff", 
         "is_superuser",
@@ -337,6 +288,7 @@ class UserAdmin(BaseUserAdmin):
     )
     
     readonly_fields = (
+        "permission_source",
         "last_login", 
         "date_joined",
         "created_at",
@@ -355,37 +307,65 @@ class UserAdmin(BaseUserAdmin):
     full_name.short_description = "Full Name"
     full_name.admin_order_field = "first_name"
     
+    def permission_source_display(self, obj):
+        colors = {
+            'ROLE': '#5bc0de',
+            'CUSTOM': '#5cb85c',
+            'MIXED': '#f0ad4e'
+        }
+        color = colors.get(obj.permission_source, '#777')
+        return format_html(
+            '<span style="color: white; background: {}; padding: 3px 8px; border-radius: 10px; font-size: 11px;">{}</span>',
+            color,
+            obj.get_permission_source_display()
+        )
+    permission_source_display.short_description = "Permission Source"
+    permission_source_display.admin_order_field = "permission_source"
+    
+    def custom_permissions_count(self, obj):
+        count = obj.custom_permissions.filter(is_active=True).count()
+        if count > 0:
+            url = reverse("admin:core_userpermission_changelist") + f"?user__id__exact={obj.id}"
+            return format_html(
+                '<a href="{}" style="color: #5cb85c; font-weight: bold;">{} custom</a>',
+                url, count
+            )
+        return "-"
+    custom_permissions_count.short_description = "Custom Perms"
+    
     def permissions_summary(self, obj):
         if obj.is_superuser:
             return format_html('<span style="color: green; font-weight: bold; background: #e8f5e8; padding: 2px 8px; border-radius: 3px;">SUPERUSER</span>')
         
-        # Count modules with any permission
-        modules_with_perms = []
+        # Get permissions
+        perms = obj.get_permissions()
         
-        # Simplified check - just check main modules
-        if obj.can_access_dashboard:
-            modules_with_perms.append("Dashboard")
+        # Count active modules
+        active_modules = 0
+        for module, module_perms in perms.items():
+            if module == 'permission_source':
+                continue
+            if any(module_perms.values()):
+                active_modules += 1
         
-        # Check a few key modules
-        if obj.sales_view or obj.sales_create or obj.sales_edit or obj.sales_delete:
-            modules_with_perms.append("Sales")
-        
-        if obj.products_view or obj.products_create or obj.products_edit or obj.products_delete:
-            modules_with_perms.append("Products")
-        
-        if obj.customers_view or obj.customers_create or obj.customers_edit or obj.customers_delete:
-            modules_with_perms.append("Customers")
-        
-        if obj.reports_view or obj.reports_export:
-            modules_with_perms.append("Reports")
-        
-        if not modules_with_perms:
+        if active_modules == 0:
             return format_html('<span style="color: orange; background: #fff3cd; padding: 2px 8px; border-radius: 3px;">No Permissions</span>')
         
-        if len(modules_with_perms) <= 3:
-            return ", ".join(modules_with_perms)
-        else:
-            return format_html('<span style="color: blue; background: #e3f2fd; padding: 2px 8px; border-radius: 3px;">{} modules</span>', len(modules_with_perms))
+        # Show summary based on permission source
+        if obj.permission_source == 'ROLE':
+            color = '#5bc0de'
+            text = f'Role ({active_modules} modules)'
+        elif obj.permission_source == 'CUSTOM':
+            color = '#5cb85c'
+            text = f'Custom ({active_modules} modules)'
+        else:  # MIXED
+            color = '#f0ad4e'
+            text = f'Mixed ({active_modules} modules)'
+        
+        return format_html(
+            '<span style="color: white; background: {}; padding: 2px 8px; border-radius: 3px; font-size: 12px;">{}</span>',
+            color, text
+        )
     
     permissions_summary.short_description = "Permissions"
     permissions_summary.allow_tags = True
@@ -393,10 +373,128 @@ class UserAdmin(BaseUserAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if request.user.is_superuser:
-            return qs.select_related('company')
+            return qs.select_related('company').prefetch_related('custom_permissions')
         if request.user.company:
-            return qs.filter(company=request.user.company).select_related('company')
+            return qs.filter(company=request.user.company).select_related('company').prefetch_related('custom_permissions')
         return qs.none()
+    
+    # Add custom actions
+    actions = ['reset_to_role_permissions']
+    
+    def reset_to_role_permissions(self, request, queryset):
+        """Reset selected users to role permissions"""
+        for user in queryset:
+            user.reset_to_role_permissions()
+        self.message_user(request, f"{queryset.count()} users reset to role permissions.")
+    reset_to_role_permissions.short_description = "Reset to role permissions"
+
+
+@admin.register(UserPermission)
+class UserPermissionAdmin(admin.ModelAdmin):
+    list_display = (
+        "user_display",
+        "module_display",
+        "permission_badges",
+        "is_active",
+        "created_by_display",
+        "created_at"
+    )
+    
+    list_filter = (
+        "module",
+        "is_active",
+        "created_at",
+        "user__company"
+    )
+    
+    search_fields = (
+        "user__username",
+        "user__email",
+        "user__first_name",
+        "user__last_name",
+        "module"
+    )
+    
+    readonly_fields = ("created_at", "updated_at", "created_by")
+    
+    fieldsets = (
+        ("Basic Information", {
+            "fields": ("user", "module", "is_active")
+        }),
+        ("Permissions", {
+            "fields": (
+                ("can_view", "can_create", "can_edit", "can_delete"),
+                ("can_create_pos", "can_create_short", "can_export")
+            )
+        }),
+        ("Metadata", {
+            "fields": ("created_by", "created_at", "updated_at"),
+            "classes": ("collapse",)
+        })
+    )
+    
+    def user_display(self, obj):
+        name = obj.user.get_full_name() or obj.user.username
+        url = reverse("admin:core_user_change", args=[obj.user.id])
+        return format_html('<a href="{}">{}</a>', url, name)
+    user_display.short_description = "User"
+    user_display.admin_order_field = "user__username"
+    
+    def module_display(self, obj):
+        return obj.get_module_display()
+    module_display.short_description = "Module"
+    module_display.admin_order_field = "module"
+    
+    def permission_badges(self, obj):
+        badges = []
+        
+        # Basic permissions
+        if obj.can_view:
+            badges.append('<span style="background: #5bc0de; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">View</span>')
+        if obj.can_create:
+            badges.append('<span style="background: #5cb85c; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">Create</span>')
+        if obj.can_edit:
+            badges.append('<span style="background: #f0ad4e; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">Edit</span>')
+        if obj.can_delete:
+            badges.append('<span style="background: #d9534f; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">Delete</span>')
+        
+        # Special permissions
+        if obj.can_create_pos:
+            badges.append('<span style="background: #17a2b8; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">POS</span>')
+        if obj.can_create_short:
+            badges.append('<span style="background: #6f42c1; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">Short</span>')
+        if obj.can_export:
+            badges.append('<span style="background: #20c997; color: white; padding: 2px 6px; border-radius: 10px; font-size: 11px; margin: 1px;">Export</span>')
+        
+        if not badges:
+            return format_html('<span style="color: #999; font-style: italic;">No permissions</span>')
+        
+        return format_html(" ".join(badges))
+    permission_badges.short_description = "Permissions"
+    permission_badges.allow_tags = True
+    
+    def created_by_display(self, obj):
+        if obj.created_by:
+            name = obj.created_by.get_full_name() or obj.created_by.username
+            url = reverse("admin:core_user_change", args=[obj.created_by.id])
+            return format_html('<a href="{}">{}</a>', url, name)
+        return "-"
+    created_by_display.short_description = "Created By"
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request).select_related(
+            'user', 'user__company', 'created_by'
+        )
+        if request.user.is_superuser:
+            return qs
+        if request.user.company:
+            return qs.filter(user__company=request.user.company)
+        return qs.none()
+    
+    def save_model(self, request, obj, form, change):
+        if not change:  # Only set created_by on create
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(StaffRole)
@@ -405,9 +503,8 @@ class StaffRoleAdmin(admin.ModelAdmin):
         "name", 
         "role_type", 
         "company",
-        "permission_count",
-        "staff_count",
         "is_active",
+        "staff_count",
         "created_at"
     )
     
@@ -415,7 +512,7 @@ class StaffRoleAdmin(admin.ModelAdmin):
     
     search_fields = ("name", "description", "company__name")
     
-    readonly_fields = ("created_at", "updated_at", "permission_count", "staff_count")
+    readonly_fields = ("created_at", "updated_at", "staff_count")
     
     fieldsets = (
         ("Basic Information", {
@@ -429,7 +526,7 @@ class StaffRoleAdmin(admin.ModelAdmin):
             "classes": ("collapse",)
         }),
         ("Statistics", {
-            "fields": ("permission_count", "staff_count"),
+            "fields": ("staff_count",),
             "classes": ("collapse",)
         }),
         ("Metadata", {
@@ -437,12 +534,6 @@ class StaffRoleAdmin(admin.ModelAdmin):
             "classes": ("collapse",)
         })
     )
-    
-    def permission_count(self, obj):
-        count = obj.permissions.count()
-        url = reverse("admin:core_rolepermission_changelist") + f"?staff_role__id__exact={obj.id}"
-        return format_html('<a href="{}">{}</a>', url, count)
-    permission_count.short_description = "Permissions"
     
     def staff_count(self, obj):
         count = obj.staff_members.count()
@@ -598,11 +689,13 @@ class StaffAdmin(admin.ModelAdmin):
     def action_buttons(self, obj):
         edit_url = reverse("admin:core_staff_change", args=[obj.id])
         user_url = reverse("admin:core_user_change", args=[obj.user.id])
+        perms_url = reverse("admin:core_userpermission_changelist") + f"?user__id__exact={obj.user.id}"
         
         return format_html(
             '<a href="{}" class="button" style="padding: 2px 6px; background: #417690; color: white; text-decoration: none; border-radius: 3px; margin: 1px; font-size: 11px;">Edit Staff</a>'
-            '<a href="{}" class="button" style="padding: 2px 6px; background: #5a9c23; color: white; text-decoration: none; border-radius: 3px; margin: 1px; font-size: 11px;">Edit User</a>',
-            edit_url, user_url
+            '<a href="{}" class="button" style="padding: 2px 6px; background: #5a9c23; color: white; text-decoration: none; border-radius: 3px; margin: 1px; font-size: 11px;">Edit User</a>'
+            '<a href="{}" class="button" style="padding: 2px 6px; background: #8a6d3b; color: white; text-decoration: none; border-radius: 3px; margin: 1px; font-size: 11px;">Permissions</a>',
+            edit_url, user_url, perms_url
         )
     action_buttons.short_description = "Actions"
     action_buttons.allow_tags = True

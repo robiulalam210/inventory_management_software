@@ -22,7 +22,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, HttpRes
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
-from core.views import ProfileAPIView, UserPermissionsAPIView, user_dashboard_stats, ChangePasswordAPIView
+from core.views import ProfileAPIView, UserPermissionsAPIView, user_dashboard_stats, ChangePasswordAPIView, PermissionCheckView, UserPermissionManagementView   ,ResetPermissionsAPIView
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -88,10 +88,11 @@ urlpatterns = [
 
     path('profile/permissions/', UserPermissionsAPIView.as_view(), name='user-permissions'),
     path('dashboard/stats/', user_dashboard_stats, name='user-dashboard-stats'),
-  
 
-
-  
+  path('user-permissions/', UserPermissionsAPIView.as_view(), name='user_permissions'),
+    path('user-permissions/check/', PermissionCheckView.as_view(), name='permission_check'),
+    path('user-permissions/update/', UserPermissionManagementView.as_view(), name='update_permissions'),
+   path('user-permissions/reset/', ResetPermissionsAPIView.as_view(), name='reset_permissions'), 
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
     path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),
