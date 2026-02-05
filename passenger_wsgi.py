@@ -16,7 +16,7 @@ import sys
 import os
 
 # Project base directory
-project_home = '/home/meherinm/inventory'
+project_home = '/home/meherinm/inventoryapp'
 
 # Add project to system path
 if project_home not in sys.path:

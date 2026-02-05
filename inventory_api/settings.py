@@ -17,10 +17,8 @@ print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
 SECRET_KEY = "django-insecure-meherinmart-xyz-2024-secret-key-change-this-in-production"
 DEBUG = True  # Set False in production
 ALLOWED_HOSTS = [
-    'inventory.meherinmart.xyz',
-    'www.inventory.meherinmart.xyz',
-    'robi.meherinmart.xyz',
-    'www.robi.meherinmart.xyz',
+    'inventoryapp.meherinmart.xyz',
+    'www.inventoryapp.meherinmart.xyz',
     'localhost',
     '127.0.0.1',
     '10.0.2.2',
@@ -219,10 +217,8 @@ if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
     CORS_ALLOWED_ORIGINS = [
-        "https://inventory.meherinmart.xyz",
-        "https://www.inventory.meherinmart.xyz",
-         "https://robi.meherinmart.xyz",
-        "https://www.robi.meherinmart.xyz",
+        "https://inventoryapp.meherinmart.xyz",
+        "https://www.inventoryapp.meherinmart.xyz",
     ]
 
 # -----------------------------

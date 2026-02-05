@@ -105,16 +105,119 @@ class SourceSerializer(serializers.ModelSerializer):
 
 # serializers.py
 class PriceTierSerializer(serializers.ModelSerializer):
-    # Use IntegerField for product_sale_mode to ensure it's treated as ID
     product_sale_mode = serializers.IntegerField(write_only=True)
+    
+    # New fields for user input in sale mode units
+    min_quantity_sale_mode = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=3,
+        write_only=True,
+        required=False,
+        help_text="Minimum quantity in sale mode units (e.g., Dojon)"
+    )
+    max_quantity_sale_mode = serializers.DecimalField(
+        max_digits=12, 
+        decimal_places=3,
+        write_only=True,
+        required=False,
+        help_text="Maximum quantity in sale mode units (e.g., Dojon)"
+    )
+    
+    # Display fields
+    min_quantity_display = serializers.SerializerMethodField()
+    max_quantity_display = serializers.SerializerMethodField()
+    unit_info = serializers.SerializerMethodField()
     
     class Meta:
         model = PriceTier
-        fields = ['id', 'product_sale_mode', 'min_quantity', 'max_quantity', 'price', 'created_at', 'updated_at']
+        fields = [
+            'id', 'product_sale_mode', 
+            'min_quantity', 'max_quantity', 'price',
+            'min_quantity_sale_mode', 'max_quantity_sale_mode',  # For input
+            'min_quantity_display', 'max_quantity_display',  # For display
+            'unit_info',  # For display
+            'created_at', 'updated_at'
+        ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
+    def get_min_quantity_display(self, obj):
+        """Show min quantity in sale mode units"""
+        product_sale_mode = obj.product_sale_mode
+        if product_sale_mode and product_sale_mode.sale_mode:
+            conversion = product_sale_mode.sale_mode.conversion_factor
+            if conversion and conversion > 0:
+                min_in_sale_mode = obj.min_quantity / conversion
+                return f"{min_in_sale_mode:.2f} {product_sale_mode.sale_mode.name}"
+        return f"{obj.min_quantity}"
+    
+    def get_max_quantity_display(self, obj):
+        """Show max quantity in sale mode units"""
+        if not obj.max_quantity:
+            return "∞"
+        
+        product_sale_mode = obj.product_sale_mode
+        if product_sale_mode and product_sale_mode.sale_mode:
+            conversion = product_sale_mode.sale_mode.conversion_factor
+            if conversion and conversion > 0:
+                max_in_sale_mode = obj.max_quantity / conversion
+                return f"{max_in_sale_mode:.2f} {product_sale_mode.sale_mode.name}"
+        return f"{obj.max_quantity}"
+    
+    def get_unit_info(self, obj):
+        """Get unit information"""
+        product_sale_mode = obj.product_sale_mode
+        if product_sale_mode and product_sale_mode.sale_mode:
+            return {
+                'sale_mode_name': product_sale_mode.sale_mode.name,
+                'base_unit_name': product_sale_mode.sale_mode.base_unit.name,
+                'conversion_factor': float(product_sale_mode.sale_mode.conversion_factor),
+                'formula': f"1 {product_sale_mode.sale_mode.name} = {product_sale_mode.sale_mode.conversion_factor} {product_sale_mode.sale_mode.base_unit.name}"
+            }
+        return None
+    
+    def validate(self, data):
+        """Validate tier data"""
+        # Check if user provided sale mode units or base units
+        min_sale_mode = data.get('min_quantity_sale_mode')
+        max_sale_mode = data.get('max_quantity_sale_mode')
+        min_base = data.get('min_quantity')
+        max_base = data.get('max_quantity')
+        
+        # Get product sale mode for conversion
+        product_sale_mode_id = data.get('product_sale_mode')
+        if product_sale_mode_id:
+            try:
+                product_sale_mode = ProductSaleMode.objects.get(id=product_sale_mode_id)
+                conversion = product_sale_mode.sale_mode.conversion_factor
+                
+                # If user provided sale mode units, convert to base units
+                if min_sale_mode is not None:
+                    data['min_quantity'] = min_sale_mode * conversion
+                
+                if max_sale_mode is not None:
+                    if max_sale_mode:
+                        data['max_quantity'] = max_sale_mode * conversion
+                    else:
+                        data['max_quantity'] = None
+                
+            except ProductSaleMode.DoesNotExist:
+                pass
+        
+        # Validate min < max if both provided
+        if data.get('max_quantity') and data.get('min_quantity'):
+            if data['max_quantity'] <= data['min_quantity']:
+                raise serializers.ValidationError({
+                    'max_quantity': 'Maximum quantity must be greater than minimum quantity'
+                })
+        
+        return data
+    
     def create(self, validated_data):
-        """Create PriceTier instance"""
+        """Create PriceTier with proper conversion"""
+        # Remove sale mode unit fields
+        validated_data.pop('min_quantity_sale_mode', None)
+        validated_data.pop('max_quantity_sale_mode', None)
+        
         # Get the ProductSaleMode instance from ID
         product_sale_mode_id = validated_data.pop('product_sale_mode')
         try:
@@ -137,15 +240,6 @@ class PriceTierSerializer(serializers.ModelSerializer):
             product_sale_mode=product_sale_mode,
             **validated_data
         )
-    
-    def to_representation(self, instance):
-        """Custom representation for GET requests"""
-        representation = super().to_representation(instance)
-        # Add product_sale_mode_id for responses
-        representation['product_sale_mode'] = instance.product_sale_mode_id
-        return representation
-
-
 
 class ProductSaleModeSerializer(serializers.ModelSerializer):
     """Serializer for ProductSaleMode with tiers"""
@@ -179,8 +273,7 @@ class ProductSaleModeSerializer(serializers.ModelSerializer):
             'id', 'product_name', 'product_sku', 'sale_mode_name', 'sale_mode_code',
             'price_type', 'conversion_factor', 'base_unit_name', 'created_at', 'updated_at'
         ]
-
-
+        
 class ProductSaleModeNestedSerializer(serializers.ModelSerializer):
     """Serializer for ProductSaleMode when nested inside Product"""
     sale_mode_id = serializers.IntegerField(source='sale_mode.id', read_only=True)
@@ -198,15 +291,33 @@ class ProductSaleModeNestedSerializer(serializers.ModelSerializer):
     # Include tiers
     tiers = PriceTierSerializer(many=True, read_only=True)
     
+    # 🔥 FIXED: Change to DecimalField with proper source
+    effective_unit_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+        source='get_effective_unit_price_for_api'  # New property method
+    )
+    
+    effective_flat_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+        source='get_effective_flat_price_for_api'  # New property method
+    )
+    
     class Meta:
         model = ProductSaleMode
         fields = [
             'id', 'sale_mode_id', 'sale_mode_name', 'sale_mode_code',
             'price_type', 'unit_price', 'flat_price', 'conversion_factor',
             'base_unit_name', 'discount_type', 'discount_value', 'is_active',
-            'tiers',  # Include tiers
+            'tiers', 
+            'effective_unit_price', 'effective_flat_price',
             'created_at', 'updated_at'
         ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
 
 class SaleModeSerializer(serializers.ModelSerializer):
     base_unit_name = serializers.CharField(source='base_unit.name', read_only=True)

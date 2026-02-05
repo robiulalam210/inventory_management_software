@@ -48,22 +48,6 @@ class Category(models.Model):
         return self.name
 
 
-class Unit(models.Model):
-    name = models.CharField(max_length=60)
-    code = models.CharField(max_length=20, blank=True, null=True)
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="units")
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-    
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_unit')
-        ]
-
-    def __str__(self):
-        return self.name
-
-
 class Brand(models.Model):
     name = models.CharField(max_length=120)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="brands")
@@ -103,6 +87,22 @@ class Source(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_source')
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Unit(models.Model):
+    name = models.CharField(max_length=60)
+    code = models.CharField(max_length=20, blank=True, null=True)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="units")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_company_per_unit')
         ]
 
     def __str__(self):
@@ -288,7 +288,6 @@ class ProductSaleMode(models.Model):
 
 
 
-# models.py
 class PriceTier(models.Model):
     """Tier pricing for products"""
     
@@ -327,6 +326,9 @@ class PriceTier(models.Model):
     def __str__(self):
         max_qty = f" - {self.max_quantity}" if self.max_quantity else "+"
         return f"{self.min_quantity}{max_qty}: {self.price}"
+
+
+
 
 class Product(models.Model):
     DISCOUNT_TYPE_CHOICES = [

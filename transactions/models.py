@@ -5,6 +5,10 @@ from decimal import Decimal
 from core.models import Company
 from accounts.models import Account
 from django.conf import settings
+from purchases.models import Purchase
+from supplier_payment.model import SupplierPayment
+
+
 from django.db.models import Q  
 from django.db.models import F
 import random
@@ -86,12 +90,14 @@ class Transaction(models.Model):
     )
     
     supplier_payment = models.ForeignKey(
-        'supplier_payment.SupplierPayment',
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name='transactions'
-    )
-    
+    SupplierPayment,
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='transactions'
+)
+
+  
     # Extra
     description = models.TextField(blank=True, null=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
@@ -134,7 +140,7 @@ class Transaction(models.Model):
         super().save(*args, **kwargs)
 
         # DEBUG LOGGING
-        logger.info(f"💾 TRANSACTION SAVE:")
+        logger.info(f"TRANSACTION SAVE:")
         logger.info(f"  - ID: {self.id}")
         logger.info(f"  - No: {self.transaction_no}")
         logger.info(f"  - Company: {self.company.name if self.company else 'None'}")
@@ -145,10 +151,10 @@ class Transaction(models.Model):
 
         # Update account balance for completed non-opening transactions
         if is_new and self.status == 'completed' and not self.is_opening_balance:
-            logger.info(f"🔄 Updating account balance")
+            logger.info(f"Updating account balance")
             self._update_account_balance()
         else:
-            logger.info(f"⏸️  Skipping balance update")
+            logger.info(f" Skipping balance update")
 
     def _generate_transaction_no(self):
         """Generate unique transaction number that is company-specific in format: TXN-{company_id}-{sequential_number}"""
@@ -233,7 +239,7 @@ class Transaction(models.Model):
                 # CREDIT increases balance
                 new_balance = old_balance + self.amount
                 account.balance = new_balance
-                logger.info(f"💰 CREDIT: Account {account.name} balance updated from {old_balance} to {new_balance} (+{self.amount})")
+                logger.info(f" CREDIT: Account {account.name} balance updated from {old_balance} to {new_balance} (+{self.amount})")
                 
             elif self.transaction_type == 'debit':
                 # DEBIT decreases balance with proper validation
@@ -243,7 +249,7 @@ class Transaction(models.Model):
                         # Allow negative for opening balance setup
                         new_balance = old_balance - self.amount
                         account.balance = new_balance
-                        logger.warning(f"⚠️  DEBIT (Opening): Account {account.name} balance updated from {old_balance} to {new_balance} (-{self.amount}) - Negative balance allowed for opening")
+                        logger.warning(f" DEBIT (Opening): Account {account.name} balance updated from {old_balance} to {new_balance} (-{self.amount}) - Negative balance allowed for opening")
                     else:
                         # Regular debit transaction - insufficient funds
                         error_msg = f"Insufficient balance in account {account.name}. Available: {old_balance}, Required: {self.amount}"

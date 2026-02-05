@@ -182,9 +182,15 @@ class CompanyViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
 
-# --------------------------
+# -------------------------
 # User ViewSet
-# --------------------------
+# -------------------------
+# -------------------------
+# User ViewSet
+# -------------------------
+# -------------------------
+# User ViewSet
+# -------------------------
 class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
@@ -192,39 +198,36 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         
-        if user.role == User.Role.SUPER_ADMIN:
-            return User.objects.all()
-        elif user.role == User.Role.ADMIN:
-            if user.company:
-                return User.objects.filter(company=user.company)
-            else:
-                return User.objects.filter(id=user.id)
-        else:
-            # Regular users can only see their own profile
-            return User.objects.filter(id=user.id)
-
+        if not user.is_authenticated:
+            return User.objects.none()
+        
+        queryset = User.objects.all()
+        
+        if hasattr(user, 'company') and user.company:
+            return queryset.filter(company=user.company)
+        
+        return User.objects.none()
+        
     def list(self, request, *args, **kwargs):
-        """Override list to enforce permission"""
-        user = request.user
-
-        # STAFF or anyone without 'view' permission cannot see the list
-        if not user.has_permission('users', 'view'):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
             return custom_response(
-                False,
-                "You don't have permission to view users",
-                None,
-                status.HTTP_403_FORBIDDEN
+                success=True,
+                message=f"Found {len(page)} users",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
             )
         
-        queryset = self.filter_queryset(self.get_queryset())
         serializer = self.get_serializer(queryset, many=True)
         return custom_response(
-            True,
-            "Users fetched successfully",
-            serializer.data,
-            status.HTTP_200_OK
+            success=True,
+            message=f"Found {queryset.count()} users",
+            data=serializer.data,
+            status_code=status.HTTP_200_OK
         )
-
     def create(self, request, *args, **kwargs):
         user = request.user
         if not user.has_permission('users', 'create'):
@@ -771,69 +774,287 @@ class ProfileAPIView(APIView):
 # --------------------------
 # User Permissions
 # --------------------------
+
 class UserPermissionsAPIView(APIView):
+    """
+    Get user permissions with company context and check specific permissions
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        """
+        Get complete user permissions and company context
+        """
         try:
             user = request.user
+            
+            # Get company data
+            company_data = None
+            if user.company:
+                company_data = {
+                    'id': user.company.id,
+                    'name': user.company.name,
+                    'code': user.company.code if hasattr(user.company, 'code') else None,
+                    'is_active': user.company.is_active if hasattr(user.company, 'is_active') else True
+                }
+            
+            # Get user permissions using model method
+            permissions = user.get_permissions()
+            
+            # Determine if user can manage other users in their company
+            can_manage_company_users = self._can_manage_company_users(user)
+            
+            # Get user's data access scope
+            data_access_scope = self._get_data_access_scope(user)
+            
+            # Build response data
             permissions_data = {
-                'role': user.role,
-                'permission_source': user.permission_source,
-                'is_superuser': user.is_superuser,
-                'is_staff': user.is_staff,
-                'permissions': user.get_permissions(),
-                'can_manage_users': user.can_manage_user(user),  # Check if can manage self (admin check)
-                'can_manage_company': user.role in [user.Role.SUPER_ADMIN, user.Role.ADMIN],
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'role': user.role,
+                    'role_display': user.get_role_display(),
+                    'is_superuser': user.is_superuser,
+                    'is_staff': user.is_staff,
+                    'is_active': user.is_active,
+                    'is_verified': user.is_verified,
+                },
+                'company': company_data,
+                'permissions': permissions,
+                'capabilities': {
+                    'can_manage_users': can_manage_company_users,
+                    'can_manage_company': user.role in [user.Role.SUPER_ADMIN, user.Role.ADMIN],
+                    'can_access_dashboard': user.can_access_dashboard,
+                    'can_export_reports': user.reports_export,
+                    'data_access_scope': data_access_scope,
+                },
+                'system': {
+                    'permission_source': user.permission_source,
+                    'has_company': user.company is not None,
+                    'can_access_other_companies': user.role == user.Role.SUPER_ADMIN,
+                }
             }
+            
             return custom_response(
-                True, 
-                "User permissions fetched successfully", 
-                permissions_data, 
-                status.HTTP_200_OK
+                success=True, 
+                message="User permissions fetched successfully", 
+                data=permissions_data, 
+                status_code=status.HTTP_200_OK
             )
+            
         except Exception as e:
-            logger.error(f"Error fetching user permissions: {str(e)}")
+            logger.error(f"Error fetching user permissions: {str(e)}", exc_info=True)
             return custom_response(
-                False, 
-                "Error fetching permissions", 
-                None, 
-                status.HTTP_500_INTERNAL_SERVER_ERROR
+                success=False, 
+                message="Error fetching permissions", 
+                data=None, 
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     def post(self, request):
+        """
+        Check specific permission with company context
+        """
         try:
             module = request.data.get('module')
             action = request.data.get('action')
+            target_company_id = request.data.get('company_id')
             
             if not module:
                 return custom_response(
-                    False, 
-                    "Module is required", 
-                    None, 
-                    status.HTTP_400_BAD_REQUEST
+                    success=False, 
+                    message="Module is required", 
+                    data=None, 
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            has_perm = request.user.has_permission(module, action)
+            user = request.user
+            
+            # Check company access first
+            company_access_result = self._check_company_access(user, target_company_id)
+            if not company_access_result['has_access']:
+                return custom_response(
+                    success=True,  # Permission check completed, just no access
+                    message="Permission check completed", 
+                    data={
+                        'has_permission': False,
+                        'module': module,
+                        'action': action or 'view',
+                        'reason': company_access_result['reason'],
+                        'company_id': target_company_id,
+                        'user_company_id': user.company.id if user.company else None
+                    }, 
+                    status_code=status.HTTP_200_OK
+                )
+            
+            # Check module permission
+            has_perm = user.has_permission(module, action)
+            
+            # Additional company-based checks for data modules
+            if has_perm and self._is_data_module(module):
+                if not user.company:
+                    has_perm = False
+                elif user.role == user.Role.VIEWER and action not in ['view', 'export']:
+                    has_perm = False
             
             return custom_response(
-                True, 
-                "Permission check completed", 
-                {
+                success=True, 
+                message="Permission check completed", 
+                data={
                     'has_permission': has_perm,
                     'module': module,
-                    'action': action or 'any'
+                    'action': action or 'view',
+                    'role': user.role,
+                    'permission_source': user.permission_source,
+                    'company_id': user.company.id if user.company else None,
+                    'company_name': user.company.name if user.company else None,
+                    'validation': {
+                        'company_check_passed': True,
+                        'role_check_passed': True,
+                        'permission_check_passed': has_perm
+                    }
                 }, 
-                status.HTTP_200_OK
+                status_code=status.HTTP_200_OK
             )
+            
         except Exception as e:
-            logger.error(f"Error checking permission: {str(e)}")
+            logger.error(f"Error checking permission: {str(e)}", exc_info=True)
             return custom_response(
-                False, 
-                "Error checking permission", 
-                None, 
-                status.HTTP_500_INTERNAL_SERVER_ERROR
+                success=False, 
+                message="Error checking permission", 
+                data=None, 
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _can_manage_company_users(self, user):
+        """
+        Check if user can manage users in their company
+        """
+        if not user.company:
+            return False
+        
+        if user.role == user.Role.SUPER_ADMIN:
+            return True
+        
+        if user.role == user.Role.ADMIN:
+            return True
+        
+        # Check permission from model
+        return user.users_create or user.users_edit or user.users_delete
+    
+    def _get_data_access_scope(self, user):
+        """
+        Determine user's data access scope based on role and permissions
+        """
+        if not user.company:
+            return {
+                'scope': 'global' if user.role == user.Role.SUPER_ADMIN else 'none',
+                'description': 'Super Admin access' if user.role == user.Role.SUPER_ADMIN else 'No company assigned'
+            }
+        
+        scope_mapping = {
+            user.Role.SUPER_ADMIN: {
+                'scope': 'global',
+                'description': 'Can access all companies and all data',
+                'can_cross_company': True,
+                'can_manage_all': True
+            },
+            user.Role.ADMIN: {
+                'scope': 'company_all',
+                'description': f'Can access all data in {user.company.name}',
+                'can_cross_company': False,
+                'can_manage_all': True
+            },
+            user.Role.MANAGER: {
+                'scope': 'company_restricted',
+                'description': f'Can access most data in {user.company.name}',
+                'can_cross_company': False,
+                'can_manage_all': False
+            },
+            user.Role.STAFF: {
+                'scope': 'company_limited',
+                'description': f'Limited access in {user.company.name}',
+                'can_cross_company': False,
+                'can_manage_all': False
+            },
+            user.Role.VIEWER: {
+                'scope': 'company_view_only',
+                'description': f'View-only access in {user.company.name}',
+                'can_cross_company': False,
+                'can_manage_all': False
+            }
+        }
+        
+        scope = scope_mapping.get(user.role, {
+            'scope': 'unknown',
+            'description': 'Unknown role',
+            'can_cross_company': False,
+            'can_manage_all': False
+        })
+        
+        # Add permission-based restrictions
+        if not user.can_access_dashboard:
+            scope['dashboard_access'] = False
+            scope['description'] += ' (No dashboard access)'
+        
+        return scope
+    
+    def _check_company_access(self, user, target_company_id=None):
+        """
+        Check if user has access to target company
+        """
+        user_company_id = user.company.id if user.company else None
+        
+        # Super Admin can access any company
+        if user.role == user.Role.SUPER_ADMIN:
+            return {
+                'has_access': True,
+                'reason': 'Super Admin access'
+            }
+        
+        # If user has no company, they can't access any company data
+        if not user.company:
+            return {
+                'has_access': False,
+                'reason': 'User is not assigned to any company'
+            }
+        
+        # If no target company specified, user can access their own company
+        if not target_company_id:
+            return {
+                'has_access': True,
+                'reason': 'Accessing own company'
+            }
+        
+        # Check if trying to access own company
+        target_company_id = str(target_company_id)
+        user_company_id_str = str(user_company_id)
+        
+        if target_company_id == user_company_id_str:
+            return {
+                'has_access': True,
+                'reason': 'Accessing own company'
+            }
+        else:
+            return {
+                'has_access': False,
+                'reason': f'Cannot access other companies. User belongs to company {user_company_id}'
+            }
+    
+    def _is_data_module(self, module):
+        """
+        Check if module contains company-specific data
+        """
+        data_modules = [
+            'sales', 'money_receipt', 'purchases', 'products',
+            'accounts', 'customers', 'suppliers', 'expense',
+            'return', 'reports'
+        ]
+        return module in data_modules
+
 
 
 # --------------------------

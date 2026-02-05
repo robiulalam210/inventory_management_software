@@ -9,145 +9,152 @@ from core.pagination import CustomPageNumberPagination
 from .models import Customer
 from .serializers import CustomerSerializer
 from decimal import Decimal
-
+from rest_framework.exceptions import PermissionDenied, NotFound
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 logger = logging.getLogger(__name__)
 
+
+
 class CustomerViewSet(viewsets.ModelViewSet):
-    queryset = Customer.objects.all()
+    """
+    Customer ViewSet with complete company-based isolation
+    """
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = CustomPageNumberPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     
     search_fields = ['name', 'phone', 'email', 'address']
-    filterset_fields = ['is_active', 'special_customer']  # Added special_customer
-    ordering_fields = ['name', 'client_no', 'date_created', 'special_customer']
+    filterset_fields = ['is_active', 'special_customer']
+    ordering_fields = ['name', 'client_no', 'date_created', 'special_customer', 
+                      'net_due_amount', 'advance_balance']
     ordering = ['client_no']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        
-        # Filter by company
+        """
+        Base queryset filtered by company
+        """
         user = self.request.user
-        if hasattr(user, 'company') and user.company:
-            queryset = queryset.filter(company=user.company)
-        else:
+        if not hasattr(user, 'company') or not user.company:
+            # Return empty queryset for users without company
             return Customer.objects.none()
         
-        # Apply custom filters
-        queryset = self.apply_custom_filters(queryset)
+        return Customer.objects.filter(company=user.company)
+
+    def _get_optimized_queryset(self):
+        """
+        Get queryset with optimized annotations for list/detail views
+        """
+        queryset = self.get_queryset()
         
-        # Optimize queryset with annotations for better performance
-        queryset = queryset.annotate(
-            sales_count=Count('sale', distinct=True),
-            total_paid_amount=Sum('sale__paid_amount'),
-            total_grand_total=Sum('sale__grand_total'),
-            basic_due_amount=Case(
-                When(
-                    total_grand_total__isnull=True,
-                    then=Value(0)
+        # Only apply expensive annotations for list/detail actions
+        if self.action in ['list', 'retrieve', 'summary', 'special_summary']:
+            queryset = queryset.annotate(
+                sales_count=Count('sale', distinct=True),
+                total_paid_amount=Sum('sale__paid_amount'),
+                total_grand_total=Sum('sale__grand_total'),
+                basic_due_amount=Case(
+                    When(
+                        total_grand_total__isnull=True,
+                        then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
+                    ),
+                    default=F('total_grand_total') - F('total_paid_amount'),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
                 ),
-                default=F('total_grand_total') - F('total_paid_amount'),
-                output_field=DecimalField(max_digits=12, decimal_places=2)
-            ),
-            net_due_amount=Case(
-                When(
-                    advance_balance__gte=F('basic_due_amount'),
-                    then=Value(0)
+                net_due_amount=Case(
+                    When(
+                        advance_balance__gte=F('total_grand_total') - F('total_paid_amount'),
+                        then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
+                    ),
+                    default=F('total_grand_total') - F('total_paid_amount') - F('advance_balance'),
+                    output_field=DecimalField(max_digits=12, decimal_places=2)
                 ),
-                default=F('basic_due_amount') - F('advance_balance'),
-                output_field=DecimalField(max_digits=12, decimal_places=2)
-            ),
-            remaining_advance=Case(
-                When(
-                    advance_balance__gt=F('basic_due_amount'),
-                    then=F('advance_balance') - F('basic_due_amount')
-                ),
-                default=Value(0),
-                output_field=DecimalField(max_digits=12, decimal_places=2)
+                remaining_advance=Case(
+                    When(
+                        advance_balance__gt=F('total_grand_total') - F('total_paid_amount'),
+                        then=F('advance_balance') - (F('total_grand_total') - F('total_paid_amount'))
+                    ),
+                    default=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
+                )
             )
-        )
         
         return queryset
 
-    def apply_custom_filters(self, queryset):
+    def get_object(self):
+        """
+        Secure object retrieval with company check
+        """
+        try:
+            # Use base queryset without annotations for performance
+            queryset = self.get_queryset()
+            
+            # Perform the lookup filtering
+            lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+            filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+            obj = queryset.get(**filter_kwargs)
+            
+            # Check permissions
+            self.check_object_permissions(self.request, obj)
+            
+            return obj
+            
+        except Customer.DoesNotExist:
+            raise NotFound("Customer not found")
+        except Exception as e:
+            logger.error(f"Error retrieving customer: {str(e)}")
+            raise
+
+    def filter_queryset(self, queryset):
+        """
+        Apply all filters including custom filters
+        """
+        # Apply DRF filters first
+        for backend in list(self.filter_backends):
+            queryset = backend().filter_queryset(self.request, queryset, self)
+        
+        # Apply custom filters
+        queryset = self._apply_custom_filters(queryset)
+        
+        return queryset
+
+    def _apply_custom_filters(self, queryset):
+        """
+        Apply additional custom filters not covered by DjangoFilterBackend
+        """
         params = self.request.GET
         
-        # Search filter
-        search = params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(phone__icontains=search) |
-                Q(email__icontains=search) |
-                Q(address__icontains=search)
-            )
-        
-        # Status filter
-        status_filter = params.get('status')
-        if status_filter:
-            if status_filter.lower() == 'active':
-                queryset = queryset.filter(is_active=True)
-            elif status_filter.lower() == 'inactive':
-                queryset = queryset.filter(is_active=False)
-        
-        # Customer type filter (special/regular)
-        customer_type = params.get('customer_type')
-        if customer_type:
-            if customer_type.lower() == 'special':
-                queryset = queryset.filter(special_customer=True)
-            elif customer_type.lower() == 'regular':
-                queryset = queryset.filter(special_customer=False)
-        
-        # Special customer filter (alternative)
-        is_special = params.get('is_special')
-        if is_special is not None:
-            is_special_bool = is_special.lower() in ['true', '1', 'yes']
-            queryset = queryset.filter(special_customer=is_special_bool)
-        
-        # Amount type filter (advance/due/paid)
+        # Amount type filter (advance/due/paid) - only for list views
         amount_type = params.get('amount_type')
-        if amount_type:
-            if amount_type.lower() == 'advance':
+        if amount_type and self.action == 'list':
+            amount_type = amount_type.lower()
+            
+            if amount_type == 'advance':
                 queryset = queryset.filter(advance_balance__gt=0)
-            elif amount_type.lower() == 'due':
-                # Customers with net due amount > 0
+            elif amount_type == 'due':
+                # Customers with due amount > 0
                 queryset = queryset.annotate(
-                    temp_net_due=Case(
+                    temp_due=Case(
                         When(
-                            total_grand_total__isnull=True,
-                            then=Value(0)
+                            sale__isnull=True,
+                            then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
                         ),
-                        default=Case(
-                            When(
-                                advance_balance__gte=F('total_grand_total') - F('total_paid_amount'),
-                                then=Value(0)
-                            ),
-                            default=F('total_grand_total') - F('total_paid_amount') - F('advance_balance'),
-                            output_field=DecimalField(max_digits=12, decimal_places=2)
-                        ),
+                        default=F('sale__grand_total') - F('sale__paid_amount') - F('advance_balance'),
                         output_field=DecimalField(max_digits=12, decimal_places=2)
                     )
-                ).filter(temp_net_due__gt=0)
-            elif amount_type.lower() == 'paid':
+                ).filter(temp_due__gt=0).distinct()
+            elif amount_type == 'paid':
                 # Customers with no due and no advance
                 queryset = queryset.annotate(
-                    temp_net_due=Case(
+                    temp_due=Case(
                         When(
-                            total_grand_total__isnull=True,
-                            then=Value(0)
+                            sale__isnull=True,
+                            then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
                         ),
-                        default=Case(
-                            When(
-                                advance_balance__gte=F('total_grand_total') - F('total_paid_amount'),
-                                then=Value(0)
-                            ),
-                            default=F('total_grand_total') - F('total_paid_amount') - F('advance_balance'),
-                            output_field=DecimalField(max_digits=12, decimal_places=2)
-                        ),
+                        default=F('sale__grand_total') - F('sale__paid_amount') - F('advance_balance'),
                         output_field=DecimalField(max_digits=12, decimal_places=2)
                     )
-                ).filter(temp_net_due=0, advance_balance=0)
+                ).filter(temp_due=0, advance_balance=0).distinct()
         
         # Date range filter
         start_date = params.get('start_date')
@@ -158,8 +165,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
         return queryset
 
     def list(self, request, *args, **kwargs):
+        """
+        List customers with optimized queryset
+        """
         try:
-            queryset = self.filter_queryset(self.get_queryset())
+            # Use optimized queryset with annotations
+            queryset = self._get_optimized_queryset()
+            queryset = self.filter_queryset(queryset)
             
             # Apply pagination
             page = self.paginate_queryset(queryset)
@@ -177,17 +189,260 @@ class CustomerViewSet(viewsets.ModelViewSet):
             )
             
         except Exception as e:
-            logger.error(f"Error in CustomerViewSet list: {str(e)}")
+            logger.error(f"Error in CustomerViewSet list: {str(e)}", exc_info=True)
             return custom_response(
                 success=False,
-                message=f"Error fetching customers: {str(e)}",
+                message="Error fetching customers",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Get single customer with detailed information
+        """
+        try:
+            instance = self.get_object()
+            serializer = self.get_serializer(instance)
+            return custom_response(
+                success=True,
+                message="Customer details fetched successfully",
+                data=serializer.data,
+                status_code=status.HTTP_200_OK
+            )
+        except NotFound:
+            return custom_response(
+                success=False,
+                message="Customer not found",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving customer: {str(e)}")
+            return custom_response(
+                success=False,
+                message="Error fetching customer details",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new customer with company validation
+        """
+        from rest_framework import serializers
+        
+        with transaction.atomic():
+            serializer = self.get_serializer(data=request.data)
+            try:
+                serializer.is_valid(raise_exception=True)
+                
+                # Get user's company
+                user = request.user
+                if not hasattr(user, 'company') or not user.company:
+                    return custom_response(
+                        success=False,
+                        message="User must belong to a company",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                company = user.company
+                
+                # Check for duplicate phone number in same company
+                phone = serializer.validated_data.get('phone')
+                if phone and Customer.objects.filter(company=company, phone=phone).exists():
+                    return custom_response(
+                        success=False,
+                        message="A customer with this phone number already exists in your company",
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # Create customer
+                instance = serializer.save(
+                    company=company, 
+                    created_by=user
+                )
+                
+                logger.info(f"Customer created: {instance.name} (ID: {instance.id}) by user {user.username}")
+                
+                return custom_response(
+                    success=True,
+                    message="Customer created successfully",
+                    data=self.get_serializer(instance).data,
+                    status_code=status.HTTP_201_CREATED
+                )
+                
+            except serializers.ValidationError as e:
+                # Extract first error message
+                if isinstance(e.detail, dict):
+                    first_field = next(iter(e.detail.values()))
+                    if isinstance(first_field, list):
+                        message = str(first_field[0])
+                    else:
+                        message = str(first_field)
+                else:
+                    message = str(e.detail)
+                
+                return custom_response(
+                    success=False,
+                    message=message,
+                    data=e.detail,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                logger.error(f"Error creating customer: {str(e)}", exc_info=True)
+                return custom_response(
+                    success=False,
+                    message="Error creating customer",
+                    data=None,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update customer with company validation
+        """
+        with transaction.atomic():
+            try:
+                instance = self.get_object()
+                serializer = self.get_serializer(instance, data=request.data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                
+                # Check for duplicate phone number (excluding current instance)
+                phone = serializer.validated_data.get('phone')
+                if phone:
+                    if Customer.objects.filter(
+                        company=instance.company, 
+                        phone=phone
+                    ).exclude(id=instance.id).exists():
+                        return custom_response(
+                            success=False,
+                            message="A customer with this phone number already exists",
+                            data=None,
+                            status_code=status.HTTP_400_BAD_REQUEST
+                        )
+                
+                # Update customer
+                self.perform_update(serializer)
+                
+                logger.info(f"Customer updated: {instance.name} (ID: {instance.id}) by user {request.user.username}")
+                
+                return custom_response(
+                    success=True,
+                    message="Customer updated successfully",
+                    data=serializer.data,
+                    status_code=status.HTTP_200_OK
+                )
+                
+            except NotFound:
+                return custom_response(
+                    success=False,
+                    message="Customer not found",
+                    data=None,
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            except Exception as e:
+                logger.error(f"Error updating customer: {str(e)}", exc_info=True)
+                return custom_response(
+                    success=False,
+                    message="Error updating customer",
+                    data=None,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete or deactivate customer
+        """
+        try:
+            instance = self.get_object()
+            customer_name = instance.name
+            
+            # Check for related records
+            has_related = False
+            blocking_relationships = []
+            
+            # Check sales
+            try:
+                from sales.models import Sale
+                sales_count = Sale.objects.filter(customer=instance, company=instance.company).count()
+                if sales_count > 0:
+                    has_related = True
+                    blocking_relationships.append(f"{sales_count} sales")
+            except ImportError:
+                pass
+            
+            # Check money receipts
+            try:
+                from money_receipts.models import MoneyReceipt
+                receipts_count = MoneyReceipt.objects.filter(customer=instance, company=instance.company).count()
+                if receipts_count > 0:
+                    has_related = True
+                    blocking_relationships.append(f"{receipts_count} money receipts")
+            except ImportError:
+                pass
+            
+            if has_related:
+                # Deactivate instead of delete
+                instance.is_active = False
+                instance.save(update_fields=['is_active'])
+                
+                message = f"Customer has related records ({', '.join(blocking_relationships)}). Marked as inactive."
+                
+                logger.info(f"Customer deactivated: {customer_name} (ID: {instance.id}) due to related records")
+                
+                return custom_response(
+                    success=True,
+                    message=message,
+                    data={
+                        'customer_id': instance.id,
+                        'customer_name': customer_name,
+                        'is_active': False,
+                        'action': 'deactivated'
+                    },
+                    status_code=status.HTTP_200_OK
+                )
+            else:
+                # Delete the customer
+                self.perform_destroy(instance)
+                
+                logger.info(f"Customer deleted: {customer_name} (ID: {instance.id})")
+                
+                return custom_response(
+                    success=True,
+                    message=f"Customer '{customer_name}' deleted successfully",
+                    data={
+                        'customer_id': instance.id,
+                        'customer_name': customer_name,
+                        'action': 'deleted'
+                    },
+                    status_code=status.HTTP_200_OK
+                )
+                
+        except NotFound:
+            return custom_response(
+                success=False,
+                message="Customer not found",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error deleting customer: {str(e)}", exc_info=True)
+            return custom_response(
+                success=False,
+                message="Error deleting customer",
+                data=None,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # Custom actions with proper company filtering
+    # All detail=True actions automatically get company check via get_object()
     
     @action(detail=True, methods=['get'])
     def payment_details(self, request, pk=None):
-        """Get detailed payment information for a customer including advance, due, paid"""
+        """Get detailed payment information for a customer"""
         try:
             customer = self.get_object()
             breakdown = customer.get_detailed_payment_breakdown()
@@ -198,11 +453,18 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 data=breakdown,
                 status_code=status.HTTP_200_OK
             )
-        except Exception as e:
-            logger.error(f"Error fetching payment details for customer {pk}: {str(e)}")
+        except NotFound:
             return custom_response(
                 success=False,
-                message=f"Error fetching payment details: {str(e)}",
+                message="Customer not found",
+                data=None,
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error fetching payment details: {str(e)}")
+            return custom_response(
+                success=False,
+                message="Error fetching payment details",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -211,30 +473,25 @@ class CustomerViewSet(viewsets.ModelViewSet):
     def summary(self, request):
         """Get summary of all customers' payment status"""
         try:
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            # Calculate totals using annotations
-            total_customers = queryset.count()
+            queryset = self._get_optimized_queryset()
+            queryset = self.filter_queryset(queryset)
             
             # Calculate summary from annotations
             summary_data = queryset.aggregate(
+                total_customers=Count('id'),
                 total_advance=Sum('advance_balance'),
                 total_net_due=Sum('net_due_amount'),
                 total_paid=Sum('total_paid_amount'),
                 total_grand=Sum('total_grand_total')
             )
             
-            # Count by status
+            # Count by status using annotations
             advance_count = queryset.filter(advance_balance__gt=0).count()
             due_count = queryset.filter(net_due_amount__gt=0).count()
             paid_count = queryset.filter(net_due_amount=0, advance_balance=0).count()
             
-            # Count special customers
-            special_count = queryset.filter(special_customer=True).count()
-            regular_count = queryset.filter(special_customer=False).count()
-            
             summary = {
-                'total_customers': total_customers,
+                'total_customers': summary_data['total_customers'],
                 'financial_summary': {
                     'total_advance': float(summary_data['total_advance'] or 0),
                     'total_due': float(summary_data['total_net_due'] or 0),
@@ -245,10 +502,6 @@ class CustomerViewSet(viewsets.ModelViewSet):
                     'advance_customers': advance_count,
                     'due_customers': due_count,
                     'paid_customers': paid_count
-                },
-                'customer_type_counts': {
-                    'special_customers': special_count,
-                    'regular_customers': regular_count
                 }
             }
             
@@ -262,593 +515,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
             logger.error(f"Error fetching customer summary: {str(e)}")
             return custom_response(
                 success=False,
-                message=f"Error fetching customer summary: {str(e)}",
+                message="Error fetching customer summary",
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-    @action(detail=True, methods=['post'])
-    def add_advance(self, request, pk=None):
-        """Add advance payment to customer"""
-        try:
-            customer = self.get_object()
-            amount = request.data.get('amount')
-            
-            if not amount or float(amount) <= 0:
-                return custom_response(
-                    success=False,
-                    message="Amount must be greater than 0",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            new_balance = customer.add_advance_direct(float(amount), created_by=request.user)
-            
-            return custom_response(
-                success=True,
-                message=f"Advance of {amount} added successfully",
-                data={
-                    'customer_id': customer.id,
-                    'customer_name': customer.name,
-                    'new_advance_balance': float(new_balance),
-                    'added_amount': float(amount)
-                },
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            logger.error(f"Error adding advance to customer {pk}: {str(e)}")
-            return custom_response(
-                success=False,
-                message=f"Error adding advance: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=True, methods=['post'])
-    def use_advance(self, request, pk=None):
-        """Use advance balance for payment"""
-        try:
-            customer = self.get_object()
-            amount = request.data.get('amount')
-            
-            if not amount or float(amount) <= 0:
-                return custom_response(
-                    success=False,
-                    message="Amount must be greater than 0",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            new_balance = customer.use_advance_payment(float(amount))
-            
-            return custom_response(
-                success=True,
-                message=f"Advance of {amount} used successfully",
-                data={
-                    'customer_id': customer.id,
-                    'customer_name': customer.name,
-                    'new_advance_balance': float(new_balance),
-                    'used_amount': float(amount)
-                },
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            logger.error(f"Error using advance for customer {pk}: {str(e)}")
-            return custom_response(
-                success=False,
-                message=f"Error using advance: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=True, methods=['post'])
-    def sync_advance(self, request, pk=None):
-        """Sync customer's advance balance with actual receipts and sales"""
-        try:
-            customer = self.get_object()
-            sync_result = customer.sync_advance_balance()
-            
-            if sync_result['synced']:
-                message = f"Advance balance synced from {sync_result['old_value']} to {sync_result['new_value']}"
-            else:
-                message = f"Advance balance is already correct: {sync_result['current_value']}"
-            
-            return custom_response(
-                success=True,
-                message=message,
-                data=sync_result,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            logger.error(f"Error syncing advance for customer {pk}: {str(e)}")
-            return custom_response(
-                success=False,
-                message=f"Error syncing advance: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=True, methods=['post'])
-    def toggle_special(self, request, pk=None):
-        """Toggle special customer status"""
-        try:
-            customer = self.get_object()
-            action_type = request.data.get('action', 'toggle')
-            
-            if action_type == 'set_true':
-                customer.special_customer = True
-                message = "Customer marked as special"
-            elif action_type == 'set_false':
-                customer.special_customer = False
-                message = "Customer marked as regular"
-            else:  # toggle
-                customer.special_customer = not customer.special_customer
-                message = f"Customer marked as {'special' if customer.special_customer else 'regular'}"
-            
-            customer.save(update_fields=['special_customer'])
-            
-            return custom_response(
-                success=True,
-                message=message,
-                data={
-                    'customer_id': customer.id,
-                    'customer_name': customer.name,
-                    'is_special': customer.special_customer,
-                    'customer_type': 'Special' if customer.special_customer else 'Regular'
-                },
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            logger.error(f"Error toggling special status for customer {pk}: {str(e)}")
-            return custom_response(
-                success=False,
-                message=f"Error updating customer status: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=False, methods=['get'])
-    def special_summary(self, request):
-        """Get summary of special customers"""
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            # Count special vs regular customers
-            total_customers = queryset.count()
-            special_customers = queryset.filter(special_customer=True).count()
-            regular_customers = queryset.filter(special_customer=False).count()
-            
-            # Calculate financial summary for special customers
-            special_summary = queryset.filter(special_customer=True).aggregate(
-                total_advance=Sum('advance_balance'),
-                total_sales=Sum('total_grand_total'),
-                total_paid=Sum('total_paid_amount'),
-                total_due=Sum('net_due_amount')
-            )
-            
-            # Calculate financial summary for regular customers
-            regular_summary = queryset.filter(special_customer=False).aggregate(
-                total_advance=Sum('advance_balance'),
-                total_sales=Sum('total_grand_total'),
-                total_paid=Sum('total_paid_amount'),
-                total_due=Sum('net_due_amount')
-            )
-            
-            summary = {
-                'total_customers': total_customers,
-                'customer_types': {
-                    'special': {
-                        'count': special_customers,
-                        'percentage': round((special_customers / total_customers * 100) if total_customers > 0 else 0, 2),
-                        'financials': {
-                            'total_advance': float(special_summary['total_advance'] or 0),
-                            'total_sales': float(special_summary['total_sales'] or 0),
-                            'total_paid': float(special_summary['total_paid'] or 0),
-                            'total_due': float(special_summary['total_due'] or 0)
-                        }
-                    },
-                    'regular': {
-                        'count': regular_customers,
-                        'percentage': round((regular_customers / total_customers * 100) if total_customers > 0 else 0, 2),
-                        'financials': {
-                            'total_advance': float(regular_summary['total_advance'] or 0),
-                            'total_sales': float(regular_summary['total_sales'] or 0),
-                            'total_paid': float(regular_summary['total_paid'] or 0),
-                            'total_due': float(regular_summary['total_due'] or 0)
-                        }
-                    }
-                }
-            }
-            
-            return custom_response(
-                success=True,
-                message="Special customer summary fetched successfully",
-                data=summary,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            logger.error(f"Error fetching special customer summary: {str(e)}")
-            return custom_response(
-                success=False,
-                message=f"Error fetching special customer summary: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @action(detail=True, methods=['get'])
-    def check_receipts(self, request, pk=None):
-        """Debug endpoint to check all money receipts for a customer"""
-        try:
-            customer = self.get_object()
-            
-            try:
-                from money_receipts.models import MoneyReceipt
-                
-                # Get all money receipts for this customer
-                all_receipts = MoneyReceipt.objects.filter(
-                    customer=customer,
-                    company=customer.company
-                )
-                
-                receipts_data = []
-                for receipt in all_receipts:
-                    receipt_info = {
-                        'id': receipt.id,
-                        'receipt_no': receipt.receipt_no,
-                        'amount': float(receipt.amount) if receipt.amount else 0,
-                        'payment_date': receipt.payment_date,
-                        'customer_id': receipt.customer_id,
-                        'company_id': receipt.company_id,
-                        'payment_type': receipt.payment_type if hasattr(receipt, 'payment_type') else None,
-                        'specific_invoice': receipt.specific_invoice if hasattr(receipt, 'specific_invoice') else None,
-                        'sale_id': receipt.sale_id if hasattr(receipt, 'sale') and receipt.sale else None,
-                        'sale_invoice_no': receipt.sale_invoice_no if hasattr(receipt, 'sale_invoice_no') else None,
-                    }
-                    
-                    # Check for advance-related fields
-                    if hasattr(receipt, 'is_advance_payment'):
-                        receipt_info['is_advance_payment'] = receipt.is_advance_payment
-                    if hasattr(receipt, 'advance_amount'):
-                        receipt_info['advance_amount'] = float(receipt.advance_amount) if receipt.advance_amount else 0
-                    
-                    # Determine if it should be treated as advance using the new logic
-                    is_advance, advance_type = customer.is_advance_receipt(receipt)
-                    receipt_info['should_be_advance'] = is_advance
-                    receipt_info['advance_type'] = advance_type
-                    
-                    receipts_data.append(receipt_info)
-                
-                # Check customer's sales
-                from sales.models import Sale
-                sales = Sale.objects.filter(customer=customer, company=customer.company)
-                sales_data = []
-                for sale in sales:
-                    sales_data.append({
-                        'id': sale.id,
-                        'invoice_no': sale.invoice_no,
-                        'grand_total': float(sale.grand_total),
-                        'paid_amount': float(sale.paid_amount),
-                        'due_amount': float(sale.due_amount),
-                        'overpayment': float(max(Decimal('0'), sale.paid_amount - sale.grand_total))
-                    })
-                
-                # Calculate what advance should be
-                sales_overpayment = max(0.0, sum(s['paid_amount'] for s in sales_data) - sum(s['grand_total'] for s in sales_data))
-                advance_receipts_total = sum(r['amount'] for r in receipts_data if r['should_be_advance'])
-                total_advance_should_be = sales_overpayment + advance_receipts_total
-                
-                return custom_response(
-                    success=True,
-                    message="Money receipts and sales checked",
-                    data={
-                        'customer_id': customer.id,
-                        'customer_name': customer.name,
-                        'is_special_customer': customer.special_customer,
-                        'stored_advance_balance': float(customer.advance_balance),
-                        'total_money_receipts': len(receipts_data),
-                        'money_receipts': receipts_data,
-                        'advance_receipts': [r for r in receipts_data if r['should_be_advance']],
-                        'non_advance_receipts': [r for r in receipts_data if not r['should_be_advance']],
-                        'total_sales': len(sales_data),
-                        'sales': sales_data,
-                        'calculated_advance': {
-                            'sales_overpayment': sales_overpayment,
-                            'advance_receipts_total': advance_receipts_total,
-                            'total_advance_should_be': total_advance_should_be
-                        },
-                        'advance_logic': {
-                            'rules': [
-                                'Rule 1: is_advance_payment = True',
-                                'Rule 2: advance_amount > 0',
-                                'Rule 3: payment_type = "advance"',
-                                'Rule 4: payment_type = "overall" and no sale linked',
-                                'Rule 5: No sale linked (generic payment)'
-                            ]
-                        }
-                    },
-                    status_code=status.HTTP_200_OK
-                )
-                
-            except ImportError as e:
-                return custom_response(
-                    success=False,
-                    message=f"Cannot import MoneyReceipt model: {str(e)}",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-                
-        except Exception as e:
-            logger.error(f"Error checking receipts for customer {pk}: {str(e)}")
-            return custom_response(
-                success=False,
-                message=f"Error checking receipts: {str(e)}",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def create(self, request, *args, **kwargs):
-        from rest_framework import serializers
-        
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            user = self.request.user
-            company = getattr(user, 'company', None)
-
-            if not company:
-                return custom_response(
-                    success=False,
-                    message="User must belong to a company.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Check for duplicate phone number
-            phone = serializer.validated_data.get('phone')
-            if phone and Customer.objects.filter(company=company, phone=phone).exists():
-                return custom_response(
-                    success=False,
-                    message="A customer with this phone number already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-
-            instance = serializer.save(company=company, created_by=user)
-            return custom_response(
-                success=True,
-                message="Customer created successfully.",
-                data=self.get_serializer(instance).data,
-                status_code=status.HTTP_201_CREATED
-            )
-        except serializers.ValidationError as e:
-            # Safely get the first error message
-            if isinstance(e.detail, list) and e.detail:
-                message = str(e.detail[0])
-            elif isinstance(e.detail, dict) and e.detail:
-                # Get first field error
-                first_field = next(iter(e.detail.values()))
-                if isinstance(first_field, list) and first_field:
-                    message = str(first_field[0])
-                else:
-                    message = str(first_field)
-            else:
-                message = str(e.detail)
-            
-            return custom_response(
-                success=False,
-                message=message,
-                data=e.detail,
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def update(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            
-            # Check for duplicate phone number (excluding current instance)
-            phone = serializer.validated_data.get('phone')
-            if phone and Customer.objects.filter(company=instance.company, phone=phone).exclude(id=instance.id).exists():
-                return custom_response(
-                    success=False,
-                    message="A customer with this phone number already exists.",
-                    data=None,
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            
-            self.perform_update(serializer)
-            return custom_response(
-                success=True,
-                message="Customer updated successfully.",
-                data=serializer.data,
-                status_code=status.HTTP_200_OK
-            )
-        except Exception as e:
-            return custom_response(
-                success=False,
-                message=str(e),
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def destroy(self, request, *args, **kwargs):
-        """
-        Delete a customer - Only allow if no related records exist
-        """
-        try:
-            instance = self.get_object()
-            customer_name = instance.name
-            
-            # Check all possible relationships that might prevent deletion
-            blocking_relationships = []
-            
-            def check_relationship(relationship_name, check_function):
-                """Helper function to check relationships safely"""
-                try:
-                    count = check_function()
-                    if count > 0:
-                        blocking_relationships.append(f"{count} {relationship_name}")
-                    return count
-                except Exception as e:
-                    logger.debug(f"Could not check {relationship_name}: {e}")
-                    return 0
-            
-            # 1. Check sales
-            sales_count = check_relationship("sales", lambda: 
-                getattr(instance, 'sales').count() if hasattr(instance, 'sales') else
-                getattr(instance, 'sale_set').count() if hasattr(instance, 'sale_set') else 0
-            )
-            
-            # 2. Check money receipts
-            money_receipts_count = check_relationship("money receipts", lambda: 
-                getattr(instance, 'money_receipts').count() if hasattr(instance, 'money_receipts') else
-                getattr(instance, 'moneyreceipt_set').count() if hasattr(instance, 'moneyreceipt_set') else 0
-            )
-            
-            # 3. Direct database queries for common models
-            # Sales
-            if sales_count == 0:
-                try:
-                    from sales.models import Sale
-                    sales_count = check_relationship("sales", 
-                        lambda: Sale.objects.filter(customer=instance).count()
-                    )
-                except ImportError:
-                    pass
-            
-            # Money Receipts
-            if money_receipts_count == 0:
-                try:
-                    from money_receipts.models import MoneyReceipt
-                    money_receipts_count = check_relationship("money receipts", 
-                        lambda: MoneyReceipt.objects.filter(customer=instance).count()
-                    )
-                except ImportError:
-                    pass
-            
-            # 4. Check other possible customer relationships
-            # Due Collections
-            try:
-                from due_collections.models import DueCollection
-                check_relationship("due collections",
-                    lambda: DueCollection.objects.filter(customer=instance).count()
-                )
-            except ImportError:
-                pass
-            
-            # Invoices
-            try:
-                from invoices.models import Invoice
-                check_relationship("invoices",
-                    lambda: Invoice.objects.filter(customer=instance).count()
-                )
-            except ImportError:
-                pass
-            
-            # Customer Payments
-            try:
-                from customer_payments.models import CustomerPayment
-                check_relationship("customer payments",
-                    lambda: CustomerPayment.objects.filter(customer=instance).count()
-                )
-            except ImportError:
-                pass
-            
-            # Customer Statements
-            try:
-                from accounting.models import CustomerStatement
-                check_relationship("customer statements",
-                    lambda: CustomerStatement.objects.filter(customer=instance).count()
-                )
-            except ImportError:
-                pass
-            
-            # Customer Ledger
-            try:
-                from ledger.models import CustomerLedger
-                check_relationship("ledger entries",
-                    lambda: CustomerLedger.objects.filter(customer=instance).count()
-                )
-            except ImportError:
-                pass
-            
-            # 5. Generic check using Django's related objects
-            try:
-                for related_object in instance._meta.related_objects:
-                    related_name = related_object.get_accessor_name()
-                    try:
-                        related_manager = getattr(instance, related_name)
-                        if hasattr(related_manager, 'count'):
-                            count = related_manager.count()
-                            if count > 0:
-                                # Only include if not already counted and it's a meaningful relationship
-                                rel_name = related_name.replace('_set', '').replace('_', ' ')
-                                if (not any(rel_name in rel for rel in blocking_relationships) and 
-                                    any(keyword in related_name for keyword in ['sale', 'receipt', 'payment', 'invoice', 'due', 'ledger'])):
-                                    blocking_relationships.append(f"{count} {rel_name}")
-                    except Exception as e:
-                        logger.debug(f"Could not check related object {related_name}: {e}")
-            except Exception as e:
-                logger.debug(f"Error checking generic related objects: {e}")
-            
-            # If any blocking relationships exist, mark as inactive instead of deleting
-            if blocking_relationships:
-                instance.is_active = False
-                instance.save(update_fields=['is_active'])
-                
-                # Create detailed message
-                relationships_text = ", ".join(blocking_relationships)
-                message = f"Customer cannot be deleted as it has transaction history ({relationships_text}). It has been marked as inactive instead."
-                
-                logger.warning(f"Customer deletion blocked for '{customer_name}'. Reasons: {blocking_relationships}")
-                
-                return custom_response(
-                    success=True,
-                    message=message,
-                    data={
-                        'is_active': instance.is_active,
-                        'deletion_blocked': True,
-                        'blocking_relationships': blocking_relationships,
-                        'customer_id': instance.id,
-                        'customer_name': customer_name,
-                        'special_customer': instance.special_customer
-                    },
-                    status_code=status.HTTP_200_OK
-                )
-            
-            # If no blocking relationships, proceed with actual deletion
-            self.perform_destroy(instance)
-            
-            logger.info(f"Customer deleted successfully: {customer_name} (ID: {instance.id})")
-            
-            return custom_response(
-                success=True,
-                message=f"Customer '{customer_name}' deleted successfully.",
-                data={
-                    'deletion_successful': True,
-                    'customer_name': customer_name
-                },
-                status_code=status.HTTP_200_OK
-            )
-                
-        except Exception as e:
-            logger.error(f"Error deleting customer: {str(e)}", exc_info=True)
-            return custom_response(
-                success=False,
-                message="Internal server error",
-                data=None,
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
 class CustomerNonPaginationViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
