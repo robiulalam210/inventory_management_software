@@ -68,13 +68,7 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class UnitSerializer(serializers.ModelSerializer):
-    company = serializers.PrimaryKeyRelatedField(read_only=True)
-    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
-    
-    class Meta:
-        model = Unit
-        fields = '__all__'
+
 
 
 class BrandSerializer(serializers.ModelSerializer):
@@ -103,6 +97,14 @@ class SourceSerializer(serializers.ModelSerializer):
         model = Source
         fields = '__all__'
 
+        
+class UnitSerializer(serializers.ModelSerializer):
+    company = serializers.PrimaryKeyRelatedField(read_only=True)
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    
+    class Meta:
+        model = Unit
+        fields = '__all__'
 # serializers.py
 class PriceTierSerializer(serializers.ModelSerializer):
     product_sale_mode = serializers.IntegerField(write_only=True)
@@ -519,8 +521,10 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     
     category = serializers.PrimaryKeyRelatedField(
         queryset=Category.objects.all(),
-        required=True
+       required=False,         # Change required=True to required=False
+    allow_null=True         # Add allow_null=True
     )
+
     unit = serializers.PrimaryKeyRelatedField(
         queryset=Unit.objects.all(),
         required=True
