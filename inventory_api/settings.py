@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'accounts',
     'reports',
     'expenses',
+    'income',
     'customers',
     'suppliers',
     'money_receipts',
