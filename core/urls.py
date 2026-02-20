@@ -100,6 +100,7 @@ urlpatterns = [
     path('reports/', include('reports.urls')),
 
     path('expenses/', include('expenses.urls')),
+    path('income/', include('income.urls')),
     
     # FIXED: Use the imported function directly, not via views.
     path('due/', get_due_sales, name='due-sales'),  # This creates /api/due/
