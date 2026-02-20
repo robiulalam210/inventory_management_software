@@ -76,6 +76,7 @@ class Transaction(models.Model):
         null=True, blank=True, 
         related_name='transactions'
     )
+    income = models.ForeignKey('income.Income', on_delete=models.SET_NULL, null=True, blank=True, related_name='transactions')
     expense = models.ForeignKey(
         'expenses.Expense', 
         on_delete=models.SET_NULL, 

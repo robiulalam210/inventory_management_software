@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from core.utils import custom_response
 from .models import Income, IncomeHead
-from .serializers import IncomeSerializer, IncomeHeadSerializer
+from .serializers import IncomeSerializer, IncomeHeadSerializer, IncomeCreateSerializer
 
 class IncomeHeadListCreateView(APIView):
     permission_classes = [IsAuthenticated]
@@ -65,6 +65,7 @@ class IncomeListView(APIView):
         company = getattr(request.user, 'company', None)
         if not company:
             return custom_response(False, "User has no associated company.", None, status.HTTP_400_BAD_REQUEST)
+        # Pagination/filtering: add as needed
         incomes = Income.objects.filter(company=company)
         serializer = IncomeSerializer(incomes, many=True)
         return custom_response(True, "Income fetched successfully.", serializer.data, status.HTTP_200_OK)
@@ -75,7 +76,7 @@ class IncomeListView(APIView):
             return custom_response(False, "User has no associated company.", None, status.HTTP_400_BAD_REQUEST)
         data = request.data.copy()
         data['company'] = company.id
-        serializer = IncomeSerializer(data=data, context={'request': request})
+        serializer = IncomeCreateSerializer(data=data, context={'request': request})
         if serializer.is_valid():
             income = serializer.save(created_by=request.user)
             return custom_response(True, "Income created successfully.", IncomeSerializer(income).data, status.HTTP_201_CREATED)
