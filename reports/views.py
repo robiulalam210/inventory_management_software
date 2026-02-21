@@ -14,6 +14,12 @@ from purchases.models import Purchase, PurchaseItem
 from returns.models import SalesReturn, PurchaseReturn, BadStock,SalesReturnItem, PurchaseReturnItem
 from products.models import Product
 from expenses.models import Expense
+from core.utils import custom_response
+from django.db.models import Sum, Count, F, FloatField, Value, DecimalField
+from django.db.models.functions import Coalesce
+from django.db.models.expressions import ExpressionWrapper
+from django.db.models import Q
+from income.models import Income
 # Add this import at the TOP of the file (with other imports)
 from django.db.models import F, Sum, Avg, Count, Q, FloatField, Value
 from django.db.models.functions import Coalesce  # Coalesce is in functions module
@@ -1819,18 +1825,13 @@ class BadStockReportView(BaseReportView):
 
 
 
-
-
 class DashboardSummaryView(BaseReportView):
     @method_decorator(cache_page(300))
     def get(self, request):
         try:
             company = self.get_company(request)
-            
-            # Get date range from request with proper defaults
             date_filter = request.GET.get('dateFilter', 'current_day')
             
-            # Calculate date range based on filter
             today = timezone.now().date()
             if date_filter == 'current_day':
                 start_date = today
@@ -1839,60 +1840,46 @@ class DashboardSummaryView(BaseReportView):
                 start_date = today.replace(day=1)
                 end_date = today
             elif date_filter == 'lifeTime':
-                # For lifetime, use a very early date
                 start_date = datetime(2020, 1, 1).date()
                 end_date = today
             else:
                 start_date = today
                 end_date = today
 
-            print(f"=== DASHBOARD DEBUG ===")
-            print(f"Date filter: {date_filter}, Range: {start_date} to {end_date}")
-            print(f"Company ID: {company.id}")
-
-            # IMPORTANT: Convert dates to datetimes for universal compatibility
             start_datetime = datetime.combine(start_date, datetime.min.time())
             end_datetime = datetime.combine(end_date, datetime.max.time())
 
-            # ===== SALES CALCULATIONS =====
-            # ALWAYS use __gte and __lte to avoid __date__range issues
+            # --- SALES ---
             sales_query = Sale.objects.filter(
-                company=company, 
+                company=company,
                 sale_date__gte=start_datetime,
                 sale_date__lte=end_datetime
             )
-            
             today_sales = sales_query.aggregate(
                 total=Sum('grand_total'),
                 count=Count('id'),
                 total_due=Sum('due_amount')
             )
-
-            # Sale items - use the same date range - FIXED: Use quantity instead of sale_quantity
             today_sales_quantity = SaleItem.objects.filter(
                 sale__company=company,
                 sale__sale_date__gte=start_datetime,
                 sale__sale_date__lte=end_datetime
             ).aggregate(
-                total_quantity=Sum('quantity'),       # CHANGED: quantity field
+                total_quantity=Sum('quantity'),
                 total_base_quantity=Sum('base_quantity')
             )
-
-            # Calculate profit - FIXED: Use base_quantity for profit calculation
             sale_items = SaleItem.objects.filter(
                 sale__company=company,
                 sale__sale_date__gte=start_datetime,
                 sale__sale_date__lte=end_datetime
             ).select_related('product')
-            
             total_profit = Decimal('0.00')
             for item in sale_items:
                 purchase_price = item.product.purchase_price if item.product and item.product.purchase_price else Decimal('0.00')
-                # Use base_quantity for profit calculation
                 profit_per_item = (Decimal(str(item.unit_price)) - purchase_price) * Decimal(str(item.base_quantity))
                 total_profit += profit_per_item
 
-            # ===== SALES RETURNS =====
+            # --- SALES RETURNS ---
             try:
                 today_sales_returns = SalesReturn.objects.filter(
                     company=company,
@@ -1902,8 +1889,6 @@ class DashboardSummaryView(BaseReportView):
                     total_amount=Sum('return_amount'),
                     count=Count('id')
                 )
-                
-                # Get sales return quantity
                 today_sales_return_quantity = SalesReturnItem.objects.filter(
                     sales_return__company=company,
                     sales_return__return_date__gte=start_datetime,
@@ -1912,24 +1897,20 @@ class DashboardSummaryView(BaseReportView):
                     total_quantity=Sum('quantity')
                 )
             except Exception as e:
-                print(f"Sales return error: {e}")
                 today_sales_returns = {'total_amount': 0, 'count': 0}
                 today_sales_return_quantity = {'total_quantity': 0}
 
-            # ===== PURCHASE CALCULATIONS =====
+            # --- PURCHASES ---
             purchases_query = Purchase.objects.filter(
                 company=company,
                 purchase_date__gte=start_datetime,
                 purchase_date__lte=end_datetime
             )
-            
             today_purchases = purchases_query.aggregate(
                 total=Sum('grand_total'),
                 count=Count('id'),
                 total_due=Sum('due_amount')
             )
-
-            # Purchase items
             today_purchases_quantity = PurchaseItem.objects.filter(
                 purchase__company=company,
                 purchase__purchase_date__gte=start_datetime,
@@ -1938,7 +1919,7 @@ class DashboardSummaryView(BaseReportView):
                 total_quantity=Sum('qty')
             )
 
-            # ===== PURCHASE RETURNS =====
+            # --- PURCHASE RETURNS ---
             try:
                 today_purchase_returns = PurchaseReturn.objects.filter(
                     company=company,
@@ -1948,7 +1929,6 @@ class DashboardSummaryView(BaseReportView):
                     total_amount=Sum('return_amount'),
                     count=Count('id')
                 )
-                
                 today_purchase_return_quantity = PurchaseReturnItem.objects.filter(
                     purchase_return__company=company,
                     purchase_return__return_date__gte=start_datetime,
@@ -1957,11 +1937,10 @@ class DashboardSummaryView(BaseReportView):
                     total_quantity=Sum('qty')
                 )
             except Exception as e:
-                print(f"Purchase return error: {e}")
                 today_purchase_returns = {'total_amount': 0, 'count': 0}
                 today_purchase_return_quantity = {'total_quantity': 0}
 
-            # ===== EXPENSES =====
+            # --- EXPENSES ---
             today_expenses = Expense.objects.filter(
                 company=company,
                 expense_date__gte=start_datetime,
@@ -1971,102 +1950,65 @@ class DashboardSummaryView(BaseReportView):
                 count=Count('id')
             )
 
-            # ===== DEBUG OUTPUT =====
-            print(f"\n=== METRICS DEBUG ===")
-            print(f"Sales - Total: {today_sales['total']}, Count: {today_sales['count']}, Due: {today_sales['total_due']}")
-            print(f"Sales Quantity: {today_sales_quantity['total_quantity']}")
-            print(f"Sales Base Quantity: {today_sales_quantity['total_base_quantity']}")
-            print(f"Sales Profit: {total_profit}")
+            # --- INCOMES ---
+            today_incomes = Income.objects.filter(
+                company=company,
+                income_date__gte=start_datetime,
+                income_date__lte=end_datetime
+            ).aggregate(
+                total=Sum('amount'),
+                count=Count('id')
+            )
 
-            # ===== FINANCIAL CALCULATIONS =====
-            sales_total = float(today_sales['total'] or 0)
-            sales_due = float(today_sales['total_due'] or 0)
-            sales_returns_total = float(today_sales_returns['total_amount'] or 0)
-            
-            purchases_total = float(today_purchases['total'] or 0)
-            purchases_due = float(today_purchases['total_due'] or 0)
-            purchase_returns_total = float(today_purchase_returns['total_amount'] or 0)
-            
-            expenses_total = float(today_expenses['total'] or 0)
-
-            sales_net_amount = sales_total - sales_due
-            purchases_net_amount = purchases_total - purchases_due
-            
-            net_sales_after_returns = sales_total - sales_returns_total
-            net_purchases_after_returns = purchases_total - purchase_returns_total
-            
-            gross_profit = float(total_profit)
-            net_profit = gross_profit - expenses_total
-            
-            cash_inflows = sales_net_amount
-            cash_outflows = purchases_net_amount + expenses_total
-            operating_cash_flow = cash_inflows - cash_outflows
-
-            profit_margin = 0
-            if sales_total > 0:
-                profit_margin = (gross_profit / sales_total) * 100
-
-            # ===== STOCK ALERTS =====
+            # --- STOCK ALERTS ---
             low_stock_count = Product.objects.filter(
                 company=company,
                 stock_qty__lte=F('alert_quantity'),
                 stock_qty__gt=0
             ).count()
-            
             out_of_stock_count = Product.objects.filter(
                 company=company,
                 stock_qty=0
             ).count()
 
-            # ===== RECENT ACTIVITIES =====
-            recent_sales = Sale.objects.filter(
-                company=company
-            ).select_related('customer').order_by('-sale_date')[:5]
-            
+            # --- RECENT ACTIVITIES ---
+            # Sales (head not needed), Purchases, Expenses/Incomes (head may be None)
+            recent_sales = Sale.objects.filter(company=company).select_related('customer').order_by('-sale_date')[:5]
             recent_sales_data = []
             for sale in recent_sales:
                 sale_quantity_agg = SaleItem.objects.filter(sale=sale).aggregate(
-                    total_quantity=Sum('quantity'),       # CHANGED
+                    total_quantity=Sum('quantity'),
                     total_base_quantity=Sum('base_quantity')
                 )
-                
-                # Handle date format
                 date_str = sale.sale_date
                 if date_str:
                     if hasattr(date_str, 'date'):
                         date_str = date_str.date().isoformat()
                     else:
                         date_str = date_str.isoformat()
-                
                 recent_sales_data.append({
                     'invoice_no': sale.invoice_no,
                     'customer': sale.customer.name if sale.customer else "Walk-in",
                     'amount': float(sale.grand_total or 0),
                     'due_amount': float(sale.due_amount or 0),
-                    'quantity': sale_quantity_agg['total_quantity'] or 0,      # CHANGED
+                    'quantity': sale_quantity_agg['total_quantity'] or 0,
                     'base_quantity': sale_quantity_agg['total_base_quantity'] or 0,
-                    'sale_quantity': sale_quantity_agg['total_quantity'] or 0, # For backward compatibility
+                    'sale_quantity': sale_quantity_agg['total_quantity'] or 0,
                     'date': date_str
                 })
 
-            recent_purchases = Purchase.objects.filter(
-                company=company
-            ).select_related('supplier').order_by('-purchase_date')[:5]
-            
+            recent_purchases = Purchase.objects.filter(company=company).select_related('supplier').order_by('-purchase_date')[:5]
             recent_purchases_data = []
             for purchase in recent_purchases:
                 purchase_quantity = PurchaseItem.objects.filter(purchase=purchase).aggregate(
                     total_quantity=Sum('qty')
                 )['total_quantity'] or 0
-                
-                # Handle date format
                 date_str = purchase.purchase_date
                 if date_str:
                     if hasattr(date_str, 'date'):
                         date_str = date_str.date().isoformat()
                     else:
                         date_str = date_str.isoformat()
-                
                 recent_purchases_data.append({
                     'invoice_no': purchase.invoice_no,
                     'supplier': purchase.supplier.name if purchase.supplier else "Unknown",
@@ -2076,14 +2018,69 @@ class DashboardSummaryView(BaseReportView):
                     'date': date_str
                 })
 
-            # ===== FINAL RESPONSE DATA =====
+            recent_expenses = Expense.objects.filter(
+                company=company,
+                expense_date__gte=start_datetime,
+                expense_date__lte=end_datetime
+            ).select_related('head', 'account').order_by('-expense_date')[:5]
+            recent_expenses_data = []
+            for expense in recent_expenses:
+                recent_expenses_data.append({
+                    'invoice_no': expense.invoice_number,
+                    'head': expense.head.name if expense.head else "",
+                    'amount': float(expense.amount or 0),
+                    'account': expense.account.name if expense.account else "",
+                    'expense_date': expense.expense_date.isoformat() if expense.expense_date else "",
+                    'note': expense.note,
+                })
+
+            recent_incomes = Income.objects.filter(
+                company=company,
+                income_date__gte=start_datetime,
+                income_date__lte=end_datetime
+            ).select_related('head', 'account').order_by('-income_date')[:5]
+            recent_incomes_data = []
+            for income in recent_incomes:
+                recent_incomes_data.append({
+                    'invoice_no': income.invoice_number,
+                    'head': income.head.name if income.head else "",
+                    'amount': float(income.amount or 0),
+                    'account': income.account.name if income.account else "",
+                    'income_date': income.income_date.isoformat() if income.income_date else "",
+                    'note': income.note,
+                })
+
+            # --- FINANCIAL CALCULATIONS ---
+            sales_total = float(today_sales['total'] or 0)
+            sales_due = float(today_sales['total_due'] or 0)
+            sales_returns_total = float(today_sales_returns['total_amount'] or 0)
+            purchases_total = float(today_purchases['total'] or 0)
+            purchases_due = float(today_purchases['total_due'] or 0)
+            purchase_returns_total = float(today_purchase_returns['total_amount'] or 0)
+            expenses_total = float(today_expenses['total'] or 0)
+            incomes_total = float(today_incomes['total'] or 0)
+
+            sales_net_amount = sales_total - sales_due
+            purchases_net_amount = purchases_total - purchases_due
+            net_sales_after_returns = sales_total - sales_returns_total
+            net_purchases_after_returns = purchases_total - purchase_returns_total
+            gross_profit = float(total_profit)
+            net_profit = gross_profit - expenses_total
+            net_profit_with_incomes = net_profit + incomes_total  # PRO: Profit including incomes!
+            cash_inflows = sales_net_amount + incomes_total
+            cash_outflows = purchases_net_amount + expenses_total
+            operating_cash_flow = cash_inflows - cash_outflows
+            profit_margin = 0
+            if sales_total > 0:
+                profit_margin = (gross_profit / sales_total) * 100
+
             dashboard_data = {
                 'today_metrics': {
                     'sales': {
                         'total': sales_total,
                         'count': today_sales['count'] or 0,
-                        'quantity': today_sales_quantity['total_quantity'] or 0,         # CHANGED
-                        'sale_quantity': today_sales_quantity['total_quantity'] or 0,    # For backward compatibility
+                        'quantity': today_sales_quantity['total_quantity'] or 0,
+                        'sale_quantity': today_sales_quantity['total_quantity'] or 0,
                         'base_quantity': today_sales_quantity['total_base_quantity'] or 0,
                         'total_due': sales_due,
                         'net_total': sales_net_amount
@@ -2108,11 +2105,16 @@ class DashboardSummaryView(BaseReportView):
                     'expenses': {
                         'total': expenses_total,
                         'count': today_expenses['count'] or 0
+                    },
+                    'incomes': {
+                        'total': incomes_total,
+                        'count': today_incomes['count'] or 0
                     }
                 },
                 'profit_loss': {
                     'gross_profit': gross_profit,
                     'net_profit': net_profit,
+                    'net_profit_with_incomes': net_profit_with_incomes,
                     'profit_margin': round(profit_margin, 2)
                 },
                 'financial_summary': {
@@ -2124,7 +2126,8 @@ class DashboardSummaryView(BaseReportView):
                     'cash_components': {
                         'cash_in': cash_inflows,
                         'cash_out_purchases': purchases_net_amount,
-                        'cash_out_expenses': expenses_total
+                        'cash_out_expenses': expenses_total,
+                        'cash_out_incomes': incomes_total
                     }
                 },
                 'stock_alerts': {
@@ -2133,7 +2136,9 @@ class DashboardSummaryView(BaseReportView):
                 },
                 'recent_activities': {
                     'sales': recent_sales_data,
-                    'purchases': recent_purchases_data
+                    'purchases': recent_purchases_data,
+                    'expenses': recent_expenses_data,
+                    'incomes': recent_incomes_data
                 },
                 'date_filter_info': {
                     'filter_type': date_filter,
@@ -2143,9 +2148,8 @@ class DashboardSummaryView(BaseReportView):
             }
 
             return custom_response(True, "Dashboard data fetched successfully", dashboard_data)
-            
+
         except Exception as e:
-            print(f"Dashboard error: {str(e)}")
             import traceback
             traceback.print_exc()
             return self.handle_exception(e)
