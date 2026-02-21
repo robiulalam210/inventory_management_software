@@ -63,7 +63,7 @@ class Expense(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     date_created = models.DateTimeField(default=timezone.now)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
-    head = models.ForeignKey(ExpenseHead, on_delete=models.CASCADE)
+    head = models.ForeignKey(ExpenseHead, on_delete=models.CASCADE,null=True, blank=True)
     subhead = models.ForeignKey(ExpenseSubHead, on_delete=models.CASCADE, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_method = models.CharField(max_length=100, choices=PAYMENT_METHOD_CHOICES, default='cash')
