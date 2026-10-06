@@ -1,3 +1,4 @@
+from offline_sync.utils import touch
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -186,9 +187,11 @@ class AccountTransfer(models.Model):
                 Account.objects.filter(id=self.from_account.id).update(
                     balance=F('balance') - self.amount
                 )
+                touch(Account, self.from_account.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 Account.objects.filter(id=self.to_account.id).update(
                     balance=F('balance') + self.amount
                 )
+                touch(Account, self.to_account.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Refresh accounts to get updated balances
                 self.from_account.refresh_from_db()

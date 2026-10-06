@@ -1,3 +1,5 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import serializers
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -250,6 +252,20 @@ class MoneyReceiptCreateAPIView(APIView):
                         data=response_serializer.data,
                         status_code=status.HTTP_201_CREATED
                     )
+                except DjangoValidationError as ve:
+                    return custom_response(
+                        success=False,
+                        message="; ".join(ve.messages),
+                        data=None,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                except serializers.ValidationError as ve:
+                    return custom_response(
+                        success=False,
+                        message="Validation error occurred.",
+                        data=ve.detail,
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
                 except Exception as save_error:
                     logger.error(f"Error saving money receipt: {save_error}", exc_info=True)
                     return custom_response(
@@ -421,7 +437,15 @@ class MoneyReceiptDetailAPIView(APIView):
                 )
             
             mr_no = receipt.mr_no
-            receipt.delete()
+            try:
+                receipt.reverse_and_delete()  # sale paid / advance / account সব উল্টে দেয়
+            except DjangoValidationError as ve:
+                return custom_response(
+                    success=False,
+                    message="; ".join(ve.messages),
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             logger.info(f"Money receipt deleted: {mr_no}")
             
             return custom_response(

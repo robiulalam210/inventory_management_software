@@ -23,8 +23,8 @@ ALLOWED_HOSTS = [
     '127.0.0.1',
     '10.0.2.2',
     '0.0.0.0',
-     '192.168.0.140'
-
+    '192.168.0.140',
+    '192.168.1.100',
 ]
 
 APPEND_SLASH = True
@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'supplier_payment',
     'account_transfer',
     'core.apps.CoreConfig',
+    'offline_sync.apps.OfflineSyncConfig',
 ]
 
 # -----------------------------
@@ -82,6 +83,8 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.CompanyMiddleware',
+    'offline_sync.middleware.AuditContextMiddleware',
+    'offline_sync.middleware.IdempotencyMiddleware',
 ]
 
 ROOT_URLCONF = 'inventory_api.urls'
@@ -242,3 +245,6 @@ if not DEBUG:
 # DEFAULT AUTO FIELD
 # -----------------------------
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = list(default_headers) + ["x-device-id", "x-client-source", "x-idempotency-key"]

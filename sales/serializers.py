@@ -13,6 +13,31 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+class FlexibleDateTimeField(serializers.DateTimeField):
+    """'2026-01-16' (শুধু তারিখ) অথবা পুরো datetime — দুটোই নেয়।
+    শুধু তারিখ এলে সেই দিনের বর্তমান সময় বসে (আজকের হলে) নয়তো দুপুর ১২টা।"""
+
+    def to_internal_value(self, value):
+        from datetime import datetime, time as dtime
+        from django.utils import timezone as tz
+        from django.utils.dateparse import parse_date
+        if isinstance(value, str) and len(value.strip()) == 10:
+            d = parse_date(value.strip())
+            if d is None:
+                for fmt in ("%d-%m-%Y", "%d/%m/%Y"):
+                    try:
+                        d = datetime.strptime(value.strip(), fmt).date()
+                        break
+                    except ValueError:
+                        pass
+            if d is not None:
+                now = tz.localtime()
+                t = now.time() if d == now.date() else dtime(12, 0)
+                return tz.make_aware(datetime.combine(d, t))
+        return super().to_internal_value(value)
+
+
+
 class SaleItemSerializer(serializers.ModelSerializer):
     product_id = serializers.PrimaryKeyRelatedField(
         queryset=Product.objects.all(),
@@ -242,7 +267,8 @@ class SaleSerializer(serializers.ModelSerializer):
     change_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     payment_status = serializers.CharField(read_only=True)
     invoice_no = serializers.CharField(read_only=True)
-    sale_date = serializers.DateTimeField(read_only=True)
+    # FIX: আগে read_only ছিল, তাই app থেকে পাঠানো তারিখ বাদ পড়ত
+    sale_date = FlexibleDateTimeField(required=False)
 
     class Meta:
         model = Sale
@@ -250,7 +276,7 @@ class SaleSerializer(serializers.ModelSerializer):
             'id', 'invoice_no', 'customer_id', 'customer_name', 'customer_type',
             'sale_type', 'sale_date', 'sale_by', 'sale_by_name', 'created_by_name',
             'gross_total', 'net_total', 'grand_total', 'payable_amount',
-            'paid_amount', 'due_amount', 'change_amount',
+            'paid_amount', 'due_amount', 'change_amount', 'tendered_amount',
             'overall_discount', 'overall_discount_type',
             'overall_delivery_charge', 'overall_delivery_type',
             'overall_service_charge', 'overall_service_type',
@@ -261,9 +287,9 @@ class SaleSerializer(serializers.ModelSerializer):
             'vat', 'service_charge', 'delivery_charge'
         ]
         read_only_fields = [
-            'id', 'invoice_no', 'sale_date', 'payment_status',
+            'id', 'invoice_no', 'payment_status',
             'gross_total', 'net_total', 'grand_total', 'payable_amount',
-            'due_amount', 'change_amount', 'created_by_name', 'sale_by_name'
+            'due_amount', 'change_amount', 'tendered_amount', 'created_by_name', 'sale_by_name'
         ]
 
     def validate(self, attrs):
@@ -318,6 +344,22 @@ class SaleSerializer(serializers.ModelSerializer):
         # Extract items
         items_data = validated_data.pop('items', [])
 
+        # FIX: paid_amount = customer যত টাকা দিয়েছে। Sale প্রথমে paid=0 দিয়ে তৈরি হয়,
+        # items ও total হিসাবের পরে receive_payment() সঠিক পরিমাণ জমা করে।
+        received_amount = Decimal(str(validated_data.pop('paid_amount', None) or '0'))
+        if received_amount < 0:
+            raise serializers.ValidationError({'paid_amount': 'Paid amount cannot be negative.'})
+        validated_data['paid_amount'] = Decimal('0.00')
+        validated_data['tendered_amount'] = received_amount
+        payment_method = validated_data.get('payment_method')
+        payment_account = validated_data.get('account')
+        if received_amount > 0 and not payment_method:
+            raise serializers.ValidationError({'payment_method': 'Payment method is required when making a payment.'})
+        request_for_company = self.context.get('request')
+        company_for_check = getattr(getattr(request_for_company, 'user', None), 'company', None)
+        if payment_account and company_for_check and payment_account.company_id != company_for_check.id:
+            raise serializers.ValidationError({'account_id': 'Account must belong to your company.'})
+
         # Attach metadata from request user
         request = self.context.get('request')
         if request and hasattr(request, 'user') and request.user and request.user.is_authenticated:
@@ -347,6 +389,24 @@ class SaleSerializer(serializers.ModelSerializer):
 
                 # Recalculate totals
                 sale.calculate_totals()
+
+                # FIX: walk-in customer এর কাছে বাকি রাখা যায় না (পরে কার কাছ থেকে আদায় হবে?)
+                if sale.customer_type == 'walk_in' and received_amount < sale.grand_total:
+                    raise serializers.ValidationError({
+                        'paid_amount': f'Walk-in customer: full payment required. Total {sale.grand_total}, paid {received_amount}.'
+                    })
+
+                # FIX: টাকা জমা একবারই — MoneyReceipt + Transaction দিয়ে।
+                # Customer বেশি দিলে (৫০০ দিল, বিল ৪৩০) paid = 430, change = 70।
+                if received_amount > 0:
+                    sale.receive_payment(
+                        received_amount,
+                        payment_method=payment_method or 'Cash',
+                        account=payment_account,
+                        received_by=validated_data.get('created_by'),
+                        allow_change=True,
+                        payment_date=sale.sale_date,
+                    )
                 sale.refresh_from_db()
                 
                 logger.info(f"Sale created successfully: {sale.invoice_no}")
@@ -369,7 +429,7 @@ class SaleSerializer(serializers.ModelSerializer):
         # Convert Decimal fields to float
         decimal_fields = [
             'gross_total', 'net_total', 'grand_total', 'payable_amount',
-            'paid_amount', 'due_amount', 'change_amount',
+            'paid_amount', 'due_amount', 'change_amount', 'tendered_amount',
             'overall_discount', 'overall_delivery_charge',
             'overall_service_charge', 'overall_vat_amount'
         ]

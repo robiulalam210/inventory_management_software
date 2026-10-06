@@ -340,6 +340,20 @@ class Transaction(models.Model):
     def is_credit(self):
         return self.transaction_type == 'credit'
 
+    @staticmethod
+    def normalize_payment_method(value):
+        """App থেকে 'Cash' / 'Mobile Banking' / 'Bank' আসে; এখানে choices হলো cash/mobile/bank।"""
+        v = (value or '').strip().lower()
+        if 'mobile' in v or 'bkash' in v or 'nagad' in v or 'rocket' in v:
+            return 'mobile'
+        if 'bank' in v or 'cheque' in v:
+            return 'bank'
+        if 'card' in v:
+            return 'card'
+        if 'cash' in v or not v:
+            return 'cash'
+        return 'other'
+
     @classmethod
     def create_for_money_receipt(cls, money_receipt):
         """Create transaction for a money receipt"""
@@ -355,7 +369,9 @@ class Transaction(models.Model):
                     transaction_type='credit',  # Money receipt is always credit
                     amount=money_receipt.amount,
                     account=money_receipt.account,
-                    payment_method=money_receipt.payment_method,
+                    payment_method=cls.normalize_payment_method(money_receipt.payment_method),
+                    sale=money_receipt.sale,
+                    reference_no=money_receipt.mr_no,
                     description=f"Money Receipt {money_receipt.mr_no} - {money_receipt.get_customer_display()}",
                     money_receipt=money_receipt,
                     created_by=money_receipt.created_by,

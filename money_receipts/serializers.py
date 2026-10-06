@@ -161,20 +161,49 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
                 })
 
         # Validate customer requirements
-        if is_advance_payment and not customer:
+        if self.instance is None and is_advance_payment and not customer:
             raise serializers.ValidationError({
                 "customer": "Customer is required for advance payments."
             })
 
-        if payment_type == 'specific' and not sale:
+        if self.instance is None and payment_type == 'specific' and not sale:
             raise serializers.ValidationError({
                 "sale": "Sale is required for specific invoice payments."
             })
 
-        if payment_type == 'overall' and not customer:
+        if self.instance is None and payment_type == 'overall' and not customer and not sale:
             raise serializers.ValidationError({
                 "customer": "Customer is required for overall payments."
             })
+
+        if self.instance is None:
+            # FIX: account ছাড়া receipt হলে টাকা কোনো account এ ঢুকত না
+            if not account:
+                raise serializers.ValidationError({"account": "Account is required to receive payment."})
+            # Walk-in invoice এ due এর বেশি নেওয়া যায় না (advance রাখার মতো customer নেই)
+            if sale and not sale.customer_id and not customer:
+                sale.calculate_totals()
+                if attrs.get('amount') and attrs['amount'] > sale.due_amount:
+                    raise serializers.ValidationError({
+                        "amount": f"Amount is more than invoice due ({sale.due_amount})."
+                    })
+        else:
+            # FIX: টাকার পরিমাণ/কার কাছ থেকে/কোন invoice/কোন account — এগুলো edit করলে আগের হিসাব
+            # উল্টানো হত না। তাই এগুলো বদলাতে হলে receipt বাতিল করে নতুন receipt করতে হবে।
+            locked = {'amount': 'amount', 'customer': 'customer', 'sale': 'sale', 'account': 'account',
+                      'is_advance_payment': 'is_advance_payment'}
+            for key, field in locked.items():
+                if key in attrs:
+                    old_val = getattr(self.instance, field)
+                    new_val = attrs[key]
+                    if key == 'amount':
+                        changed = Decimal(str(new_val)) != Decimal(str(old_val))
+                    else:
+                        changed = (getattr(new_val, 'pk', new_val)) != (getattr(old_val, 'pk', old_val))
+                    if changed:
+                        raise serializers.ValidationError({
+                            key: "এই তথ্য বদলানো যায় না। Receipt বাতিল (delete) করে নতুন receipt করুন।"
+                        })
 
         return attrs
 

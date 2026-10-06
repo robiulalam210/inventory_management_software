@@ -1,3 +1,4 @@
+from offline_sync.utils import touch
 # returns/models.py - COMPLETE FIXED VERSION
 from django.db import models, transaction
 from decimal import Decimal
@@ -153,6 +154,7 @@ class SalesReturn(models.Model):
                 Product.objects.filter(id=item.product.id).update(
                     stock_qty=F('stock_qty') + good_quantity
                 )
+                touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Optional: Create stock movement
                 self._create_stock_movement(item.product, good_quantity, 'in', 'sales_return')
@@ -208,6 +210,7 @@ class SalesReturn(models.Model):
                         Product.objects.filter(id=item.product.id).update(
                             stock_qty=F('stock_qty') - good_quantity
                         )
+                        touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Delete related bad stock
                 BadStock.objects.filter(reference_type='sales_return', reference_id=self.id).delete()
@@ -394,6 +397,7 @@ class PurchaseReturn(models.Model):
             Product.objects.filter(id=item.product.id).update(
                 stock_qty=F('stock_qty') - item.quantity
             )
+            touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
             
             # Optional: Create stock movement
             self._create_stock_movement(item.product, item.quantity, 'out', 'purchase_return')
@@ -445,6 +449,7 @@ class PurchaseReturn(models.Model):
                     Product.objects.filter(id=item.product.id).update(
                         stock_qty=F('stock_qty') + item.quantity
                     )
+                    touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Delete related bad stock
                 BadStock.objects.filter(reference_type='purchase_return', reference_id=self.id).delete()

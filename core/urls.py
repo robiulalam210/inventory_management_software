@@ -5,7 +5,7 @@ from .views import (
     company_admin_signup, company_admin_login, dashboard, user_list, create_user, home, user_management
 )
 from rest_framework_simplejwt.views import TokenRefreshView
-from money_receipts.views import MoneyReceiptCreateAPIView
+from money_receipts.views import MoneyReceiptCreateAPIView, MoneyReceiptDetailAPIView
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
 # from purchases.views import PurchaseViewSet, PurchaseItemViewSet,PurchaseAllListViewSet
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet, PurchaseAllListViewSet
@@ -94,10 +94,12 @@ urlpatterns = [
     path('user-permissions/update/', UserPermissionManagementView.as_view(), name='update_permissions'),
    path('user-permissions/reset/', ResetPermissionsAPIView.as_view(), name='reset_permissions'), 
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
+    path('money-receipts/<int:receipt_id>/', MoneyReceiptDetailAPIView.as_view(), name='money_receipt_detail'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
     path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),
 
     path('reports/', include('reports.urls')),
+    path('sync/', include('offline_sync.urls')),  # offline sync + audit
 
     path('expenses/', include('expenses.urls')),
     path('income/', include('income.urls')),
