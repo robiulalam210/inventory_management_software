@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 # sales/views.py
 from rest_framework import viewsets, status, serializers
 from rest_framework.views import APIView
@@ -231,7 +232,7 @@ class SaleViewSet(BaseCompanyViewSet):
                 if product_id and quantity > 0:
                     try:
                         from products.models import Product
-                        product = Product.objects.get(id=product_id)
+                        product = Product.objects.get(id=product_id, company=request.user.company)
                         if product.stock_qty < float(quantity):
                             return custom_response(
                                 success=False,
@@ -388,24 +389,30 @@ class SaleViewSet(BaseCompanyViewSet):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Update sale
-            sale.paid_amount += amount
-            sale.payment_method = payment_method
-            
+            account = None
             if account_id:
-                try:
-                    account = Account.objects.get(id=account_id, company=request.user.company)
-                    sale.account = account
-                except Account.DoesNotExist:
+                account = Account.objects.filter(id=account_id, company=request.user.company).first()
+                if account is None:
                     return custom_response(
                         success=False,
                         message="Account not found",
                         data=None,
                         status_code=status.HTTP_404_NOT_FOUND
                     )
-            
-            sale.save()
-            
+
+            if amount > sale.due_amount and sale.customer_type == 'walk_in':
+                return custom_response(
+                    success=False,
+                    message=f"Amount {amount} is more than due {sale.due_amount}",
+                    data=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # FIX: আগে sale.paid_amount += amount; sale.save() → পুরো paid_amount আবার account এ যোগ হত।
+            # এখন MoneyReceipt + Transaction দিয়ে শুধু এই amount টাই জমা হয়।
+            sale.add_payment(amount, payment_method=payment_method, account=account, received_by=request.user)
+            sale.refresh_from_db()
+
             return custom_response(
                 success=True,
                 message=f"Payment of {amount} added to sale {sale.invoice_no}",
@@ -413,6 +420,14 @@ class SaleViewSet(BaseCompanyViewSet):
                 status_code=status.HTTP_200_OK
             )
             
+        except (DjangoValidationError, ValueError) as e:
+            msg = "; ".join(e.messages) if hasattr(e, 'messages') else str(e)
+            return custom_response(
+                success=False,
+                message=msg,
+                data=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             logger.error(f"Error adding payment: {str(e)}")
             return custom_response(

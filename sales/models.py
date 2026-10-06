@@ -1,5 +1,5 @@
 # sales/models.py
-from django.db import models
+from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.conf import settings
@@ -28,7 +28,10 @@ class Sale(models.Model):
 
     sale_type = models.CharField(max_length=20, choices=SALE_TYPE_CHOICES, default='retail')
     invoice_no = models.CharField(max_length=20, blank=True, null=True)
-    sale_date = models.DateTimeField(auto_now_add=True)
+    # FIX: আগে auto_now_add ছিল — user/offline এর দেওয়া তারিখ বাদ পড়ে আজকের তারিখ বসত
+    sale_date = models.DateTimeField(default=timezone.now, db_index=True)
+    # FIX: money receipt update_fields=['updated_at'] এর জন্য দরকার, আর sync/audit এর জন্যও
+    updated_at = models.DateTimeField(auto_now=True)
 
     customer_type = models.CharField(max_length=20, choices=CUSTOMER_TYPE_CHOICES, default='walk_in')
     with_money_receipt = models.CharField(max_length=3, choices=MONEY_RECEIPT_CHOICES, default='No')
@@ -42,6 +45,8 @@ class Sale(models.Model):
     due_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     change_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    # Customer কাউন্টারে যত টাকা দিয়েছে (৫০০ দিল, বিল ৪৩০ → paid 430, change 70)
+    tendered_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
 
     overall_discount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     overall_discount_type = models.CharField(max_length=10, choices=(('fixed','Fixed'),('percent','Percent')), blank=True, null=True)
@@ -113,9 +118,10 @@ class Sale(models.Model):
             # Save to get pk
             super().save(*args, **kwargs)
 
-            # Recalculate totals and handle payment processing
+            # শুধু হিসাব (total/due/status) — টাকা জমার কাজ এখানে হয় না।
+            # আগে প্রতিবার save() এ account balance এ paid_amount আবার যোগ হত (একই টাকা ৩-৪ বার)।
+            # এখন টাকা জমা হয় শুধু receive_payment() → MoneyReceipt → Transaction দিয়ে, একবারই।
             self.calculate_totals()
-            self._handle_payment_processing(is_new)
 
         except Exception as e:
             logger.exception("Error saving sale")
@@ -184,7 +190,10 @@ class Sale(models.Model):
 
             self.grand_total = self.payable_amount
             self.due_amount = max(Decimal('0.00'), self.grand_total - self.paid_amount)
-            self.change_amount = max(Decimal('0.00'), self.paid_amount - self.grand_total)
+            if self.tendered_amount and self.tendered_amount > 0:
+                self.change_amount = max(Decimal('0.00'), self.tendered_amount - self.grand_total)
+            else:
+                self.change_amount = max(Decimal('0.00'), self.paid_amount - self.grand_total)
 
             self._update_payment_status()
 
@@ -240,81 +249,95 @@ class Sale(models.Model):
             logger.exception("Error updating payment status")
             self.payment_status = 'pending'
 
-    def _handle_payment_processing(self, is_new):
-        """If paid_amount > 0, update account and create transaction/receipt."""
-        if self.paid_amount <= 0:
-            return
+    # ------------------------------------------------------------------
+    # Payment — sale এ টাকা জমা হওয়ার একমাত্র পথ
+    # ------------------------------------------------------------------
+    @staticmethod
+    def default_account_for(company, payment_method=None):
+        """Account বাছাই করা না থাকলে payment method অনুযায়ী company র account।"""
+        from accounts.models import Account
+        qs = Account.objects.filter(company=company, is_active=True).order_by('id')
+        pm = (payment_method or '').strip().lower()
+        if pm:
+            key = 'mobile' if 'mobile' in pm else ('bank' if 'bank' in pm else ('cash' if 'cash' in pm else pm))
+            match = qs.filter(ac_type__icontains=key).first()
+            if match:
+                return match
+        return qs.filter(ac_type__iexact='Cash').first() or qs.first()
 
-        if self.account:
-            try:
-                self.account.balance += self.paid_amount
-                self.account.save(update_fields=['balance'])
-                logger.info(f"Account {self.account.name} balance updated: +{self.paid_amount}")
-            except Exception:
-                logger.exception("Error updating account balance")
+    def receive_payment(self, amount, payment_method=None, account=None, received_by=None,
+                        remark=None, allow_change=False, payment_date=None):
+        """
+        Sale এর বিপরীতে টাকা গ্রহণ।
 
-        if self.with_money_receipt == 'Yes':
-            self.create_money_receipt()
-        else:
-            self.create_transaction()
+        সব payment একটা MoneyReceipt হিসেবে রেকর্ড হয় → সেই receipt একটা Transaction
+        বানায় → Transaction account balance বাড়ায়। ফলে প্রতিটা টাকার একটা receipt নম্বর
+        ও ledger entry থাকে, আর কোনো টাকা দুইবার যোগ হয় না।
 
-    def create_transaction(self):
-        """Create transaction for the sale"""
-        try:
-            from transactions.models import Transaction
-            existing_transaction = Transaction.objects.filter(
-                reference_model='sale',
-                reference_id=self.id
-            ).first()
-            if existing_transaction:
-                return existing_transaction
-            if self.paid_amount > 0 and self.account:
-                transaction = Transaction(
-                    company=self.company,
-                    account=self.account,
-                    amount=self.paid_amount,
-                    transaction_type='credit',
-                    reference_model='sale',
-                    reference_id=self.id,
-                    date=timezone.now(),
-                    description=f"Sale {self.invoice_no}",
-                    created_by=self.created_by
+        allow_change=True (বিক্রির সময় কাউন্টারে): due এর বেশি দিলে বাকিটা "change" হিসেবে
+        ফেরত — account এ শুধু due পরিমাণই জমা হয়।
+        """
+        from money_receipts.models import MoneyReceipt
+
+        amount = self._round_decimal(Decimal(str(amount or 0)))
+        if amount <= 0:
+            return None
+
+        with transaction.atomic():
+            sale = Sale.objects.select_for_update().get(pk=self.pk)
+            sale.calculate_totals()
+            due = sale.due_amount
+
+            receipt_amount = amount
+            if amount > due:
+                if allow_change:
+                    receipt_amount = due  # বাকিটা customer কে ফেরত দেওয়া হয়েছে
+                elif not sale.customer_id:
+                    raise ValidationError(
+                        f"Payment {amount} is more than the due amount {due}. "
+                        f"Walk-in customer এর অতিরিক্ত টাকা advance হিসেবে রাখা যায় না।"
+                    )
+                # saved customer হলে অতিরিক্ত টাকা MoneyReceipt নিজেই advance এ রাখে
+
+            receipt = None
+            if receipt_amount > 0:
+                method = payment_method or sale.payment_method or 'Cash'
+                account = account or sale.account or Sale.default_account_for(sale.company, method)
+                if account is None:
+                    raise ValidationError("Payment নেওয়ার মতো কোনো active account নেই। আগে একটা Cash account তৈরি করুন।")
+                receipt = MoneyReceipt(
+                    company=sale.company,
+                    customer=sale.customer if sale.customer_type == 'saved_customer' else None,
+                    sale=sale,
+                    amount=receipt_amount,
+                    payment_method=method,
+                    payment_date=payment_date or timezone.now(),
+                    remark=remark or f"Payment for {sale.invoice_no}",
+                    seller=sale.sale_by,
+                    account=account,
+                    created_by=received_by or sale.created_by,
+                    payment_status='completed',
                 )
-                transaction.save()
-                return transaction
-        except Exception:
-            logger.exception("Error creating transaction")
-        return None
+                receipt.save()  # → sale.paid_amount বাড়ায় + Transaction তৈরি করে (atomic)
 
-    def create_money_receipt(self):
-        """Create money receipt for the sale"""
-        if self.paid_amount <= 0:
-            return None
-        try:
-            from money_receipts.models import MoneyReceipt
-            existing_receipt = MoneyReceipt.objects.filter(sale=self).first()
-            if existing_receipt:
-                if existing_receipt.amount != self.paid_amount:
-                    existing_receipt.amount = self.paid_amount
-                    existing_receipt.save()
-                return existing_receipt
-            money_receipt = MoneyReceipt(
-                company=self.company,
-                customer=self.customer if self.customer_type == 'saved_customer' else None,
-                sale=self,
-                amount=self.paid_amount,
-                payment_method=self.payment_method or 'Cash',
-                payment_date=timezone.now(),
-                remark=f"Auto receipt for {self.invoice_no}",
-                seller=self.sale_by,
-                account=self.account,
-                created_by=self.created_by
-            )
-            money_receipt.save()
-            return money_receipt
-        except Exception:
-            logger.exception("Error creating money receipt")
-            return None
+                Sale.objects.filter(pk=sale.pk).update(payment_method=method, account=account)
+
+            sale.refresh_from_db()
+            self.paid_amount = sale.paid_amount
+            self.due_amount = sale.due_amount
+            self.change_amount = sale.change_amount
+            self.payment_status = sale.payment_status
+            self.payment_method = sale.payment_method
+            self.account_id = sale.account_id
+            return receipt
+
+    def add_payment(self, amount, payment_method=None, account=None, received_by=None):
+        """পরে due পরিশোধ (sales/<id>/add_payment/)।"""
+        if Decimal(str(amount or 0)) <= 0:
+            raise ValueError("Payment amount must be greater than 0")
+        self.receive_payment(amount, payment_method=payment_method, account=account,
+                             received_by=received_by, allow_change=False)
+        return self.paid_amount
 
     def clean(self):
         """Validate sale data"""
@@ -327,18 +350,6 @@ class Sale(models.Model):
             raise ValidationError({'customer': 'Saved customer must have a customer record.'})
         if self.paid_amount > 0 and not self.payment_method:
             raise ValidationError({'payment_method': 'Payment method is required when payment is made.'})
-
-    def add_payment(self, amount, payment_method=None, account=None):
-        """Add payment to existing sale"""
-        if amount <= 0:
-            raise ValueError("Payment amount must be greater than 0")
-        if payment_method:
-            self.payment_method = payment_method
-        if account:
-            self.account = account
-        self.paid_amount += amount
-        self.save()
-        return self.paid_amount
 
     def get_payment_summary(self):
         """Get payment summary"""
