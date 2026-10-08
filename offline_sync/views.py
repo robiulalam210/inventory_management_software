@@ -5,7 +5,7 @@ import uuid
 from collections import OrderedDict
 
 from django.db import transaction
-from django.db.models import Max, Q
+from django.db.models import Count, Max, Q
 from django.urls import Resolver404, resolve
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -475,23 +475,49 @@ class SyncIssueResolveView(APIView):
 # ---------------------------------------------------------------------------
 # Audit log
 # ---------------------------------------------------------------------------
-AUDIT_ROLES = {"SUPER_ADMIN", "ADMIN", "MANAGER"}
+# Audit শুধু Super Admin ও Admin দেখবে
+AUDIT_ROLES = {"SUPER_ADMIN", "ADMIN"}
+
+
+def _is_super(user):
+    return user.is_superuser or getattr(user, "role", "") == "SUPER_ADMIN"
+
+
+def _audit_base_qs(request):
+    """
+    কার জন্য কোন log:
+    - Super Admin: সব company (চাইলে ?company_id= দিয়ে একটা company)
+    - Admin: শুধু নিজের company
+    অনুমতি না থাকলে None
+    """
+    user = request.user
+    if not (_is_super(user) or getattr(user, "role", "") in AUDIT_ROLES):
+        return None
+    qs = ChangeLog.objects.all()
+    if _is_super(user):
+        company_id = request.query_params.get("company_id")
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+    else:
+        qs = qs.filter(company=_company(request))
+    return qs
 
 
 class AuditLogView(APIView):
     """
     কে, কখন, কোন device/app থেকে, কোন record এ কী বদলেছে।
-    Filter: entity/model, object_id, user_id, action, source, device, date_from, date_to, q
+    Filter: company_id (super admin), entity/model, object_id, user_id, action, source, device,
+            date_from, date_to, q
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        if not (user.is_superuser or getattr(user, "role", "") in AUDIT_ROLES):
+        qs = _audit_base_qs(request)
+        if qs is None:
             return fail("Audit log দেখার অনুমতি নেই", 403)
 
         p = request.query_params
-        qs = ChangeLog.objects.filter(company=_company(request)).select_related("device")
+        qs = qs.select_related("device", "company")
         if p.get("model"):
             m = p["model"]
             qs = qs.filter(Q(model_label__iexact=m) | Q(entity=m) | Q(model_label__iendswith="." + m))
@@ -529,6 +555,8 @@ class AuditLogView(APIView):
                 "entity": r.entity,
                 "object_id": r.object_id,
                 "object_repr": r.object_repr,
+                "company_id": r.company_id,
+                "company": r.company.name if r.company else None,
                 "user_id": r.user_id,
                 "user": r.user_display,
                 "source": r.source,
@@ -546,6 +574,49 @@ class AuditLogView(APIView):
             "page_size": page_size,
             "results": results,
         })
+
+
+class AuditMetaView(APIView):
+    """
+    Audit screen এর filter dropdown ও উপরের summary card এর জন্য।
+    GET /api/sync/audit/meta/?company_id=   (company_id শুধু super admin)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = _audit_base_qs(request)
+        if qs is None:
+            return fail("Audit log দেখার অনুমতি নেই", 403)
+
+        today = timezone.localdate()
+        today_qs = qs.filter(created_at__date=today)
+        by_action = dict(today_qs.values_list("action").annotate(n=Count("id")))
+
+        models = list(qs.values("model_label").annotate(count=Count("id")).order_by("-count", "model_label"))
+        users = list(
+            qs.exclude(user_id=None).values("user_id", "user_display")
+            .annotate(count=Count("id")).order_by("-count")[:200]
+        )
+        sources = list(qs.values("source").annotate(count=Count("id")).order_by("-count"))
+
+        data = {
+            "is_super_admin": _is_super(request.user),
+            "summary": {
+                "total": qs.count(),
+                "today": today_qs.count(),
+                "today_create": by_action.get(ChangeLog.ACTION_CREATE, 0),
+                "today_update": by_action.get(ChangeLog.ACTION_UPDATE, 0),
+                "today_delete": by_action.get(ChangeLog.ACTION_DELETE, 0),
+            },
+            "models": [{"model": m["model_label"], "count": m["count"]} for m in models],
+            "users": [{"id": u["user_id"], "name": u["user_display"], "count": u["count"]} for u in users],
+            "sources": [{"source": s["source"], "count": s["count"]} for s in sources],
+            "companies": [],
+        }
+        if _is_super(request.user):
+            from core.models import Company
+            data["companies"] = list(Company.objects.order_by("name").values("id", "name"))
+        return ok(data)
 
 
 class SyncStatusView(APIView):

@@ -12,4 +12,5 @@ urlpatterns = [
     path("issues/", views.SyncIssueListView.as_view(), name="sync-issues"),
     path("issues/<int:pk>/resolve/", views.SyncIssueResolveView.as_view(), name="sync-issue-resolve"),
     path("audit/", views.AuditLogView.as_view(), name="audit-log"),
+    path("audit/meta/", views.AuditMetaView.as_view(), name="audit-meta"),
 ]

@@ -22,7 +22,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, HttpRes
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from core.froms import CompanyAdminSignupForm, UserForm
-from core.views import ProfileAPIView, UserPermissionsAPIView, user_dashboard_stats, ChangePasswordAPIView, PermissionCheckView, UserPermissionManagementView   ,ResetPermissionsAPIView
+from core.views import ProfileAPIView, UserPermissionsAPIView, user_dashboard_stats, ChangePasswordAPIView, PermissionCheckView, UserPermissionManagementView   ,ResetPermissionsAPIView, UserPermissionListView
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -83,7 +83,8 @@ urlpatterns = [
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('api/auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
+    # FIX: আগে 'api/auth/change-password/' ছিল → আসল URL হয়ে যেত /api/api/auth/change-password/
+    path('auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
     path('profile/', ProfileAPIView.as_view(), name='profile'),
 
     path('profile/permissions/', UserPermissionsAPIView.as_view(), name='user-permissions'),
@@ -93,6 +94,8 @@ urlpatterns = [
     path('user-permissions/check/', PermissionCheckView.as_view(), name='permission_check'),
     path('user-permissions/update/', UserPermissionManagementView.as_view(), name='update_permissions'),
    path('user-permissions/reset/', ResetPermissionsAPIView.as_view(), name='reset_permissions'), 
+    # নির্দিষ্ট একজন user এর permission (admin panel এর permission editor এর জন্য)
+    path('user-permissions/user/<int:user_id>/', UserPermissionListView.as_view(), name='user_permission_detail'),
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     path('money-receipts/<int:receipt_id>/', MoneyReceiptDetailAPIView.as_view(), name='money_receipt_detail'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),

@@ -436,6 +436,13 @@ class UserPermissionListView(APIView):
             # Get all permissions
             permissions = target_user.get_permissions()
             custom_perms = UserPermission.objects.filter(user=target_user, is_active=True)
+
+            # App এ Save/Reset বাটন চালু থাকবে কিনা — update serializer এর নিয়মের সাথে মিল রেখে
+            editable = target_user.role != User.Role.SUPER_ADMIN and not (
+                request_user.role == User.Role.ADMIN
+                and target_user.role == User.Role.ADMIN
+                and target_user != request_user
+            )
             
             return custom_response(
                 True,
@@ -445,8 +452,12 @@ class UserPermissionListView(APIView):
                         'id': target_user.id,
                         'username': target_user.username,
                         'full_name': target_user.full_name,
+                        'email': target_user.email,
                         'role': target_user.role,
-                        'permission_source': target_user.permission_source
+                        'role_display': target_user.get_role_display(),
+                        'is_active': target_user.is_active,
+                        'permission_source': target_user.permission_source,
+                        'editable': editable,
                     },
                     'permissions': permissions,
                     'custom_permissions': UserPermissionSerializer(custom_perms, many=True).data
@@ -1154,8 +1165,9 @@ class ResetPermissionsAPIView(APIView):
                 'message': 'User not found'
             }, status=404)
         
-        # Check if current user has permission to reset permissions
-        if not request.user.has_permission('users', 'edit'):
+        # SECURITY FIX: আগে users.edit থাকলেই যেকোনো company র যেকোনো user রিসেট করা যেত।
+        # এখন শুধু Super Admin / Admin, এবং Admin শুধু নিজের company র user।
+        if request.user.role not in [User.Role.SUPER_ADMIN, User.Role.ADMIN] or not request.user.can_manage_user(user):
             return Response({
                 'status': False,
                 'message': 'You do not have permission to reset user permissions'
