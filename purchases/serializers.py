@@ -100,6 +100,18 @@ class PurchaseSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context.get('request')
         user = request.user if request else None
+
+        # FIX (নিরাপত্তা): supplier / account / product এর id যেকোনো company র হতে পারত।
+        company = getattr(user, 'company', None) if user else None
+        if company:
+            for key in ('supplier', 'account'):
+                obj = attrs.get(key)
+                if obj is not None and getattr(obj, 'company_id', None) != company.id:
+                    raise serializers.ValidationError({key: "Not found in your company."})
+            for i, item in enumerate(attrs.get('purchase_items') or []):
+                product = item.get('product')
+                if product is not None and product.company_id != company.id:
+                    raise serializers.ValidationError({"purchase_items": f"Item {i+1}: product not found in your company."})
         
         # Validate purchase items for creation
         if request and getattr(request, "method", None) == 'POST':

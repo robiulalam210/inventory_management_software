@@ -284,7 +284,7 @@
 
       init() {
         App.api('/api/customers-active/').then(r => {
-          const list = listOf(r);
+          const list = listOf(r).filter(c => c.is_active !== false);
           this.customerRows = Object.fromEntries(list.map(c => [String(c.id), c]));
           this.customers = list.map(c => ({
             value: String(c.id), label: c.name,

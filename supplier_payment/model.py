@@ -81,6 +81,10 @@ class SupplierPayment(models.Model):
     # Reference and description
     reference_no = models.CharField(max_length=100, blank=True, null=True)
     description = models.TextField(blank=True, null=True)
+
+    # টাকাটা কোথায় বসেছে — বাতিল করলে ঠিক এটাই উল্টে দেওয়া হয়
+    # {"purchases": {"<purchase_id>": "amount"}, "advance_used": "x", "advance_added": "y"}
+    allocation = models.JSONField(default=dict, blank=True)
     
     # Status - CHANGE DEFAULT TO COMPLETED FOR TESTING
     status = models.CharField(
@@ -198,10 +202,16 @@ class SupplierPayment(models.Model):
             return f"SP-{timestamp}"
 
     def save(self, *args, **kwargs):
-        """Save with proper validation and payment processing"""
+        """
+        নতুন payment save — সব ধাপ একসাথে (atomic): হয় সব হবে, নয়তো কিছুই না।
+
+        FIX (গুরুতর): আগে _process_* method গুলো হাতে হাতে account.balance কমাত, তারপর আবার একটা
+        debit Transaction তৈরি হত — Transaction নিজেও balance কমায়। ফলে supplier কে ৳1,000 দিলে
+        account থেকে ৳2,000 কাটত। এখন account শুধু Transaction দিয়েই বদলায় (একবার)।
+        আর Transaction ব্যর্থ হলে (যেমন যথেষ্ট টাকা নেই) পুরো payment বাতিল হয়, চুপচাপ থেকে যায় না।
+        """
         is_new = self.pk is None
 
-        # Generate SP number for new payments
         if is_new and not self.sp_no:
             self.sp_no = self.generate_sp_no()
 
@@ -211,295 +221,143 @@ class SupplierPayment(models.Model):
         elif self.payment_type != 'advance':
             self.payment_type = 'overall'
 
-        # Validate before saving
         self.clean()
 
-        # Use atomic transaction for data consistency
         with transaction.atomic():
-            # Save the payment record first
             super().save(*args, **kwargs)
-            
-            # Process payment if new and completed
             if is_new and self.status == 'completed':
-                logger.info(f"🆕 NEW PAYMENT DETECTED: {self.sp_no}")
-                logger.info(f"💰 Processing payment and creating transaction...")
-                
-                # Process the payment first (updates account balances, etc.)
                 self._process_payment()
-                
-                # Then create transaction record
-                logger.info(f"💳 Creating transaction record...")
-                transaction_obj = self._create_transaction()
-                
-                if transaction_obj:
-                    logger.info(f"SUCCESS: Payment {self.sp_no} completed with transaction: {transaction_obj.transaction_no}")
-                else:
-                    logger.warning(f"⚠️  Payment {self.sp_no} completed but no transaction was created")
+                self._create_transaction()
+                super().save(update_fields=['allocation', 'updated_at'])
 
     def _process_payment(self):
-        """Process the payment based on type and advance usage"""
-        logger.info(f"🔄 Processing supplier payment: {self.sp_no}, Type: {self.payment_type}, Amount: {self.amount}")
-        
-        try:
-            if self.payment_type == 'advance':
-                self._process_advance_payment()
-            elif self.payment_type == 'specific':
-                self._process_specific_payment()
-            else:  # overall
-                self._process_overall_payment()
-                
-            logger.info(f"SUCCESS: Successfully processed payment: {self.sp_no}")
-            
-        except Exception as e:
-            logger.error(f"ERROR:Error processing payment {self.sp_no}: {e}")
-            self.status = 'failed'
-            super().save(update_fields=['status', 'updated_at'])
-            raise
+        """Payment type অনুযায়ী টাকা বসানো (account ছাড়া — সেটা Transaction করে)। সমস্যা হলে exception → rollback।"""
+        logger.info(f"Processing supplier payment: {self.sp_no}, Type: {self.payment_type}, Amount: {self.amount}")
+        if self.payment_type == 'advance':
+            self.allocation = self._process_advance_payment()
+        elif self.payment_type == 'specific':
+            self.allocation = self._process_specific_payment()
+        else:
+            self.allocation = self._process_overall_payment()
+
+    def _cash_portion(self):
+        return self.amount - (self.advance_amount_used if self.use_advance else Decimal('0.00'))
 
     def _create_transaction(self):
-        """Create transaction record for this payment"""
-        try:
-            from transactions.models import Transaction
-            
-            # Calculate cash amount for transaction (only cash portion creates transaction)
-            cash_amount = self.amount
-            if self.use_advance:
-                cash_amount = self.amount - self.advance_amount_used
-            
-            # Only create transaction if there's a cash portion and account
-            if cash_amount > 0 and self.account:
-                logger.info(f"💾 Creating transaction for cash portion: {cash_amount}")
-                
-                # Check if transaction already exists via reverse relation
-                if hasattr(self, 'transactions') and self.transactions.exists():
-                    existing_transaction = self.transactions.first()
-                    logger.info(f"⏩ Transaction already exists: {existing_transaction.transaction_no}")
-                    return existing_transaction
-                
-                # Create transaction using the class method
-                transaction_obj = Transaction.create_for_supplier_payment(self, cash_amount)
-                
-                if transaction_obj:
-                    logger.info(f"SUCCESS: Transaction created successfully: {transaction_obj.transaction_no}")
-                    logger.info(f"🔗 Transaction linked to supplier payment: {self.sp_no}")
-                    return transaction_obj
-                else:
-                    logger.error(f"ERROR:Failed to create transaction for supplier payment {self.sp_no}")
-                    return None
-            else:
-                logger.info(f"⏩ No transaction created - Cash amount: {cash_amount}, Account: {self.account}")
-                return None
-                
-        except ImportError as e:
-            logger.error(f"ERROR:Failed to import Transaction model: {e}")
+        """নগদ অংশের জন্য একটা debit Transaction — এটাই account থেকে টাকা কাটে। ব্যর্থ হলে exception।"""
+        from transactions.models import Transaction
+        cash_amount = self._cash_portion()
+        if cash_amount <= 0:
             return None
-        except Exception as e:
-            logger.error(f"ERROR:Error creating transaction for supplier payment {self.sp_no}: {e}")
-            import traceback
-            logger.error(f"📋 Traceback: {traceback.format_exc()}")
-            return None
-
-    def _process_advance_payment(self):
-        """Process advance payment to supplier"""
-        logger.info(f"💰 Processing ADVANCE payment: {self.amount}")
-        
-        # Refresh supplier to get latest data
-        self.supplier.refresh_from_db()
-        old_advance = self.supplier.advance_balance
-        
-        # Increase supplier's advance balance
-        self.supplier.advance_balance += self.amount
-        self.supplier.save(update_fields=['advance_balance', 'updated_at'])
-        
-        logger.info(f"SUCCESS: Advance balance updated: {old_advance} -> {self.supplier.advance_balance}")
-        
-        # Decrease account balance
-        if self.account:
-            old_balance = self.account.balance
-            self.account.balance -= self.amount
-            self.account.save(update_fields=['balance'])
-            logger.info(f"🏦 Account balance updated: {old_balance} -> {self.account.balance}")
-
-    def _process_specific_payment(self):
-        """Process payment for specific purchase"""
-        if not self.purchase:
-            raise ValueError("Purchase is required for specific payments")
-        
-        logger.info(f"🧾 Processing SPECIFIC payment for purchase: {self.purchase.invoice_no}")
-        
-        # Refresh purchase data
-        self.purchase.refresh_from_db()
-        
-        # Calculate amounts
-        advance_used = self.advance_amount_used if self.use_advance else Decimal('0.00')
-        cash_amount = self.amount - advance_used
-        
-        # Validate purchase due amount
-        total_applied = advance_used + cash_amount
-        if total_applied > self.purchase.due_amount:
-            raise ValueError(
-                f"Payment amount ({total_applied}) exceeds purchase due amount ({self.purchase.due_amount})"
-            )
-        
-        # Apply advance payment if used
-        if self.use_advance and advance_used > 0:
-            if advance_used > self.supplier.advance_balance:
-                raise ValueError(f"Advance balance insufficient: {advance_used} > {self.supplier.advance_balance}")
-            
-            # Use advance for payment
-            old_advance = self.supplier.advance_balance
-            self.supplier.advance_balance -= advance_used
-            self.supplier.save(update_fields=['advance_balance', 'updated_at'])
-            logger.info(f"💰 Advance used: {advance_used}, New balance: {self.supplier.advance_balance}")
-            
-            # Apply advance to purchase
-            old_paid = self.purchase.paid_amount
-            self.purchase.paid_amount += advance_used
-            self.purchase.due_amount = max(Decimal('0.00'), self.purchase.grand_total - self.purchase.paid_amount)
-            self.purchase._update_payment_status()
-            logger.info(f"🧾 Purchase paid updated: {old_paid} -> {self.purchase.paid_amount}")
-        
-        # Apply cash payment if any
-        if cash_amount > 0:
-            if not self.account:
-                raise ValueError("Account is required for cash payments")
-            
-            # Validate account balance
-            if cash_amount > self.account.balance:
-                raise ValueError(f"Insufficient account balance: {cash_amount} > {self.account.balance}")
-            
-            # Apply cash to purchase
-            old_paid = self.purchase.paid_amount
-            self.purchase.paid_amount += cash_amount
-            self.purchase.due_amount = max(Decimal('0.00'), self.purchase.grand_total - self.purchase.paid_amount)
-            self.purchase._update_payment_status()
-            
-            # Update payment method and account for the purchase
-            self.purchase.payment_method = self.payment_method
-            self.purchase.account = self.account
-            
-            logger.info(f"💵 Cash applied to purchase: {cash_amount}, New paid: {self.purchase.paid_amount}")
-            
-            # Update account balance
-            old_balance = self.account.balance
-            self.account.balance -= cash_amount
-            self.account.save(update_fields=['balance'])
-            logger.info(f"🏦 Account balance updated: {old_balance} -> {self.account.balance}")
-        
-        # Save purchase updates
-        update_fields = ['paid_amount', 'due_amount', 'payment_status', 'date_updated']
-        if cash_amount > 0:
-            update_fields.extend(['payment_method', 'account'])
-        
-        self.purchase.save(update_fields=update_fields)
-
-    def _process_overall_payment(self):
-        """Process overall payment across due purchases"""
-        logger.info(f"🔄 Processing OVERALL payment for {self.supplier.name}, Amount: {self.amount}")
-        
-        # Refresh supplier to get latest data
-        self.supplier.refresh_from_db()
-        
-        # Calculate cash amount
-        advance_used = self.advance_amount_used if self.use_advance else Decimal('0.00')
-        cash_amount = self.amount - advance_used
-        
-        # Use advance first if specified
-        remaining_advance = advance_used
-        if self.use_advance and remaining_advance > 0:
-            remaining_advance = self._apply_advance_to_due_purchases(remaining_advance)
-        
-        # Use cash for remaining amount
-        remaining_cash = cash_amount
-        if remaining_cash > 0:
-            remaining_cash = self._apply_cash_to_due_purchases(remaining_cash)
-        
-        # Handle any remaining amount as advance
-        remaining_total = remaining_advance + remaining_cash
-        if remaining_total > 0:
-            logger.info(f"🎁 Converting remaining amount {remaining_total} to advance")
-            
-            old_advance = self.supplier.advance_balance
-            self.supplier.advance_balance += remaining_total
-            self.supplier.save(update_fields=['advance_balance', 'updated_at'])
-            
-            logger.info(f"SUCCESS: Added remaining to advance: {remaining_total}, Balance: {old_advance} -> {self.supplier.advance_balance}")
-
-    def _apply_advance_to_due_purchases(self, advance_amount):
-        """Apply advance amount to due purchases"""
-        due_purchases = Purchase.objects.filter(
-            supplier=self.supplier,
-            company=self.company,
-            due_amount__gt=0
-        ).order_by('purchase_date')
-        
-        remaining = advance_amount
-        
-        for purchase in due_purchases:
-            if remaining <= 0:
-                break
-                
-            applied = min(remaining, purchase.due_amount)
-            logger.info(f"💳 Applying advance {applied} to purchase {purchase.invoice_no}")
-            
-            purchase.paid_amount += applied
-            purchase.due_amount = max(Decimal('0.00'), purchase.grand_total - purchase.paid_amount)
-            purchase._update_payment_status()
-            purchase.save(update_fields=['paid_amount', 'due_amount', 'payment_status', 'date_updated'])
-            
-            remaining -= applied
-        
-        # Update supplier advance balance for actual amount used
-        actual_used = advance_amount - remaining
-        if actual_used > 0:
-            old_advance = self.supplier.advance_balance
-            self.supplier.advance_balance -= actual_used
-            self.supplier.save(update_fields=['advance_balance', 'updated_at'])
-            logger.info(f"💰 Advance used: {actual_used}, Balance: {old_advance} -> {self.supplier.advance_balance}")
-        
-        return remaining
-
-    def _apply_cash_to_due_purchases(self, cash_amount):
-        """Apply cash amount to due purchases"""
         if not self.account:
-            raise ValueError("Account is required for cash payments")
-            
-        due_purchases = Purchase.objects.filter(
-            supplier=self.supplier,
+            raise ValidationError({"account": "Account is required for cash payments"})
+        existing = self.transactions.filter(status='completed').first()
+        if existing:
+            return existing
+        # create_for_supplier_payment error চাপা দেয়; তাই সরাসরি তৈরি করি যাতে কারণ উপরে যায়
+        txn = Transaction.objects.create(
             company=self.company,
-            due_amount__gt=0
-        ).order_by('purchase_date')
-        
-        remaining = cash_amount
-        
-        for purchase in due_purchases:
-            if remaining <= 0:
-                break
-                
-            applied = min(remaining, purchase.due_amount)
-            logger.info(f"💵 Applying cash {applied} to purchase {purchase.invoice_no}")
-            
-            purchase.paid_amount += applied
-            purchase.due_amount = max(Decimal('0.00'), purchase.grand_total - purchase.paid_amount)
-            purchase._update_payment_status()
-            
-            # Update payment method for purchases paid with cash
+            transaction_type='debit',
+            amount=cash_amount,
+            account=self.account,
+            payment_method=Transaction.normalize_payment_method(self.payment_method),
+            reference_no=self.reference_no or self.sp_no,
+            description=Transaction._generate_supplier_payment_description(self),
+            supplier_payment=self,
+            created_by=self.created_by,
+            status='completed',
+            transaction_date=timezone.now(),
+            is_opening_balance=False,
+        )
+        logger.info(f"Debit transaction {txn.transaction_no} created for supplier payment {self.sp_no}")
+        return txn
+
+    def _locked_supplier(self):
+        return Supplier.objects.select_for_update().get(pk=self.supplier_id)
+
+    def _apply_to_purchase(self, purchase, amount, with_cash):
+        purchase.paid_amount += amount
+        purchase.due_amount = max(Decimal('0.00'), purchase.grand_total - purchase.paid_amount)
+        purchase._update_payment_status()
+        fields = ['paid_amount', 'due_amount', 'payment_status', 'change_amount', 'date_updated']
+        if with_cash:
             purchase.payment_method = self.payment_method
             purchase.account = self.account
-            
-            purchase.save(update_fields=['paid_amount', 'due_amount', 'payment_status', 'payment_method', 'account', 'date_updated'])
-            
-            remaining -= applied
-        
-        # Update account balance for actual cash used
-        actual_used = cash_amount - remaining
-        if actual_used > 0:
-            old_balance = self.account.balance
-            self.account.balance -= actual_used
-            self.account.save(update_fields=['balance'])
-            logger.info(f"🏦 Cash used: {actual_used}, Account balance: {old_balance} -> {self.account.balance}")
-        
-        return remaining
+            fields += ['payment_method', 'account']
+        purchase.save(update_fields=fields)
+
+    def _process_advance_payment(self):
+        """Supplier কে অগ্রিম — শুধু supplier এর advance বাড়ে"""
+        supplier = self._locked_supplier()
+        supplier.advance_balance += self.amount
+        supplier.save(update_fields=['advance_balance', 'updated_at'])
+        return {"purchases": {}, "advance_used": "0", "advance_added": str(self.amount)}
+
+    def _process_specific_payment(self):
+        """একটা নির্দিষ্ট purchase এর বাকি শোধ (advance + নগদ)"""
+        if not self.purchase_id:
+            raise ValidationError({"purchase": "Purchase is required for specific payments"})
+        purchase = Purchase.objects.select_for_update().get(pk=self.purchase_id)
+        if purchase.payment_status == 'cancelled':
+            raise ValidationError({"purchase": f"{purchase.invoice_no} is cancelled."})
+        advance_used = self.advance_amount_used if self.use_advance else Decimal('0.00')
+        cash_amount = self.amount - advance_used
+        if self.amount > purchase.due_amount:
+            raise ValidationError({
+                "amount": f"Payment amount ({self.amount}) exceeds purchase due amount ({purchase.due_amount})"})
+        if advance_used > 0:
+            supplier = self._locked_supplier()
+            if advance_used > supplier.advance_balance:
+                raise ValidationError({"advance_amount_used": f"Advance balance insufficient: {supplier.advance_balance}"})
+            supplier.advance_balance -= advance_used
+            supplier.save(update_fields=['advance_balance', 'updated_at'])
+        self._apply_to_purchase(purchase, self.amount, with_cash=cash_amount > 0)
+        return {"purchases": {str(purchase.pk): str(self.amount)}, "advance_used": str(advance_used), "advance_added": "0"}
+
+    def _process_overall_payment(self):
+        """পুরনো বাকি invoice থেকে শুরু করে শোধ; যা বাকি থাকে তা supplier এর advance"""
+        advance_used = self.advance_amount_used if self.use_advance else Decimal('0.00')
+        if advance_used > 0:
+            supplier = self._locked_supplier()
+            if advance_used > supplier.advance_balance:
+                raise ValidationError({"advance_amount_used": f"Advance balance insufficient: {supplier.advance_balance}"})
+        cash_amount = self.amount - advance_used
+        remaining_adv, remaining_cash = advance_used, cash_amount
+        applied = {}
+        due_purchases = (Purchase.objects.select_for_update()
+                         .filter(supplier_id=self.supplier_id, company=self.company, due_amount__gt=0)
+                         .exclude(payment_status='cancelled').order_by('purchase_date', 'id'))
+        adv_spent = Decimal('0.00')
+        for purchase in due_purchases:
+            if remaining_adv + remaining_cash <= 0:
+                break
+            due = purchase.due_amount
+            from_adv = min(remaining_adv, due)
+            from_cash = min(remaining_cash, due - from_adv)
+            take = from_adv + from_cash
+            if take <= 0:
+                continue
+            self._apply_to_purchase(purchase, take, with_cash=from_cash > 0)
+            applied[str(purchase.pk)] = str(take)
+            remaining_adv -= from_adv
+            remaining_cash -= from_cash
+            adv_spent += from_adv
+        # যা বেঁচে গেল: ব্যবহার না হওয়া advance supplier এর কাছেই থাকে; বাড়তি নগদ নতুন advance
+        advance_added = remaining_cash
+        supplier = self._locked_supplier()
+        supplier.advance_balance = supplier.advance_balance - adv_spent + advance_added
+        supplier.save(update_fields=['advance_balance', 'updated_at'])
+        if adv_spent != advance_used:
+            # বাকির চেয়ে বেশি advance ধরা হলে, না-লাগা অংশ supplier এর advance এই থেকে যায় —
+            # তাই সেটুকু এই payment এর অংশ নয়: amount থেকে বাদ, যাতে account থেকে ঠিক নগদ অংশই কাটে
+            unused = advance_used - adv_spent
+            self.amount -= unused
+            if self.amount <= 0:
+                raise ValidationError({"amount": "Nothing is due to this supplier, so the advance was not used."})
+            self.advance_amount_used = adv_spent
+            self.use_advance = adv_spent > 0
+            super().save(update_fields=['amount', 'advance_amount_used', 'use_advance', 'updated_at'])
+        return {"purchases": applied, "advance_used": str(adv_spent), "advance_added": str(advance_added)}
 
     def get_payment_summary(self):
         """Get comprehensive payment summary"""
@@ -531,45 +389,63 @@ class SupplierPayment(models.Model):
 
     # ... rest of your methods ...
 
-    def cancel_payment(self):
-        """Cancel this payment and reverse all effects"""
+    def _recorded_allocation(self):
+        if self.allocation:
+            return self.allocation
+        # পুরনো payment (রেকর্ড নেই) — যেটুকু নিশ্চিত জানা যায়
+        used = self.advance_amount_used if self.use_advance else Decimal('0.00')
+        if self.payment_type == 'specific' and self.purchase_id:
+            return {"purchases": {str(self.purchase_id): str(self.amount)}, "advance_used": str(used), "advance_added": "0"}
+        if self.payment_type == 'advance':
+            return {"purchases": {}, "advance_used": "0", "advance_added": str(self.amount)}
+        raise ValidationError(
+            "This older payment has no record of which invoices it paid, so it cannot be reversed safely.")
+
+    def cancel_payment(self, reason=None):
+        """
+        Payment বাতিল — যা যা বদলেছিল সব উল্টে দেয়: invoice এর পরিশোধ, supplier এর advance,
+        আর account এর টাকা (উল্টো Transaction দিয়ে)। Record মুছে যায় না, "cancelled" হয়ে থাকে।
+        FIX: আগের version এ _reverse_specific/_reverse_overall method ই ছিল না, আর self.transaction
+        নামে কোনো field নেই — বাতিল করতে গেলেই error হত।
+        """
         if self.status != 'completed':
             raise ValidationError("Only completed payments can be cancelled")
-        
+        alloc = self._recorded_allocation()
         with transaction.atomic():
-            # Reverse the transaction first
-            if self.transaction:
-                self.transaction.reverse()
-                logger.info(f"🔄 Transaction {self.transaction.transaction_no} reversed")
-            
-            # Reverse the payment effects based on type
-            if self.payment_type == 'advance':
-                self._reverse_advance_payment()
-            elif self.payment_type == 'specific':
-                self._reverse_specific_payment()
-            else:  # overall
-                self._reverse_overall_payment()
-            
-            # Update status
-            self.status = 'cancelled'
-            self.save(update_fields=['status', 'updated_at'])
-            
-            logger.info(f"🔄 Payment {self.sp_no} cancelled successfully")
+            for pid, amt in (alloc.get('purchases') or {}).items():
+                purchase = Purchase.objects.select_for_update().filter(pk=int(pid)).first()
+                if not purchase:
+                    continue
+                if purchase.payment_status == 'cancelled':
+                    raise ValidationError(
+                        f"{purchase.invoice_no} was cancelled and its payments were already returned to the account.")
+                purchase.paid_amount = max(Decimal('0.00'), purchase.paid_amount - Decimal(str(amt)))
+                purchase.due_amount = max(Decimal('0.00'), purchase.grand_total - purchase.paid_amount)
+                purchase._update_payment_status()
+                purchase.save(update_fields=['paid_amount', 'due_amount', 'payment_status', 'change_amount', 'date_updated'])
 
-    def _reverse_advance_payment(self):
-        """Reverse advance payment effects"""
-        # Decrease supplier advance balance (reverse the increase)
-        old_advance = self.supplier.advance_balance
-        self.supplier.advance_balance -= self.amount
-        self.supplier.save(update_fields=['advance_balance', 'updated_at'])
-        
-        # Increase account balance if account was used (reverse the decrease)
-        if self.account:
-            old_balance = self.account.balance
-            self.account.balance += self.amount
-            self.account.save(update_fields=['balance'])
-            
-            logger.info(f"🔄 Reversed advance payment: Supplier advance {old_advance} -> {self.supplier.advance_balance}, Account {old_balance} -> {self.account.balance}")
+            added = Decimal(str(alloc.get('advance_added') or '0'))
+            used = Decimal(str(alloc.get('advance_used') or '0'))
+            if added or used:
+                supplier = self._locked_supplier()
+                if supplier.advance_balance < added:
+                    raise ValidationError(
+                        f"The supplier's advance ({supplier.advance_balance}) has already been used, "
+                        f"so this payment ({added} advance) cannot be cancelled.")
+                supplier.advance_balance = supplier.advance_balance - added + used
+                supplier.save(update_fields=['advance_balance', 'updated_at'])
+
+            for txn in self.transactions.filter(status='completed', transaction_type='debit'):
+                txn.reverse()
+
+            self.status = 'cancelled'
+            if reason:
+                self.description = f"{(self.description or '').strip()}\nCancelled: {reason}".strip()
+            super().save(update_fields=['status', 'description', 'updated_at'])
+            # supplier এর মোট হিসাব আবার মেলাই
+            self.supplier.update_purchase_totals()
+        logger.info(f"Payment {self.sp_no} cancelled successfully")
+        return True
 
     @classmethod
     def get_supplier_payment_summary(cls, supplier, company):

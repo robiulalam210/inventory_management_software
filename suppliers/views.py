@@ -77,10 +77,18 @@ class SupplierViewSet(BaseCompanyViewSet):
                 queryset = queryset.filter(is_active=True)
             elif status_filter.lower() == 'inactive':
                 queryset = queryset.filter(is_active=False)
+
+        # যাদের কাছে বাকি / যাদের কাছে অগ্রিম দেওয়া আছে
+        balance = (self.request.query_params.get('balance') or '').lower()
+        if balance == 'due':
+            queryset = queryset.filter(total_due__gt=0)
+        elif balance == 'advance':
+            queryset = queryset.filter(advance_balance__gt=0)
         
         # Order by name by default
         order_by = self.request.query_params.get('order_by', 'supplier_no')
-        valid_order_fields = ['name', 'email', 'shop_name', 'created_at', 'updated_at', 'total_purchases']
+        valid_order_fields = ['name', 'email', 'shop_name', 'created_at', 'updated_at', 'total_purchases',
+                              'total_due', 'total_paid', 'advance_balance', 'purchase_count']
         if order_by.lstrip('-') in valid_order_fields:
             queryset = queryset.order_by(order_by)
         else:

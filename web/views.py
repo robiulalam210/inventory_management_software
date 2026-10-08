@@ -271,3 +271,136 @@ def purchase_create_view(request):
             'canSeeList': has_perm(request.user, 'purchases', 'view'),
         },
     })
+
+
+@web_login_required
+@never_cache
+def suppliers_view(request):
+    """
+    Supplier List — সব supplier, কার কাছে কত বাকি/অগ্রিম, যোগ/সম্পাদনা, আর একজনের পুরো হিসাব
+    (সাম্প্রতিক কেনা ও পরিশোধ) পাশে খুলে দেখা।
+    """
+    u = request.user
+    if not has_perm(u, 'suppliers', 'view'):
+        return forbidden(request, 'Supplier List')
+    return render(request, 'web/suppliers/list.html', {
+        'page_title': 'Suppliers',
+        'sp_perms': {
+            'create': has_perm(u, 'suppliers', 'create'),
+            'edit': has_perm(u, 'suppliers', 'edit'),
+            'delete': has_perm(u, 'suppliers', 'delete'),
+            'pay': has_perm(u, 'suppliers', 'create'),
+            'purchase': has_perm(u, 'purchases', 'create'),
+            'purchases': has_perm(u, 'purchases', 'view'),
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def supplier_payments_view(request):
+    """Supplier Payment — supplier কে দেওয়া সব টাকার voucher: filter, মোট, দেখা/print, বাতিল।"""
+    u = request.user
+    if not has_perm(u, 'suppliers', 'view'):
+        return forbidden(request, 'Supplier Payments')
+    return render(request, 'web/suppliers/payments.html', {
+        'page_title': 'Supplier Payments',
+        'can_create': has_perm(u, 'suppliers', 'create'),
+        'can_cancel': has_perm(u, 'suppliers', 'delete'),
+    })
+
+
+@web_login_required
+@never_cache
+def supplier_payment_new_view(request):
+    """
+    নতুন Supplier Payment — supplier এর বাকি invoice দেখে, পুরনো আগে / একটা invoice / অগ্রিম —
+    টাকা কোথায় বসবে আগেই দেখায় (backend এর একই নিয়মে)।
+    """
+    u = request.user
+    if not has_perm(u, 'suppliers', 'create'):
+        return forbidden(request, 'Pay Supplier')
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    return render(request, 'web/suppliers/pay.html', {
+        'page_title': 'Pay Supplier',
+        'form_init': {
+            'supplier': _int(request.GET.get('supplier')),
+            'purchase': _int(request.GET.get('purchase')),
+            'canSeeList': has_perm(u, 'suppliers', 'view'),
+        },
+    })
+
+
+def _sell_init(request):
+    """Sale আর POS দুটোর একই শুরুর তথ্য"""
+    u = request.user
+    return {
+        'me': {'id': u.id, 'name': u.get_full_name() or u.username},
+        'canPickSeller': has_perm(u, 'users', 'view'),
+        'canSeeList': has_perm(u, 'sales', 'view'),
+        'canCollect': has_perm(u, 'money_receipt', 'create'),
+        'company': {
+            'name': getattr(getattr(u, 'company', None), 'name', '') or '',
+            'address': getattr(getattr(u, 'company', None), 'address', '') or '',
+            'phone': getattr(getattr(u, 'company', None), 'phone', '') or '',
+        },
+    }
+
+
+@web_login_required
+@never_cache
+def sale_new_view(request):
+    """
+    Sale — পূর্ণ বিক্রির form (app এর "Sale" screen এর মতো): customer, পণ্য খুঁজে যোগ, দাম/ছাড়,
+    VAT/চার্জ, পরিশোধ ও বাকি। মোট হিসাব backend এর Sale.calculate_totals() এর একই নিয়মে।
+    """
+    if not has_perm(request.user, 'sales', 'create'):
+        return forbidden(request, 'Sale')
+    init = _sell_init(request)
+    try:
+        init['customer'] = int(request.GET.get('customer') or 0) or None
+    except ValueError:
+        init['customer'] = None
+    return render(request, 'web/sales/new.html', {'page_title': 'New Sale', 'sell_init': init})
+
+
+@web_login_required
+@never_cache
+def pos_view(request):
+    """
+    POS Sale — কাউন্টারের দ্রুত বিক্রি: পণ্যের grid, barcode scan, cart, নগদ নিয়ে ফেরত হিসাব,
+    আর ছোট (80mm) রসিদ print।
+    """
+    if not has_perm(request.user, 'sales', 'create'):
+        return forbidden(request, 'POS Sale')
+    return render(request, 'web/sales/pos.html', {'page_title': 'POS', 'sell_init': _sell_init(request), 'pos_page': True})
+
+
+@web_login_required
+@never_cache
+def customers_view(request):
+    """
+    Customers — সব customer, কার কাছে কত বাকি/অগ্রিম, যোগ/সম্পাদনা, আর একজনের পুরো হিসাব:
+    সাম্প্রতিক বিক্রি, টাকা গ্রহণ, আর তারিখ ধরে statement (চলমান বাকি সহ, print করা যায়)।
+    """
+    u = request.user
+    if not has_perm(u, 'customers', 'view'):
+        return forbidden(request, 'Customers')
+    return render(request, 'web/customers/list.html', {
+        'page_title': 'Customers',
+        'cu_perms': {
+            'create': has_perm(u, 'customers', 'create'),
+            'edit': has_perm(u, 'customers', 'edit'),
+            'delete': has_perm(u, 'customers', 'delete'),
+            'sell': has_perm(u, 'sales', 'create'),
+            'sales': has_perm(u, 'sales', 'view'),
+            'collect': has_perm(u, 'money_receipt', 'create'),
+            'receipts': has_perm(u, 'money_receipt', 'view'),
+            'statement': has_perm(u, 'reports', 'view'),
+        },
+    })

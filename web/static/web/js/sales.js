@@ -62,6 +62,14 @@ function salesList(opts) {
       this.loadOptions();
       this.fetch();
 
+      // নতুন sale save এর পর ?open=<id> দিয়ে আসে — সরাসরি invoice খুলে দেখাই (print এর জন্য)
+      const openId = parseInt(p.get('open') || '', 10);
+      // (এই endpoint টা wrapper ছাড়া সরাসরি sale ফেরত দেয়)
+      if (openId) App.api(`/api/sales/${openId}/`).then(r => {
+        const sale = r && r.data && r.data.id ? r.data : (r && r.id ? r : null);
+        if (sale) this.open(sale);
+      }).catch(() => {});
+
       this.$watch('f.q', () => { clearTimeout(this._t); this._t = setTimeout(() => this.reset(), 350); });
       ['f.status', 'f.customer', 'f.seller'].forEach(k => this.$watch(k, () => this.reset()));
     },
@@ -187,7 +195,11 @@ function salesList(opts) {
 
     // ───── invoice drawer ─────
     open(r) { this.sel = r; document.body.style.overflow = 'hidden'; },
-    shut() { this.sel = null; document.body.style.overflow = ''; },
+    shut() {
+      this.sel = null;
+      document.body.style.overflow = '';
+      if (new URLSearchParams(location.search).has('open')) this.syncUrl();
+    },
     /*
      * backend এর Sale.calculate_totals() এর হুবহু একই হিসাব — percent হলে net total এর উপর,
      * না হলে সরাসরি টাকা। তাই invoice এর প্রতিটা লাইন app এর সাথে পয়সা পর্যন্ত মেলে।

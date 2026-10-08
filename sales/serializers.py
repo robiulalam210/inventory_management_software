@@ -298,6 +298,24 @@ class SaleSerializer(serializers.ModelSerializer):
         
         if not items:
             raise serializers.ValidationError({'items': 'At least one item is required.'})
+
+        # FIX (নিরাপত্তা): customer / account / product যেকোনো company র id নেওয়া যেত
+        request = self.context.get('request')
+        company = getattr(getattr(request, 'user', None), 'company', None)
+        if company:
+            customer = attrs.get('customer')
+            if customer is not None and customer.company_id != company.id:
+                raise serializers.ValidationError({'customer_id': 'Customer not found in your company.'})
+            account = attrs.get('account')
+            if account is not None and account.company_id != company.id:
+                raise serializers.ValidationError({'account_id': 'Account must belong to your company.'})
+            seller = attrs.get('sale_by')
+            if seller is not None and getattr(seller, 'company_id', None) != company.id:
+                raise serializers.ValidationError({'sale_by': 'Seller not found in your company.'})
+            for i, item in enumerate(items):
+                product = item.get('product')
+                if product is not None and product.company_id != company.id:
+                    raise serializers.ValidationError({'items': f'Item {i+1}: product not found in your company.'})
         
         # Validate each item
         for i, item in enumerate(items):
@@ -332,9 +350,15 @@ class SaleSerializer(serializers.ModelSerializer):
         delivery_charge_amount = validated_data.pop('delivery_charge', Decimal('0.00'))
         
         # CRITICAL: Map to model fields
-        validated_data['overall_vat_amount'] = vat_amount
-        validated_data['overall_service_charge'] = service_charge_amount
-        validated_data['overall_delivery_charge'] = delivery_charge_amount
+        # FIX: 'vat' না পাঠিয়ে সরাসরি 'overall_vat_amount' পাঠালে (একই কথা service/delivery) আগে সেটা
+        # 0 দিয়ে মুছে যেত, কারণ 'vat' এর default 0। এখন শুধু পাঠানো হলে তবেই alias বসে।
+        sent = getattr(self, 'initial_data', {}) or {}
+        if 'vat' in sent or 'overall_vat_amount' not in sent:
+            validated_data['overall_vat_amount'] = vat_amount
+        if 'service_charge' in sent or 'overall_service_charge' not in sent:
+            validated_data['overall_service_charge'] = service_charge_amount
+        if 'delivery_charge' in sent or 'overall_delivery_charge' not in sent:
+            validated_data['overall_delivery_charge'] = delivery_charge_amount
         
         logger.info(f"Sale creation - Charges mapped: "
                    f"VAT={vat_amount} -> overall_vat_amount={validated_data['overall_vat_amount']}, "
