@@ -34,6 +34,7 @@ urlpatterns = [
     path('health/', health_check, name='health-check'),
     path('', home, name='home'),
         path('api/', include('core.urls')),  # core app APIs
+    path('app/', include('web.urls')),  # web software (browser থেকে — admin panel নয়)
 
 ]
 

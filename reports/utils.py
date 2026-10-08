@@ -29,8 +29,10 @@ def _parse_date_safe(date_str):
 
 def get_date_range(request):
     """Get start and end dates from request with default ranges."""
-    start = _parse_date_safe(request.GET.get('start'))
-    end = _parse_date_safe(request.GET.get('end'))
+    # FIX: app এর কয়েকটা report `start_date` / `end_date` পাঠাত, এখানে শুধু `start` / `end`
+    # পড়া হতো — তাই তারিখ বাছলেও সবসময় "গত ৩০ দিন" আসত। এখন দুই নামই চলে।
+    start = _parse_date_safe(request.GET.get('start') or request.GET.get('start_date'))
+    end = _parse_date_safe(request.GET.get('end') or request.GET.get('end_date'))
     
     # If no dates provided, default to last 30 days
     if not start and not end:
