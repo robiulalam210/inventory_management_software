@@ -14,6 +14,8 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
     prepared_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     purchase_invoice_no = serializers.CharField(source='purchase.invoice_no', read_only=True, allow_null=True)
     payment_summary = serializers.SerializerMethodField()
+    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
+    allocation_detail = serializers.SerializerMethodField()
     
     # Input fields
     supplier = serializers.PrimaryKeyRelatedField(queryset=Supplier.objects.all(), required=True)
@@ -28,7 +30,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
             'payment_type', 'use_advance', 'advance_amount_used', 'purchase', 'purchase_invoice_no',
             'amount', 'payment_method', 'payment_date', 'description', 
             'account', 'created_by', 'prepared_by_name', 'reference_no', 'status',
-            'created_at', 'updated_at', 'payment_summary'
+            'created_at', 'updated_at', 'payment_summary', 'account_name', 'allocation_detail'
         ]
         read_only_fields = [
             'id', 'sp_no', 'supplier_name', 'supplier_phone', 'purchase_invoice_no',
@@ -51,6 +53,18 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
                 "account": "Account is required."
             })
         
+        # FIX (নিরাপত্তা): supplier/account/purchase যেকোনো company র id নেওয়া যেত — অন্য দোকানের
+        # account থেকে টাকা কাটানো বা তাদের invoice এ পরিশোধ বসানো সম্ভব ছিল। এখন নিজের company র হতে হবে।
+        company = getattr(getattr(request, 'user', None), 'company', None)
+        if company:
+            for key in ('supplier', 'account', 'purchase'):
+                obj = attrs.get(key)
+                if obj is not None and getattr(obj, 'company_id', None) != company.id:
+                    raise serializers.ValidationError({key: "Not found in your company."})
+            purchase = attrs.get('purchase')
+            if purchase and attrs.get('supplier') and purchase.supplier_id != attrs['supplier'].id:
+                raise serializers.ValidationError({"purchase": "This invoice belongs to another supplier."})
+
         # Validate payment amount
         amount = attrs.get('amount')
         if amount and amount <= 0:
@@ -69,6 +83,21 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
 
     def get_payment_summary(self, obj):
         return obj.get_payment_summary()
+
+    def get_allocation_detail(self, obj):
+        """কোন invoice এ কত বসেছে, কত advance ব্যবহার/জমা — voucher এ দেখানোর জন্য (পুরনো payment এ null)"""
+        alloc = obj.allocation or {}
+        if not alloc:
+            return None
+        pmap = alloc.get('purchases') or {}
+        ids = [int(k) for k in pmap if str(k).isdigit()]
+        names = dict(Purchase.objects.filter(pk__in=ids).values_list('pk', 'invoice_no')) if ids else {}
+        return {
+            'invoices': [{'purchase_id': int(k), 'invoice_no': names.get(int(k), f'#{k}'), 'amount': float(v)}
+                         for k, v in pmap.items() if str(k).isdigit()],
+            'advance_used': float(alloc.get('advance_used') or 0),
+            'advance_added': float(alloc.get('advance_added') or 0),
+        }
 
     def create(self, validated_data):
         request = self.context.get('request')

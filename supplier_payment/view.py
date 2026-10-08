@@ -57,11 +57,17 @@ class SupplierPaymentListCreateAPIView(APIView):
         if status_filter:
             queryset = queryset.filter(status=status_filter)
             
-        # Filter by date range
+        # Filter by date range (FIX: আগে দুই তারিখই না দিলে কোনোটাই কাজ করত না)
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(payment_date__range=[start_date, end_date])
+        if start_date:
+            queryset = queryset.filter(payment_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(payment_date__lte=end_date)
+
+        payment_type = request.query_params.get('payment_type')
+        if payment_type:
+            queryset = queryset.filter(payment_type=payment_type)
             
         # Search
         search = request.query_params.get('search')
@@ -69,6 +75,8 @@ class SupplierPaymentListCreateAPIView(APIView):
             queryset = queryset.filter(
                 Q(sp_no__icontains=search) |
                 Q(supplier__name__icontains=search) |
+                Q(supplier__phone__icontains=search) |
+                Q(purchase__invoice_no__icontains=search) |
                 Q(reference_no__icontains=search)
             )
             
@@ -121,6 +129,15 @@ class SupplierPaymentListCreateAPIView(APIView):
                     data[new_field] = data.pop(old_field)
                     logger.info(f"Mapped {old_field} -> {new_field}: {data[new_field]}")
             
+            # FIX: app "mobile banking" / "Cash" পাঠায়, অথচ model এর choice হলো cash/bank/cheque/mobile —
+            # mobile banking এ payment সবসময় validation error দিত। এখন মিলিয়ে নেওয়া হয়।
+            if data.get('payment_method'):
+                pm = str(data['payment_method']).strip().lower()
+                data['payment_method'] = ('mobile' if 'mobile' in pm or 'bkash' in pm or 'nagad' in pm
+                                          else 'cheque' if 'cheque' in pm
+                                          else 'bank' if 'bank' in pm
+                                          else 'cash')
+
             # Handle specific_invoice logic
             specific_invoice = data.get('specific_invoice', False)
             invoice_no = data.get('invoice_no')
@@ -406,7 +423,17 @@ class SupplierPaymentDetailAPIView(APIView):
             
             payment_id = payment.id
             sp_no = payment.sp_no
-            payment.delete()
+            # FIX: আগে সরাসরি মুছে যেত — supplier এর invoice "paid" থেকে যেত আর account এর টাকাও ফিরত না।
+            # এখন আগে সব উল্টে দিয়ে তারপর মোছা হয়।
+            from django.db import transaction as db_transaction
+            try:
+                with db_transaction.atomic():
+                    if payment.status == 'completed':
+                        payment.cancel_payment('Deleted')
+                    payment.delete()
+            except ValidationError as ve:
+                return custom_response(success=False, message='; '.join(ve.messages), data=None,
+                                       status_code=status.HTTP_400_BAD_REQUEST)
             logger.info(f"Supplier payment deleted successfully: {sp_no} (ID: {payment_id})")
             
             return custom_response(
@@ -444,3 +471,43 @@ class SupplierPaymentDetailAPIView(APIView):
                 error_messages.append(f"{readable_field}: {field_errors}")
         
         return " • ".join(error_messages) if error_messages else "Validation error occurred"
+
+
+class SupplierPaymentCancelAPIView(APIView):
+    """POST /api/supplier-payments/<pk>/cancel/ — সব উল্টে দিয়ে payment "cancelled" করে (record থেকে যায়)"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        payment = SupplierPayment.objects.filter(pk=pk, company=request.user.company).first()
+        if not payment:
+            return custom_response(success=False, message="Supplier payment not found.", data=None,
+                                   status_code=status.HTTP_404_NOT_FOUND)
+        try:
+            payment.cancel_payment(request.data.get('reason'))
+        except ValidationError as ve:
+            return custom_response(success=False, message='; '.join(ve.messages), data=None,
+                                   status_code=status.HTTP_400_BAD_REQUEST)
+        payment.refresh_from_db()
+        return custom_response(success=True, message="Supplier payment cancelled. Everything it changed was reversed.",
+                               data=SupplierPaymentSerializer(payment, context={'request': request}).data,
+                               status_code=status.HTTP_200_OK)
+
+
+class SupplierPaymentSummaryAPIView(SupplierPaymentListCreateAPIView):
+    """GET /api/supplier-payments/summary/ — list এর একই filter এ মোট (বাতিল বাদে)"""
+
+    def get(self, request):
+        from django.db.models import Count
+        qs = self.apply_filters(self.get_queryset(), request).order_by()
+        counted = qs if request.query_params.get('status') == 'cancelled' else qs.exclude(status='cancelled')
+        agg = counted.aggregate(n=Count('id'), amount=Sum('amount'), adv=Sum('advance_amount_used'))
+        by_method = [{'method': r['payment_method'], 'count': r['n'], 'amount': float(r['amount'] or 0)}
+                     for r in counted.values('payment_method').annotate(n=Count('id'), amount=Sum('amount')).order_by('-amount')]
+        return custom_response(success=True, message="Supplier payment summary.", data={
+            'total_payments': agg['n'] or 0,
+            'total_amount': float(agg['amount'] or 0),
+            'advance_used': float(agg['adv'] or 0),
+            'cash_paid': float((agg['amount'] or 0) - (agg['adv'] or 0)),
+            'cancelled_count': qs.filter(status='cancelled').count(),
+            'by_method': by_method,
+        }, status_code=status.HTTP_200_OK)

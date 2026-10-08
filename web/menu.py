@@ -17,8 +17,8 @@ MENU = [
         {'title': 'My Dashboard', 'url': 'web:home', 'perm': ('dashboard', 'view'), 'slug': 'dashboard'},
     ]},
     {'title': 'Sales', 'icon': 'cart', 'items': [
-        {'title': 'Sale', 'url': None, 'perm': ('sales', 'create'), 'slug': 'sale'},
-        {'title': 'POS Sale', 'url': None, 'perm': ('sales', 'create'), 'slug': 'pos-sale'},
+        {'title': 'Sale', 'url': 'web:sale_new', 'perm': ('sales', 'create'), 'slug': 'sale'},
+        {'title': 'POS Sale', 'url': 'web:pos', 'perm': ('sales', 'create'), 'slug': 'pos-sale'},
         {'title': 'Sale List', 'url': 'web:sales', 'perm': SALES_VIEW, 'slug': 'sale-list'},
     ]},
     {'title': 'Money Receipt', 'icon': 'receipt', 'items': [
@@ -36,11 +36,11 @@ MENU = [
         {'title': 'Accounts', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'accounts'},
     ]},
     {'title': 'Customers', 'icon': 'users', 'items': [
-        {'title': 'Customers', 'url': None, 'perm': ('customers', 'view'), 'slug': 'customers'},
+        {'title': 'Customers', 'url': 'web:customers', 'perm': ('customers', 'view'), 'slug': 'customers'},
     ]},
     {'title': 'Supplier', 'icon': 'store', 'items': [
-        {'title': 'Supplier List', 'url': None, 'perm': ('suppliers', 'view'), 'slug': 'suppliers'},
-        {'title': 'Supplier Payment', 'url': None, 'perm': ('suppliers', 'view'), 'slug': 'supplier-payments'},
+        {'title': 'Supplier List', 'url': 'web:suppliers', 'perm': ('suppliers', 'view'), 'slug': 'suppliers'},
+        {'title': 'Supplier Payment', 'url': 'web:supplier_payments', 'perm': ('suppliers', 'view'), 'slug': 'supplier-payments'},
     ]},
     {'title': 'Expense', 'icon': 'expense', 'items': [
         {'title': 'Expense List', 'url': None, 'perm': ('expense', 'view'), 'slug': 'expenses'},
@@ -126,12 +126,25 @@ def build_menu(user, current_path=''):
                 'active': current_path.rstrip('/') == href.rstrip('/'),
             })
         if items:
+            # কোনো item হুবহু না মিললে, যে item এর ঠিকানা দিয়ে এই page শুরু সেটাই active
+            # (যেমন /app/supplier-payments/new/ → "Supplier Payment")
             sections.append({
                 'title': section['title'],
                 'icon': section['icon'],
                 'items': items,
                 'open': any(i['active'] for i in items),
             })
+    if not any(i['active'] for sec in sections for i in sec['items']):
+        cur = current_path.rstrip('/') + '/'
+        best = None
+        for sec in sections:
+            for i in sec['items']:
+                h = i['href'].rstrip('/') + '/'
+                if i['ready'] and h != '/app/' and cur.startswith(h) and (not best or len(h) > len(best[1]['href'])):
+                    best = (sec, i)
+        if best:
+            best[1]['active'] = True
+            best[0]['open'] = True
     return sections
 
 

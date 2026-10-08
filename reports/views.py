@@ -1072,291 +1072,140 @@ class CustomerDueAdvanceReportView(BaseReportView):
 # Customer Ledger Details - ASCII-SAFE VERSION
 # --------------------
 class CustomerLedgerReportView(BaseReportView):
+    """
+    Customer ledger — বিক্রি (debit), টাকা গ্রহণ (credit), ফেরত (credit), তারিখের ক্রমে, চলমান বাকি সহ।
+
+    FIX:
+      • আগে চলমান বাকি (due) হিসাব হত আগে সব বিক্রি, তারপর সব payment যোগ করে — তারপর তারিখ ধরে
+        সাজানো হত। ফলে প্রতিটা লাইনের "due" ভুল দেখাত। এখন আগে তারিখে সাজিয়ে তারপর হিসাব।
+      • তারিখ filter কাজই করত না (সব সময় সব লেনদেন)। এখন বাছাই করা সময়ের লেনদেন, আর তার আগের সব
+        হিসাব একটা "Opening balance" লাইনে।
+      • Sales return কখনো আসত না — SalesReturn এ customer field নেই, original_sale দিয়ে খুঁজতে হয়।
+    """
     filter_serializer_class = CustomerLedgerFilterSerializer
-    
+
     def get(self, request):
         try:
+            from customers.models import Customer
+            from money_receipts.models import MoneyReceipt
+
             company = self.get_company(request)
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
-            
-            # ASCII-safe debug output
-            print("\n=== CUSTOMER LEDGER DEBUG ===")
-            print(f"Company ID: {company.id}")
-            print(f"Customer ID from filters: {filters.get('customer')}")
-            print(f"Date range: {start} to {end}")
-            
             if not filters.get('customer'):
                 return custom_response(False, "Customer ID is required for ledger report", None, 400)
-            
-            from customers.models import Customer
-            
-            # ASCII-safe customer lookup
             try:
                 customer = Customer.objects.get(id=filters['customer'], company=company)
-                print(f"[SUCCESS] Found customer: {customer.name} (ID: {customer.id})")
             except Customer.DoesNotExist:
                 return custom_response(False, "Customer not found", None, 404)
-            
+
+            ttype = filters.get('transaction_type') or 'all'
+            events = []  # (date, seconds-in-day, order, entry)
+
+            def local(dt):
+                if dt is None:
+                    return timezone.localdate(), 0
+                if timezone.is_aware(dt):
+                    dt = timezone.localtime(dt)
+                return dt.date(), dt.hour * 3600 + dt.minute * 60 + dt.second
+
+            def entry(no, d, particular, details, kind, method, debit, credit):
+                return {'voucher_no': no or '', 'date': d, 'particular': particular, 'details': details,
+                        'type': kind, 'method': method or 'N/A', 'debit': round(float(debit), 2),
+                        'credit': round(float(credit), 2), 'customer_id': customer.id, 'customer_name': customer.name}
+
+            receipts = list(MoneyReceipt.objects.filter(company=company, customer=customer)
+                            .select_related('sale').order_by('payment_date', 'id'))
+
+            # কোন sale এর কত টাকা receipt দিয়ে এসেছে — বাকিটা বিক্রির সময়েই নেওয়া (পুরনো data তে receipt নেই)
+            from collections import defaultdict
+            covered = defaultdict(lambda: Decimal('0'))
+            for mr in receipts:
+                alloc = mr.allocation or {}
+                if alloc:
+                    for sid, amt in (alloc.get('sales') or {}).items():
+                        if str(sid).isdigit():
+                            covered[int(sid)] += Decimal(str(amt))
+                elif mr.sale_id:
+                    covered[mr.sale_id] += mr.amount or Decimal('0')
+
+            if ttype in ('all', 'sale'):
+                for sale in Sale.objects.filter(company=company, customer=customer).order_by('sale_date', 'id'):
+                    d, sec = local(sale.sale_date)
+                    events.append((d, sec, 0, entry(sale.invoice_no, d, 'Sale', f'Sale - {sale.invoice_no}', 'Sale',
+                                                    sale.payment_method, sale.grand_total or 0, 0)))
+                    gap = (sale.paid_amount or Decimal('0')) - covered.get(sale.id, Decimal('0'))
+                    if ttype == 'all' and gap > Decimal('0.005'):
+                        events.append((d, sec, 1, entry(sale.invoice_no, d, 'Payment', 'Paid at the counter', 'Payment',
+                                                        sale.payment_method, 0, gap)))
+
+            if ttype in ('all', 'payment'):
+                for mr in receipts:
+                    d, sec = local(mr.payment_date)
+                    target = f"for {mr.sale.invoice_no}" if mr.sale_id and mr.sale else ('advance' if mr.payment_type == 'advance' else 'toward dues')
+                    events.append((d, sec, 2, entry(mr.mr_no, d, 'Payment', f'Payment {target} - {mr.payment_method or "N/A"}',
+                                                    'Payment', mr.payment_method, 0, mr.amount or 0)))
+
+            if ttype in ('all', 'return'):
+                returns = (SalesReturn.objects.filter(company=company, original_sale__customer=customer)
+                           .exclude(status='rejected').order_by('return_date', 'id'))
+                for ret in returns:
+                    d = ret.return_date
+                    events.append((d, 86399, 3, entry(ret.receipt_no or f'RET-{ret.id}', d, 'Return', 'Sales Return', 'Return',
+                                                      ret.payment_method, 0, ret.return_amount or 0)))
+
+            events.sort(key=lambda e: (e[0], e[1], e[2]))
+
+            opening = 0.0
+            rows = []
+            total_debit = total_credit = 0.0
+            for d, _sec, _o, e in events:
+                if start and d < start:
+                    opening += e['debit'] - e['credit']
+                    continue
+                if end and d > end:
+                    continue
+                rows.append(e)
+
+            running = round(opening, 2)
             ledger_entries = []
-            running_balance = 0.0
-            sl_number = 1
-            
-            # 1. Sale transactions - NO DATE FILTER FOR NOW
-            if filters.get('transaction_type') in ['all', 'sale']:
-                sales = Sale.objects.filter(
-                    company=company, 
-                    customer=customer
-                ).select_related('customer').order_by('sale_date')
-                
-                print(f"\n--- SALES FOR CUSTOMER ---")
-                print(f"Total sales count: {sales.count()}")
-                
-                # Show all sales without date filter
-                sale_counter = 0
-                for sale in sales:
-                    sale_counter += 1
-                    sale_amount = 0.0
-                    if sale.grand_total:
-                        try:
-                            sale_amount = float(sale.grand_total)
-                        except (TypeError, ValueError):
-                            sale_amount = 0.0
-                    
-                    running_balance += sale_amount
-                    
-                    # ASCII-safe date formatting
-                    sale_date_str = "N/A"
-                    if sale.sale_date:
-                        try:
-                            sale_date_str = sale.sale_date.strftime('%Y-%m-%d')
-                        except:
-                            sale_date_str = str(sale.sale_date)[:10]
-                    
-                    print(f"Sale {sale_counter}: {sale.invoice_no} - Date: {sale_date_str} - Amount: ${sale_amount}")
-                    
-                    ledger_entries.append({
-                        'sl': sl_number,
-                        'voucher_no': sale.invoice_no,
-                        'date': sale.sale_date.date() if sale.sale_date else datetime.now().date(),
-                        'particular': 'Sale',
-                        'details': f'Sale - {sale.invoice_no}',
-                        'type': 'Sale',
-                        'method': sale.payment_method or 'N/A',
-                        'debit': round(sale_amount, 2),
-                        'credit': 0.0,
-                        'due': round(running_balance, 2),
-                        'customer_id': customer.id,
-                        'customer_name': customer.name
-                    })
-                    sl_number += 1
-                
-                if sale_counter == 0:
-                    print("No sales found for this customer")
-            
-            # 2. Payment transactions
-            if filters.get('transaction_type') in ['all', 'payment']:
-                try:
-                    from money_receipts.models import MoneyReceipt
-                    
-                    payments = MoneyReceipt.objects.filter(company=company)
-                    
-                    # Filter by customer
-                    if hasattr(MoneyReceipt, 'customer'):
-                        payments = payments.filter(customer=customer)
-                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
-                        print(f"Filtering by customer field")
-                    elif hasattr(MoneyReceipt, 'customer_id'):
-                        payments = payments.filter(customer_id=customer.id)
-                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
-                        print(f"Filtering by customer_id field")
-                    elif hasattr(MoneyReceipt, 'customer_name'):
-                        payments = payments.filter(customer_name__icontains=customer.name)
-                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
-                        print(f"Filtering by customer_name field")
-                    else:
-                        print(f"\n--- PAYMENTS FOR CUSTOMER ---")
-                        print(f"MoneyReceipt model doesn't have customer-related fields")
-                        payments = MoneyReceipt.objects.none()
-                    
-                    print(f"Total payments count: {payments.count()}")
-                    
-                    payment_counter = 0
-                    for payment in payments.order_by('id'):
-                        payment_counter += 1
-                        payment_amount = 0.0
-                        if hasattr(payment, 'amount') and payment.amount:
-                            try:
-                                payment_amount = float(payment.amount)
-                            except (TypeError, ValueError):
-                                payment_amount = 0.0
-                        
-                        running_balance -= payment_amount
-                        
-                        # Get voucher number
-                        voucher_no = getattr(payment, 'mr_no', 
-                                           getattr(payment, 'voucher_no', 
-                                                   getattr(payment, 'invoice_no', 
-                                                           f"PYMT-{payment.id}")))
-                        
-                        # ASCII-safe output
-                        print(f"Payment {payment_counter}: {voucher_no} - Amount: ${payment_amount}")
-                        
-                        # Get date
-                        payment_date = None
-                        if hasattr(payment, 'payment_date'):
-                            payment_date = payment.payment_date
-                        elif hasattr(payment, 'date'):
-                            payment_date = payment.date
-                        
-                        ledger_entries.append({
-                            'sl': sl_number,
-                            'voucher_no': voucher_no,
-                            'date': payment_date.date() if payment_date else datetime.now().date(),
-                            'particular': 'Payment',
-                            'details': f'Payment - {getattr(payment, "payment_method", "N/A")}',
-                            'type': 'Payment',
-                            'method': getattr(payment, 'payment_method', 'N/A'),
-                            'debit': 0.0,
-                            'credit': round(payment_amount, 2),
-                            'due': round(running_balance, 2),
-                            'customer_id': customer.id,
-                            'customer_name': customer.name
-                        })
-                        sl_number += 1
-                    
-                    if payment_counter == 0:
-                        print("No payments found for this customer")
-                        
-                except ImportError as e:
-                    print(f"\n--- PAYMENTS ---")
-                    print(f"MoneyReceipt model not available: {e}")
-                except Exception as e:
-                    print(f"\n--- PAYMENTS ERROR ---")
-                    print(f"Error: {str(e)}")
-            
-            # 3. Sales Return transactions
-            if filters.get('transaction_type') in ['all', 'return']:
-                sales_returns = SalesReturn.objects.filter(company=company)
-                
-                print(f"\n--- SALES RETURNS FOR CUSTOMER ---")
-                
-                # Filter by customer
-                if hasattr(SalesReturn, 'customer'):
-                    sales_returns = sales_returns.filter(customer=customer)
-                    print(f"Filtering by direct customer relationship")
-                elif hasattr(SalesReturn, 'sale__customer'):
-                    sales_returns = sales_returns.filter(sale__customer=customer)
-                    print(f"Filtering by sale__customer relationship")
-                else:
-                    print(f"No customer relationship found in SalesReturn model")
-                    sales_returns = SalesReturn.objects.none()
-                
-                print(f"Total returns count: {sales_returns.count()}")
-                
-                return_counter = 0
-                for return_obj in sales_returns.order_by('id'):
-                    return_counter += 1
-                    return_amount = 0.0
-                    
-                    if hasattr(return_obj, 'return_amount') and return_obj.return_amount:
-                        try:
-                            return_amount = float(return_obj.return_amount)
-                        except (TypeError, ValueError):
-                            return_amount = 0.0
-                    elif hasattr(return_obj, 'grand_total') and return_obj.grand_total:
-                        try:
-                            return_amount = float(return_obj.grand_total)
-                        except (TypeError, ValueError):
-                            return_amount = 0.0
-                    
-                    running_balance -= return_amount
-                    
-                    voucher_no = getattr(return_obj, 'invoice_no', 
-                                       getattr(return_obj, 'return_no', 
-                                               f"RET-{return_obj.id}"))
-                    
-                    print(f"Return {return_counter}: {voucher_no} - Amount: ${return_amount}")
-                    
-                    ledger_entries.append({
-                        'sl': sl_number,
-                        'voucher_no': voucher_no,
-                        'date': return_obj.return_date,
-                        'particular': 'Return',
-                        'details': 'Sales Return',
-                        'type': 'Return',
-                        'method': getattr(return_obj, 'payment_method', 'N/A'),
-                        'debit': 0.0,
-                        'credit': round(return_amount, 2),
-                        'due': round(running_balance, 2),
-                        'customer_id': customer.id,
-                        'customer_name': customer.name
-                    })
-                    sl_number += 1
-                
-                if return_counter == 0:
-                    print("No returns found for this customer")
-            
-            # Sort all entries by date
-            ledger_entries.sort(key=lambda x: x['date'])
-            
-            # Re-number SL after sorting
-            for i, entry in enumerate(ledger_entries, 1):
-                entry['sl'] = i
-            
-            print(f"\n=== LEDGER SUMMARY ===")
-            print(f"Total ledger entries: {len(ledger_entries)}")
-            print(f"Final running balance: {running_balance}")
-            
-            if ledger_entries:
-                print("First 5 entries:")
-                for i, entry in enumerate(ledger_entries[:5], 1):
-                    print(f"  {i}. {entry['date']} - {entry['type']} - {entry['voucher_no']}")
-            else:
-                print("No ledger entries found!")
-                
-                # Additional debug
-                print(f"\n=== ADDITIONAL DEBUG ===")
-                print(f"Customer: {customer.name} (ID: {customer.id})")
-                print(f"Company: {company.id}")
-                
-                # Check if any sales exist at all
-                all_sales_in_company = Sale.objects.filter(company=company).count()
-                print(f"All sales in company: {all_sales_in_company}")
-                
-                # Check sales with this customer ID (regardless of company)
-                from django.db import connection
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT COUNT(*) FROM sales_sale WHERE customer_id = %s", [customer.id])
-                    row = cursor.fetchone()
-                    print(f"All sales with customer ID {customer.id}: {row[0]}")
-            
+            if start:
+                ledger_entries.append({
+                    'voucher_no': '', 'date': start, 'particular': 'Opening balance',
+                    'details': 'Balance brought forward', 'type': 'Opening', 'method': '-',
+                    'debit': 0.0, 'credit': 0.0, 'customer_id': customer.id, 'customer_name': customer.name,
+                    'due': running,
+                })
+            for e in rows:
+                running = round(running + e['debit'] - e['credit'], 2)
+                total_debit += e['debit']
+                total_credit += e['credit']
+                e['due'] = running
+                ledger_entries.append(e)
+            for i, e in enumerate(ledger_entries, 1):
+                e['sl'] = i
+
             serializer = CustomerLedgerSerializer(ledger_entries, many=True)
-            
             response_data = {
                 'report': self.paginate_data(serializer.data),
                 'summary': {
                     'customer_id': customer.id,
                     'customer_name': customer.name,
-                    'closing_balance': round(running_balance, 2),
-                    'total_transactions': len(ledger_entries),
+                    'opening_balance': round(opening, 2),
+                    'total_debit': round(total_debit, 2),
+                    'total_credit': round(total_credit, 2),
+                    'closing_balance': running,
+                    'total_transactions': len(rows),
                     'date_range': {
                         'start': start.isoformat() if start else None,
                         'end': end.isoformat() if end else None
                     }
                 }
             }
-            
-            print(f"\n=== END DEBUG ===\n")
-            
             return custom_response(True, "Customer ledger report fetched successfully", response_data)
-            
         except Exception as e:
-            # ASCII-safe error message
-            error_msg = str(e).encode('ascii', 'ignore').decode('ascii')
-            print(f"ERROR in CustomerLedgerReportView: {error_msg}")
-            import traceback
-            traceback.print_exc()
+            import logging
+            logging.getLogger(__name__).exception("Error in CustomerLedgerReportView")
             return self.handle_exception(e)    
 
 # --------------------

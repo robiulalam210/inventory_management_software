@@ -6,7 +6,7 @@ from .views import (
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView, MoneyReceiptDetailAPIView, MoneyReceiptSummaryAPIView
-from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
+from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView, SupplierPaymentCancelAPIView, SupplierPaymentSummaryAPIView
 # from purchases.views import PurchaseViewSet, PurchaseItemViewSet,PurchaseAllListViewSet
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet, PurchaseAllListViewSet
 from purchases.views import get_due_purchases
@@ -100,7 +100,9 @@ urlpatterns = [
     path('money-receipts/summary/', MoneyReceiptSummaryAPIView.as_view(), name='money_receipt_summary'),
     path('money-receipts/<int:receipt_id>/', MoneyReceiptDetailAPIView.as_view(), name='money_receipt_detail'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
+    path('supplier-payments/summary/', SupplierPaymentSummaryAPIView.as_view(), name='supplier-payment-summary'),
     path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),
+    path('supplier-payments/<int:pk>/cancel/', SupplierPaymentCancelAPIView.as_view(), name='supplier-payment-cancel'),
 
     path('reports/', include('reports.urls')),
     path('sync/', include('offline_sync.urls')),  # offline sync + audit

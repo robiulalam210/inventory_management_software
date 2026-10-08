@@ -125,37 +125,27 @@ class CustomerViewSet(viewsets.ModelViewSet):
         params = self.request.GET
         
         # Amount type filter (advance/due/paid) - only for list views
+        # FIX: আগে sale এর সাথে join করে প্রতিটা sale ধরে তুলনা হত — ফলে "due" এ একই customer অনেকবার আসত
+        # (যতগুলো বাকি invoice, ততবার), আর "paid" এ বাকি থাকা customer ও চলে আসত।
+        # এখন প্রতি customer এর মোট বাকি একটা subquery দিয়ে, একবারই।
         amount_type = params.get('amount_type')
         if amount_type and self.action == 'list':
+            from django.db.models import OuterRef, Subquery
+            from django.db.models.functions import Coalesce
+            from sales.models import Sale
+            due_sub = (Sale.objects.filter(customer=OuterRef('pk'))
+                       .values('customer').annotate(s=Sum('due_amount')).values('s')[:1])
+            zero = Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
+            queryset = queryset.annotate(
+                _sales_due=Coalesce(Subquery(due_sub, output_field=DecimalField(max_digits=12, decimal_places=2)), zero))
             amount_type = amount_type.lower()
-            
             if amount_type == 'advance':
                 queryset = queryset.filter(advance_balance__gt=0)
             elif amount_type == 'due':
-                # Customers with due amount > 0
-                queryset = queryset.annotate(
-                    temp_due=Case(
-                        When(
-                            sale__isnull=True,
-                            then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
-                        ),
-                        default=F('sale__grand_total') - F('sale__paid_amount') - F('advance_balance'),
-                        output_field=DecimalField(max_digits=12, decimal_places=2)
-                    )
-                ).filter(temp_due__gt=0).distinct()
+                queryset = queryset.filter(_sales_due__gt=F('advance_balance'))
             elif amount_type == 'paid':
-                # Customers with no due and no advance
-                queryset = queryset.annotate(
-                    temp_due=Case(
-                        When(
-                            sale__isnull=True,
-                            then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
-                        ),
-                        default=F('sale__grand_total') - F('sale__paid_amount') - F('advance_balance'),
-                        output_field=DecimalField(max_digits=12, decimal_places=2)
-                    )
-                ).filter(temp_due=0, advance_balance=0).distinct()
-        
+                queryset = queryset.filter(_sales_due=0, advance_balance=0)
+
         # Date range filter
         start_date = params.get('start_date')
         end_date = params.get('end_date')

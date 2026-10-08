@@ -13,6 +13,7 @@ class CustomerSerializer(serializers.ModelSerializer):
     advance_balance = serializers.SerializerMethodField()
     payment_breakdown = serializers.SerializerMethodField()
     customer_type = serializers.SerializerMethodField()
+    total_bought = serializers.SerializerMethodField()
     
     class Meta:
         model = Customer
@@ -21,9 +22,10 @@ class CustomerSerializer(serializers.ModelSerializer):
             'client_no', 'total_due', 'total_paid', 'amount_type',
             'company', 'total_sales', 'date_created', 'created_by',
             'advance_balance', 'payment_breakdown', 'special_customer',
-            'customer_type'
+            'customer_type', 'total_bought'
         ]
-        read_only_fields = ['date_created', 'created_by', 'customer_type']
+        # FIX (নিরাপত্তা): 'company' লেখা যেত — PATCH দিয়ে customer কে অন্য company তে সরিয়ে দেওয়া যেত
+        read_only_fields = ['date_created', 'created_by', 'customer_type', 'company']
 
     def get_client_no(self, obj):
         """Get client number - use existing or generate if missing"""
@@ -37,6 +39,10 @@ class CustomerSerializer(serializers.ModelSerializer):
             return f"CU-{1000 + new_id}"
         except:
             return f"CU-{1000 + obj.id}" if obj.id else "CU-1000"
+
+    def get_total_bought(self, obj):
+        """এই customer এর কাছে মোট কত টাকার বিক্রি (সব invoice এর grand total)"""
+        return self.get_total_grand_total(obj)
 
     def get_customer_type(self, obj):
         """Get customer type display"""
