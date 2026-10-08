@@ -125,103 +125,80 @@ class Customer(models.Model):
         
         return False, 'not_advance'
 
+    def expected_advance_from_receipts(self):
+        """
+        রসিদের রেকর্ড থেকে এই customer এর advance কত হওয়ার কথা।
+          • নতুন রসিদ: save এর সময় লেখা allocation["advance"] — ঠিক যতটুকু advance এ গেছে
+          • পুরনো রসিদ (allocation নেই): শুধু স্পষ্ট advance রসিদ পুরোটা; overall/specific এর ভাগ জানা নেই
+        ফেরত: (মোট, তালিকা, সব_রসিদের_হিসাব_জানা_কিনা)
+        """
+        from money_receipts.models import MoneyReceipt
+        total = Decimal('0.00')
+        rows = []
+        complete = True
+        for r in MoneyReceipt.objects.filter(customer=self, company=self.company).order_by('payment_date', 'id'):
+            alloc = r.allocation or {}
+            if alloc:
+                adv = Decimal(str(alloc.get('advance') or '0'))
+                kind = 'recorded'
+            elif r.is_advance_payment or r.payment_type == 'advance':
+                adv = r.amount or Decimal('0.00')
+                kind = 'explicit_advance'
+            else:
+                adv = Decimal('0.00')
+                kind = 'legacy_unknown'
+                complete = False
+            if adv > 0:
+                rows.append({
+                    'id': r.id,
+                    'receipt_no': r.mr_no,
+                    'amount': float(adv),
+                    'date': r.payment_date,
+                    'type': kind,
+                    'payment_type': r.payment_type,
+                    'is_advance_payment': r.is_advance_payment,
+                    'sale_linked': r.sale_id is not None,
+                    'sale_invoice_no': r.sale_invoice_no,
+                })
+            total += adv
+        return total, rows, complete
+
     def sync_advance_balance(self):
-        """Sync stored advance balance with actual advance receipts and sales overpayments"""
+        """
+        FIX (গুরুতর): আগে এই method প্রতিটা "overall" রসিদের পুরো টাকাকে advance ধরে
+        customer.advance_balance এ লিখে দিত — আর customer list/detail দেখলেই এটা চলত।
+        ফলে ৳1,000 দিয়ে পুরনো due শোধ করলে customer list খোলামাত্র সে ৳1,000 advance ও পেয়ে যেত
+        (একই টাকা দুইবার)। সাথে একটা debug কোড ব্যর্থ হলে ৳2,000 বসিয়ে দিত।
+
+        এখন: stored advance_balance ই আসল হিসাব — MoneyReceipt একই transaction এ যোগ/বাতিল করে।
+        এই method আর কিছু লেখে না; শুধু রসিদের রেকর্ডের সাথে মিলিয়ে breakdown দেয়
+        (পুরনো serializer গুলো যে আকারে data চায় সেই আকারেই)।
+        """
         from sales.models import Sale
         from django.db.models import Sum
-        from decimal import Decimal
-        
-        # Calculate sales overpayment
-        sales_total = Sale.objects.filter(
-            customer=self,
-            company=self.company
-        ).aggregate(
-            total_grand=Sum('grand_total'),
-            total_paid=Sum('paid_amount')
-        )
-        
+
+        sales_total = Sale.objects.filter(customer=self, company=self.company).aggregate(
+            total_grand=Sum('grand_total'), total_paid=Sum('paid_amount'))
         total_grand = float(sales_total['total_grand'] or 0)
         total_paid = float(sales_total['total_paid'] or 0)
         sales_overpayment = max(0.0, total_paid - total_grand)
-        
-        # Calculate advance from receipts
-        total_advance_from_receipts = 0.0
-        advance_receipts_list = []
+
         try:
-            from money_receipts.models import MoneyReceipt
-            money_receipts = MoneyReceipt.objects.filter(
-                customer=self,
-                company=self.company
-            )
-            
-            for receipt in money_receipts:
-                receipt_amount = float(receipt.amount) if receipt.amount else 0.0
-                
-                # Use the helper method to determine if it's advance
-                is_advance, advance_type = self.is_advance_receipt(receipt)
-                
-                if is_advance:
-                    total_advance_from_receipts += receipt_amount
-                    advance_receipts_list.append({
-                        'id': receipt.id,
-                        'receipt_no': getattr(receipt, 'receipt_no', f'RCPT-{receipt.id}'),
-                        'amount': receipt_amount,
-                        'date': getattr(receipt, 'payment_date', 
-                                     getattr(receipt, 'date_created', 
-                                     getattr(receipt, 'created_at', None))),
-                        'type': advance_type,
-                        'payment_type': getattr(receipt, 'payment_type', None),
-                        'is_advance_payment': getattr(receipt, 'is_advance_payment', False),
-                        'sale_linked': hasattr(receipt, 'sale') and receipt.sale is not None,
-                        'sale_invoice_no': getattr(receipt, 'sale_invoice_no', None)
-                    })
-        except Exception as e:
-            print(f"Error fetching money receipts: {e}")
-            # Add the known receipt manually for debugging
-            advance_receipts_list.append({
-                'id': 6,
-                'receipt_no': 'MR-1006',
-                'amount': 2000.0,
-                'date': '2025-12-14T18:00:00+00:00',
-                'type': 'overall_payment_debug',
-                'payment_type': 'overall',
-                'is_advance_payment': False,
-                'sale_linked': False,
-                'sale_invoice_no': None,
-                'note': 'Manual addition - overall payment should be advance'
-            })
-            total_advance_from_receipts = 2000.0
-        
-        # Calculate correct advance
-        correct_advance = Decimal(str(sales_overpayment + total_advance_from_receipts))
-        current_advance = self.advance_balance or Decimal('0')
-        
-        # Update if different (allow small floating point differences)
-        if abs(float(current_advance) - float(correct_advance)) > 0.01:
-            self.advance_balance = correct_advance
-            self.save(update_fields=['advance_balance'])
-            
-            return {
-                'synced': True,
-                'old_value': float(current_advance),
-                'new_value': float(correct_advance),
-                'breakdown': {
-                    'sales_overpayment': sales_overpayment,
-                    'advance_from_receipts': total_advance_from_receipts,
-                    'total_advance': float(correct_advance),
-                    'advance_receipts': advance_receipts_list
-                }
-            }
-        
+            expected, rows, complete = self.expected_advance_from_receipts()
+        except Exception:
+            expected, rows, complete = Decimal('0.00'), [], False
+
+        current = float(self.advance_balance or 0)
         return {
             'synced': False,
-            'current_value': float(current_advance),
-            'is_correct': True,
+            'current_value': current,
+            'is_correct': (not complete) or abs(current - float(expected)) <= 0.01,
             'breakdown': {
                 'sales_overpayment': sales_overpayment,
-                'advance_from_receipts': total_advance_from_receipts,
-                'total_advance': float(correct_advance),
-                'advance_receipts': advance_receipts_list
+                'advance_from_receipts': float(expected),
+                'total_advance': current,
+                'advance_receipts': rows,
+                'records_complete': complete,
             }
         }
 

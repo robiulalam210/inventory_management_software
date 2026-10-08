@@ -55,24 +55,27 @@ class PurchaseSerializer(serializers.ModelSerializer):
     # Instant pay field
     instant_pay = serializers.BooleanField(write_only=True, default=False)
     
-    # Additional fields from request
+    # Additional fields from request (পুরনো নাম — alias)
+    # FIX: এগুলোর default=0 / 'fixed' ছিল। একই model field এ দুইটা serializer field থাকায়, alias না পাঠালে
+    # তার default পরে বসে আসল মান মুছে দিত — app যে overall_service_charge / overall_delivery_charge
+    # (আর তাদের type) পাঠায়, সেগুলো সবসময় 0 / fixed হয়ে save হত। এখন alias শুধু পাঠালেই কাজ করে।
     delivery_charge = serializers.DecimalField(
-        max_digits=12, decimal_places=2, write_only=True, required=False, default=0,
+        max_digits=12, decimal_places=2, write_only=True, required=False,
         source='overall_delivery_charge'
     )
     service_charge = serializers.DecimalField(
-        max_digits=12, decimal_places=2, write_only=True, required=False, default=0,
+        max_digits=12, decimal_places=2, write_only=True, required=False,
         source='overall_service_charge'
     )
     sub_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True, source='total')
     
-    # Charge type fields
+    # Charge type fields (alias) — একই কারণে default নেই
     overall_service_type = serializers.CharField(
-        write_only=True, required=False, default='fixed', 
+        write_only=True, required=False,
         source='overall_service_charge_type'
     )
     overall_delivery_type = serializers.CharField(
-        write_only=True, required=False, default='fixed', 
+        write_only=True, required=False,
         source='overall_delivery_charge_type'
     )
 
@@ -171,6 +174,14 @@ class PurchaseSerializer(serializers.ModelSerializer):
 
             items_data = validated_data.pop('purchase_items', [])
             instant_pay = validated_data.pop('instant_pay', False)
+
+            # FIX: "Instant Pay" বন্ধ থাকলেও app paid_amount পাঠাতে পারে (checkbox চালু করে আবার বন্ধ করলে
+            # টাকার ঘর আগের মতোই থাকে)। তখন purchase "Paid" হয়ে যেত অথচ account থেকে টাকা কাটত না,
+            # supplier এর বাকিও দেখাত না। এখন Instant Pay বন্ধ মানে এই invoice এ কোনো পরিশোধ নেই।
+            if not instant_pay:
+                validated_data['paid_amount'] = Decimal('0.00')
+                validated_data['account'] = None
+                validated_data['payment_method'] = None
             
             account = validated_data.get('account', None)
             payment_method = validated_data.get('payment_method', None)
@@ -237,12 +248,24 @@ class PurchaseSerializer(serializers.ModelSerializer):
                         # Update totals again to recalculate due_amount
                         purchase.update_totals(force_update=True)
                         
+                        # পরিশোধ invoice এর মোটের বেশি হতে পারে না (supplier কে বাড়তি টাকা দেওয়ার হিসাব নেই)
+                        if paid_amount > purchase.grand_total:
+                            raise serializers.ValidationError({
+                                "paid_amount": f"Paid amount ({paid_amount}) is more than the invoice total ({purchase.grand_total})."
+                            })
+
                         # Create transaction (ONLY HERE - not in multiple places)
-                        transaction = purchase.create_initial_payment_transaction()
-                        if transaction:
-                            logger.info(f"SUCCESS: Payment transaction created: {transaction.transaction_no}")
-                        else:
-                            logger.warning(f"WARNING: Failed to create payment transaction")
+                        # FIX: ব্যর্থ হলে (যেমন account এ যথেষ্ট টাকা নেই) পুরো purchase বাতিল, পরিষ্কার বার্তা সহ
+                        try:
+                            transaction = purchase.create_initial_payment_transaction()
+                        except Exception as pay_error:
+                            msgs = getattr(pay_error, 'messages', None) or [str(pay_error)]
+                            raise serializers.ValidationError({"paid_amount": "; ".join(msgs)})
+                        if not transaction:
+                            raise serializers.ValidationError({
+                                "paid_amount": "Could not record the payment from the selected account."
+                            })
+                        logger.info(f"SUCCESS: Payment transaction created: {transaction.transaction_no}")
                 
                 # Refresh purchase to get updated values
                 purchase.refresh_from_db()
@@ -263,9 +286,10 @@ class PurchaseSerializer(serializers.ModelSerializer):
         """Custom representation to include calculated fields"""
         representation = super().to_representation(instance)
         
-        # Force update totals to ensure calculations are current
+        # FIX: আগে force_update=True ছিল — তালিকা দেখলেই প্রতিটা purchase আবার save হত (আর supplier এর
+        # হিসাবও নতুন করে চলত)। এখন শুধু সংখ্যা সত্যিই না মিললে save হয়।
         try:
-            instance.update_totals(force_update=True)
+            instance.update_totals(force_update=False)
         except Exception as e:
             logger.error(f"ERROR: Failed to update totals in to_representation: {str(e)}")
         

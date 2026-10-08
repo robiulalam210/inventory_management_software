@@ -88,7 +88,9 @@ class Purchase(models.Model):
         if self.vat < 0:
             raise ValidationError("VAT cannot be negative")
             
-        if self.purchase_date > timezone.now().date():
+        # FIX: timezone.now().date() হলো UTC তারিখ — ঢাকায় রাত ১২টা থেকে সকাল ৬টা পর্যন্ত
+        # আজকের কেনাকেও "ভবিষ্যতের তারিখ" বলে আটকে দিত। এখন local (Asia/Dhaka) তারিখ।
+        if self.purchase_date and str(self.purchase_date) > str(timezone.localdate()):
             raise ValidationError("Purchase date cannot be in the future")
 
     def _update_payment_status(self):
@@ -169,6 +171,9 @@ class Purchase(models.Model):
     def update_totals(self, force_update=False):
         """Update purchase totals from items"""
         if hasattr(self, '_updating_totals') and self._updating_totals:
+            return True
+        # বাতিল invoice এর হিসাব স্থির — আবার হিসাব করলে বাকি ফিরে আসত
+        if self.payment_status == 'cancelled':
             return True
             
         self._updating_totals = True
@@ -426,9 +431,12 @@ class Purchase(models.Model):
                     return transaction_obj
                 else:
                     logger.error(f"ERROR: Transaction creation returned None")
-                    
+
             except Exception as e:
+                # FIX: আগে error চাপা পড়ত — purchase "Paid" দেখাত অথচ account থেকে টাকা কাটত না
+                # (যেমন account এ যথেষ্ট টাকা না থাকলে)। এখন error উপরে যায়, পুরো purchase rollback হয়।
                 logger.error(f"ERROR: Error creating initial transaction: {e}")
+                raise
         else:
             logger.warning(f"WARNING: Cannot create initial transaction - missing data:")
             logger.warning(f"  Paid Amount: {self.paid_amount}")
@@ -438,48 +446,61 @@ class Purchase(models.Model):
         return None
 
     def cancel_purchase(self, reason=None):
-        """Cancel the purchase and reverse stock changes"""
+        """
+        Purchase বাতিল — stock আর পরিশোধ দুটোই উল্টে দেয়, একসাথে (atomic)।
+
+        FIX:
+          • আগে টাকা ফেরতের credit transaction তৈরি হত (যেটা নিজেই account balance বাড়ায়)
+            আবার হাতে হাতে account.balance += paid ও করা হত — তাই account এ দ্বিগুণ টাকা ফিরত।
+          • stock এর চেয়ে বেশি কমাতে গেলে database error দিত; এখন আগেই পরিষ্কার কারণ বলে।
+          • ফেরত (return) হওয়া invoice বাতিল করলে হিসাব গুলিয়ে যেত — এখন আটকানো হয়।
+        """
         if self.payment_status == 'cancelled':
             raise ValueError("Purchase is already cancelled")
-            
-        try:
-            with db_transaction.atomic():
-                # Reverse stock for all items
-                for item in self.items.all():
-                    item.product.stock_qty -= item.qty
-                    item.product.save()
-                    
-                # Reverse any payments made
-                if self.paid_amount > 0 and self.account:
-                    try:
-                        Transaction = apps.get_model('transactions', 'Transaction')
-                        Transaction.objects.create(
-                            company=self.company,
-                            transaction_type='credit',
-                            amount=self.paid_amount,
-                            account=self.account,
-                            payment_method=self.payment_method,
-                            description=f"Purchase Cancellation - {self.invoice_no} - {reason or 'No reason provided'}",
-                            purchase=self,
-                            created_by=self.updated_by or self.created_by,
-                            status='completed'
-                        )
-                        
-                        self.account.balance += self.paid_amount
-                        self.account.save(update_fields=['balance', 'updated_at'])
-                    except Exception as e:
-                        logger.error(f"ERROR: Error reversing payment during cancellation: {e}")
-                
-                self.payment_status = 'cancelled'
-                self.is_active = False
-                self.save(update_fields=['payment_status', 'is_active', 'date_updated'])
-                
-            logger.info(f"SUCCESS: Purchase {self.invoice_no} cancelled successfully")
-            return True
-            
-        except Exception as e:
-            logger.error(f"ERROR: Error cancelling purchase: {e}")
-            raise
+        if (self.return_amount or Decimal('0.00')) > 0:
+            raise ValueError("This purchase has returns. Cancel or settle the returns first.")
+
+        Product = apps.get_model('products', 'Product')
+        with db_transaction.atomic():
+            items = list(self.items.select_related('product'))
+            # stock কমানোর আগে দেখে নিই — বিক্রি হয়ে গেলে উল্টানো যায় না
+            for item in items:
+                product = Product.objects.select_for_update().get(pk=item.product_id)
+                if product.stock_qty < item.qty:
+                    raise ValueError(
+                        f"Cannot cancel: only {product.stock_qty} of '{product.name}' is in stock, "
+                        f"but this purchase added {item.qty}. Some of it has already been sold.")
+            for item in items:
+                product = Product.objects.select_for_update().get(pk=item.product_id)
+                product.stock_qty -= item.qty
+                product.save(update_fields=['stock_qty', 'updated_at'])
+
+            # যতটুকু টাকা দেওয়া হয়েছিল, account এ ফেরত — Transaction নিজেই balance বাড়ায়
+            if self.paid_amount > 0 and self.account_id:
+                Transaction = apps.get_model('transactions', 'Transaction')
+                Transaction.objects.create(
+                    company=self.company,
+                    transaction_type='credit',
+                    amount=self.paid_amount,
+                    account=self.account,
+                    payment_method=self.payment_method,
+                    description=f"Purchase Cancellation - {self.invoice_no} - {reason or 'No reason provided'}",
+                    purchase=self,
+                    created_by=self.updated_by or self.created_by,
+                    status='completed'
+                )
+
+            self.payment_status = 'cancelled'
+            self.is_active = False
+            # বাতিল invoice এ আর কোনো বাকি নেই — supplier payment এ এটা আর আসবে না
+            self.due_amount = Decimal('0.00')
+            remark = (self.remark or '').strip()
+            note = f"Cancelled: {reason}" if reason else "Cancelled"
+            self.remark = f"{remark}\n{note}".strip()
+            super().save(update_fields=['payment_status', 'is_active', 'due_amount', 'remark', 'date_updated'])
+
+        logger.info(f"SUCCESS: Purchase {self.invoice_no} cancelled successfully")
+        return True
 
     def add_items(self, items_data):
         """Add multiple items to the purchase at once"""
@@ -693,7 +714,7 @@ class PurchaseItem(models.Model):
             raise ValidationError("Quantity must be greater than 0")
         if self.discount < 0:
             raise ValidationError("Discount cannot be negative")
-        if self.expiry_date and self.expiry_date < timezone.now().date():
+        if self.expiry_date and str(self.expiry_date) < str(timezone.localdate()):
             raise ValidationError("Expiry date cannot be in the past")
 
     def subtotal(self):

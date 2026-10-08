@@ -25,6 +25,16 @@ def web_login_required(view):
     return login_required(view, login_url=LOGIN_URL)
 
 
+def has_perm(user, module, action='view'):
+    """app এর একই permission — user.get_permissions()"""
+    perms = user.get_permissions() if hasattr(user, 'get_permissions') else {}
+    return bool((perms.get(module) or {}).get(action))
+
+
+def forbidden(request, title):
+    return render(request, 'web/forbidden.html', {'page_title': title}, status=403)
+
+
 def _safe_next(request, fallback):
     nxt = request.POST.get('next') or request.GET.get('next')
     if nxt and nxt.startswith('/app/') and url_has_allowed_host_and_scheme(
@@ -102,6 +112,33 @@ def logout_view(request):
 @web_login_required
 @never_cache
 def home_view(request):
+    """
+    My Dashboard — desktop app এর dashboard এর মতো: আজ/এই মাস/সব সময়ের বিক্রি, কেনা, খরচ, লাভ,
+    টাকার প্রবাহ, account balance, সবচেয়ে বেশি বিক্রি, low stock, সাম্প্রতিক কাজ।
+    কোন অংশ দেখাবে তা permission অনুযায়ী (যেমন Accounts দেখার অনুমতি না থাকলে balance দেখায় না)।
+    Dashboard এর অনুমতি না থাকলে শুধু তার module গুলোর shortcut দেখায়।
+    """
+    perms = request.user.get_permissions()
+
+    def can(module, action='view'):
+        return bool((perms.get(module) or {}).get(action))
+
+    now = timezone.localtime()
+    greeting = 'Good morning' if now.hour < 12 else 'Good afternoon' if now.hour < 17 else 'Good evening'
+    if can('dashboard'):
+        return render(request, 'web/dashboard.html', {
+            'page_title': 'My Dashboard',
+            'greeting': greeting,
+            'today': now,
+            'dash_perms': {
+                'accounts': can('accounts'),
+                'reports': can('reports'),
+                'sales': can('sales'),
+                'purchases': can('purchases'),
+                'expense': can('expense'),
+            },
+        })
+
     menu = build_menu(request.user, request.path)
     shortcuts = [
         {'title': item['title'], 'href': item['href'], 'ready': item['ready'], 'section': s['title'], 'icon': s['icon']}
@@ -109,8 +146,6 @@ def home_view(request):
         for item in s['items']
         if s['title'] != 'Dashboard'
     ]
-    now = timezone.localtime()
-    greeting = 'Good morning' if now.hour < 12 else 'Good afternoon' if now.hour < 17 else 'Good evening'
     return render(request, 'web/home.html', {
         'page_title': 'My Dashboard',
         'greeting': greeting,
@@ -135,4 +170,104 @@ def soon_view(request, slug):
         'page_title': item['title'],
         'section_title': section['title'],
         'section_icon': section['icon'],
+    })
+
+
+@web_login_required
+@never_cache
+def sales_list_view(request):
+    """
+    Sale List — সব বিক্রির তালিকা: search, তারিখ/অবস্থা/customer/বিক্রেতা filter, মোট হিসাব,
+    আর যেকোনো invoice পাশে খুলে দেখা ও print।
+    Data আসে app এর একই API থেকে: /api/sales/ আর /api/sales/summary/
+    """
+    if not has_perm(request.user, 'sales', 'view'):
+        return forbidden(request, 'Sale List')
+    return render(request, 'web/sales/list.html', {
+        'page_title': 'Sale List',
+        'can_see_users': has_perm(request.user, 'users', 'view'),
+        'can_collect': has_perm(request.user, 'money_receipt', 'create'),
+    })
+
+
+@web_login_required
+@never_cache
+def receipts_list_view(request):
+    """
+    Money Receipt List — customer এর কাছ থেকে নেওয়া সব টাকার রসিদ: search, তারিখ/ধরন/customer/
+    method filter, মোট হিসাব, রসিদ দেখা ও print, আর (অনুমতি থাকলে) রসিদ বাতিল।
+    Data: /api/money-receipts/ আর /api/money-receipts/summary/
+    """
+    if not has_perm(request.user, 'money_receipt', 'view'):
+        return forbidden(request, 'Money Receipt List')
+    return render(request, 'web/receipts/list.html', {
+        'page_title': 'Money Receipts',
+        'can_create': has_perm(request.user, 'money_receipt', 'create'),
+        'can_delete': has_perm(request.user, 'money_receipt', 'delete'),
+        'can_see_users': has_perm(request.user, 'users', 'view'),
+    })
+
+
+@web_login_required
+@never_cache
+def receipt_create_view(request):
+    """
+    Create Money Receipt — customer বাছাই করলে তার বাকি invoice গুলো দেখায়; টাকা লিখলে আগেই দেখায়
+    কোন invoice এ কত বসবে আর কত advance থাকবে (backend এর হুবহু একই নিয়মে)।
+    ?customer=<id>&sale=<id> দিয়ে Sale List থেকে সরাসরি আসা যায়।
+    """
+    if not has_perm(request.user, 'money_receipt', 'create'):
+        return forbidden(request, 'Create Money Receipt')
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    user = request.user
+    return render(request, 'web/receipts/new.html', {
+        'page_title': 'New Money Receipt',
+        'form_init': {
+            'customer': _int(request.GET.get('customer')),
+            'sale': _int(request.GET.get('sale')),
+            'me': {'id': user.id, 'name': user.get_full_name() or user.username},
+            'canPickCollector': has_perm(user, 'users', 'view'),
+            'canSeeList': has_perm(user, 'money_receipt', 'view'),
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def purchases_list_view(request):
+    """
+    Purchase List — supplier এর কাছ থেকে সব কেনা: search, তারিখ/অবস্থা/supplier filter, মোট হিসাব,
+    invoice দেখা ও print, আর (অনুমতি থাকলে) বাতিল — বাতিলে stock আর দেওয়া টাকা দুটোই ফেরে।
+    Data: /api/purchases/ আর /api/purchases/summary/
+    """
+    if not has_perm(request.user, 'purchases', 'view'):
+        return forbidden(request, 'Purchase List')
+    return render(request, 'web/purchases/list.html', {
+        'page_title': 'Purchases',
+        'can_create': has_perm(request.user, 'purchases', 'create'),
+        'can_cancel': has_perm(request.user, 'purchases', 'delete'),
+    })
+
+
+@web_login_required
+@never_cache
+def purchase_create_view(request):
+    """
+    Create Purchase — supplier, পণ্য (নাম/SKU/barcode দিয়ে খুঁজে), দাম, ছাড়, VAT/চার্জ, আর চাইলে
+    এখনই পরিশোধ। মোট হিসাব backend এর Purchase.update_totals() এর হুবহু একই নিয়মে আগেই দেখায়।
+    """
+    if not has_perm(request.user, 'purchases', 'create'):
+        return forbidden(request, 'Create Purchase')
+    return render(request, 'web/purchases/new.html', {
+        'page_title': 'New Purchase',
+        'form_init': {
+            'supplier': request.GET.get('supplier') or '',
+            'canSeeList': has_perm(request.user, 'purchases', 'view'),
+        },
     })

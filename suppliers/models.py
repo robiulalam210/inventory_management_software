@@ -75,10 +75,11 @@ class Supplier(models.Model):
         try:
             from purchases.models import Purchase
             
+            # FIX: বাতিল (cancelled) purchase supplier এর মোট কেনা/বাকিতে ধরা হত
             aggregates = Purchase.objects.filter(
                 supplier=self,
                 company=self.company
-            ).aggregate(
+            ).exclude(payment_status='cancelled').aggregate(
                 total_purchases=Coalesce(Sum('grand_total'), Decimal('0.00')),
                 total_paid=Coalesce(Sum('paid_amount'), Decimal('0.00')),
                 purchase_count=Coalesce(Count('id'), 0)

@@ -74,6 +74,7 @@
       <button type="button" class="icon-btn menu-btn" @click="nav = true" aria-label="Open menu">{% icon "menu" 20 %}</button>
       <h1>{% block heading %}{{ page_title }}{% endblock %}</h1>
       <div class="spacer"></div>
+      {% block topbar_actions %}{% endblock %}
 
       <div class="dropdown" x-data="{ open: false }" @click.outside="open = false">
         <button type="button" class="user-btn" @click="open = !open" :aria-expanded="open.toString()" aria-haspopup="menu">
