@@ -171,12 +171,20 @@ class StockReportSerializer(serializers.Serializer):
 
 class ExpenseSerializer(serializers.Serializer):
     id = serializers.IntegerField()
-    head = serializers.CharField(source='head.name')
-    subhead = serializers.CharField(source='subhead.name', allow_null=True)
+    # FIX: খাত (head) মুছে ফেললে expense এর head = NULL হয় — তখন 'head.name' পড়তে গিয়ে
+    # পুরো Expense report ভেঙে পড়ত। এখন head না থাকলে "Uncategorised" দেখায়।
+    head = serializers.SerializerMethodField()
+    subhead = serializers.SerializerMethodField()
     amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     payment_method = serializers.CharField()
     expense_date = serializers.DateField()
     note = serializers.CharField(allow_null=True)
+
+    def get_head(self, obj):
+        return obj.head.name if getattr(obj, 'head', None) else 'Uncategorised'
+
+    def get_subhead(self, obj):
+        return obj.subhead.name if getattr(obj, 'subhead', None) else None
 
 class ReportSummarySerializer(serializers.Serializer):
     total_count = serializers.IntegerField()

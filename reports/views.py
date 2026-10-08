@@ -63,7 +63,9 @@ class SalesReportView(BaseReportView):
     filter_serializer_class = SalesReportFilterSerializer
     cache_timeout = 600
 
-    @method_decorator(cache_page(600))
+    # FIX: cache_page সরানো — cache key তে login token থাকে না, তাই এক company র report
+
+    # অন্য company পেয়ে যেত (আর নতুন বিক্রি ১০ মিনিট পর্যন্ত দেখা যেত না)
     def get(self, request):
         try:
             company = self.get_company(request)
@@ -429,7 +431,8 @@ class LowStockReportView(BaseReportView):
 # Top Sold Products Report - FIXED VERSION with correct imports
 # --------------------
 class TopSoldProductsReportView(BaseReportView):
-    @method_decorator(cache_page(600))
+    # FIX: cache_page সরানো — cache key তে login token থাকে না, তাই এক company র report
+    # অন্য company পেয়ে যেত (আর নতুন বিক্রি ১০ মিনিট পর্যন্ত দেখা যেত না)
     def get(self, request):
         try:
             company = self.get_company(request)
@@ -1427,7 +1430,8 @@ class StockReportView(BaseReportView):
 # Keep existing reports (ProfitLoss, Expense, Returns, etc.) with SL numbers
 # --------------------
 class ProfitLossReportView(BaseReportView):
-    @method_decorator(cache_page(300))
+    # FIX: cache_page সরানো — cache key তে login token থাকে না, তাই এক company র report
+    # অন্য company পেয়ে যেত (আর নতুন বিক্রি ১০ মিনিট পর্যন্ত দেখা যেত না)
     def get(self, request):
         try:
             company = self.get_company(request)
@@ -1826,7 +1830,8 @@ class BadStockReportView(BaseReportView):
 
 
 class DashboardSummaryView(BaseReportView):
-    @method_decorator(cache_page(300))
+    # FIX: cache_page সরানো — cache key তে login token থাকে না, তাই এক company র report
+    # অন্য company পেয়ে যেত (আর নতুন বিক্রি ১০ মিনিট পর্যন্ত দেখা যেত না)
     def get(self, request):
         try:
             company = self.get_company(request)

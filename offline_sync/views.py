@@ -503,6 +503,35 @@ def _audit_base_qs(request):
     return qs
 
 
+def _apply_audit_filters(qs, p, skip=()):
+    """
+    Query parameter অনুযায়ী filter। `skip` এ যে filter থাকে সেটা বাদ যায় —
+    meta তে প্রতিটা dropdown এর বিকল্প গোনার সময় নিজের filter বাদ দিয়ে বাকিগুলো মানা হয়
+    (faceted filter), তাই এমন জোড়া বাছাই করা যায় না যার কোনো ফলাফল নেই।
+    """
+    if "model" not in skip and p.get("model"):
+        m = p["model"]
+        qs = qs.filter(Q(model_label__iexact=m) | Q(entity=m) | Q(model_label__iendswith="." + m))
+    if "model" not in skip and p.get("object_id"):
+        qs = qs.filter(object_id=p["object_id"])
+    if "user_id" not in skip and p.get("user_id"):
+        # "none" = কোনো user ছাড়া (System এর স্বয়ংক্রিয় কাজ)
+        qs = qs.filter(user_id__isnull=True) if p["user_id"] == "none" else qs.filter(user_id=p["user_id"])
+    if "action" not in skip and p.get("action"):
+        qs = qs.filter(action=p["action"])
+    if "source" not in skip and p.get("source"):
+        qs = qs.filter(source=p["source"])
+    if p.get("device"):
+        qs = qs.filter(device__code=p["device"])
+    if p.get("date_from") and parse_date(p["date_from"]):
+        qs = qs.filter(created_at__date__gte=parse_date(p["date_from"]))
+    if p.get("date_to") and parse_date(p["date_to"]):
+        qs = qs.filter(created_at__date__lte=parse_date(p["date_to"]))
+    if p.get("q"):
+        qs = qs.filter(Q(object_repr__icontains=p["q"]) | Q(user_display__icontains=p["q"]))
+    return qs
+
+
 class AuditLogView(APIView):
     """
     কে, কখন, কোন device/app থেকে, কোন record এ কী বদলেছে।
@@ -517,26 +546,7 @@ class AuditLogView(APIView):
             return fail("Audit log দেখার অনুমতি নেই", 403)
 
         p = request.query_params
-        qs = qs.select_related("device", "company")
-        if p.get("model"):
-            m = p["model"]
-            qs = qs.filter(Q(model_label__iexact=m) | Q(entity=m) | Q(model_label__iendswith="." + m))
-        if p.get("object_id"):
-            qs = qs.filter(object_id=p["object_id"])
-        if p.get("user_id"):
-            qs = qs.filter(user_id=p["user_id"])
-        if p.get("action"):
-            qs = qs.filter(action=p["action"])
-        if p.get("source"):
-            qs = qs.filter(source=p["source"])
-        if p.get("device"):
-            qs = qs.filter(device__code=p["device"])
-        if p.get("date_from") and parse_date(p["date_from"]):
-            qs = qs.filter(created_at__date__gte=parse_date(p["date_from"]))
-        if p.get("date_to") and parse_date(p["date_to"]):
-            qs = qs.filter(created_at__date__lte=parse_date(p["date_to"]))
-        if p.get("q"):
-            qs = qs.filter(Q(object_repr__icontains=p["q"]) | Q(user_display__icontains=p["q"]))
+        qs = _apply_audit_filters(qs.select_related("device", "company"), p)
 
         try:
             page = max(int(p.get("page", 1)), 1)
@@ -579,7 +589,8 @@ class AuditLogView(APIView):
 class AuditMetaView(APIView):
     """
     Audit screen এর filter dropdown ও উপরের summary card এর জন্য।
-    GET /api/sync/audit/meta/?company_id=   (company_id শুধু super admin)
+    GET /api/sync/audit/meta/?company_id=&model=&user_id=&source=&action=&date_from=&date_to=&q=
+    প্রতিটা dropdown এর বিকল্প ও সংখ্যা বাকি filter গুলো মেনে গোনা হয় (faceted)।
     """
     permission_classes = [IsAuthenticated]
 
@@ -592,12 +603,18 @@ class AuditMetaView(APIView):
         today_qs = qs.filter(created_at__date=today)
         by_action = dict(today_qs.values_list("action").annotate(n=Count("id")))
 
-        models = list(qs.values("model_label").annotate(count=Count("id")).order_by("-count", "model_label"))
+        p = request.query_params
+        models_qs = _apply_audit_filters(qs, p, skip=("model",))
+        users_qs = _apply_audit_filters(qs, p, skip=("user_id",))
+        sources_qs = _apply_audit_filters(qs, p, skip=("source",))
+
+        models = list(models_qs.values("model_label").annotate(count=Count("id")).order_by("-count", "model_label"))
         users = list(
-            qs.exclude(user_id=None).values("user_id", "user_display")
+            users_qs.exclude(user_id=None).values("user_id", "user_display")
             .annotate(count=Count("id")).order_by("-count")[:200]
         )
-        sources = list(qs.values("source").annotate(count=Count("id")).order_by("-count"))
+        system_count = users_qs.filter(user_id__isnull=True).count()
+        sources = list(sources_qs.values("source").annotate(count=Count("id")).order_by("-count"))
 
         data = {
             "is_super_admin": _is_super(request.user),
@@ -609,7 +626,8 @@ class AuditMetaView(APIView):
                 "today_delete": by_action.get(ChangeLog.ACTION_DELETE, 0),
             },
             "models": [{"model": m["model_label"], "count": m["count"]} for m in models],
-            "users": [{"id": u["user_id"], "name": u["user_display"], "count": u["count"]} for u in users],
+            "users": [{"id": u["user_id"], "name": u["user_display"], "count": u["count"]} for u in users]
+                     + ([{"id": "none", "name": "System (automatic)", "count": system_count}] if system_count else []),
             "sources": [{"source": s["source"], "count": s["count"]} for s in sources],
             "companies": [],
         }

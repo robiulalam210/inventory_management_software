@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'account_transfer',
     'core.apps.CoreConfig',
     'offline_sync.apps.OfflineSyncConfig',
+    'web.apps.WebConfig',  # web software (/app/) — admin panel নয়
 ]
 
 # -----------------------------
@@ -99,6 +100,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'web.context_processors.web_shell',
             ],
         },
     },
