@@ -46,12 +46,30 @@ def _json_safe(value):
     return str(value)
 
 
+def _normalize_decimal(field, value):
+    """
+    DecimalField এর মান একই আকারে আনা — না হলে DB থেকে আসা Decimal('4510.00') আর
+    memory তে থাকা 4510 কে আলাদা ধরে audit এ ভুয়া "update" লেখা হতো।
+    """
+    if value is None:
+        return None
+    try:
+        places = field.decimal_places or 0
+        return decimal.Decimal(str(value)).quantize(decimal.Decimal(1).scaleb(-places))
+    except (decimal.InvalidOperation, TypeError, ValueError):
+        return value
+
+
 def _snapshot(instance):
+    from django.db.models import DecimalField
     data = {}
     for f in instance._meta.concrete_fields:
         if f.name in AUDIT_IGNORED_FIELDS:
             continue
-        data[f.attname] = _json_safe(getattr(instance, f.attname, None))
+        value = getattr(instance, f.attname, None)
+        if isinstance(f, DecimalField):
+            value = _normalize_decimal(f, value)
+        data[f.attname] = _json_safe(value)
     return data
 
 

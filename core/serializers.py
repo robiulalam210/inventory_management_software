@@ -264,6 +264,12 @@ class UserPermissionUpdateSerializer(serializers.Serializer):
                     "Admin cannot update other admin permissions"
                 )
         
+        # Super Admin সবসময় full access পায় (model.save() এ জোর করে সব True হয়)
+        if user.role == User.Role.SUPER_ADMIN:
+            raise serializers.ValidationError(
+                "Super Admin always has full access; permissions cannot be changed"
+            )
+        
         # Validate module names
         valid_modules = [
             'dashboard', 'sales', 'money_receipt', 'purchases', 'products',
