@@ -134,15 +134,10 @@ class SaleViewSet(BaseCompanyViewSet):
                 end = self._parse_date(end_date)
                 
                 if start and end:
-                    current_year = timezone.now().year
+                    # FIX: আগে এক বছরের বেশি পুরনো তারিখ চুপচাপ এই বছরে বদলে দেওয়া হতো —
+                    # তাই পুরনো বিক্রি খুঁজলে ভুল (এই বছরের) data আসত। এখন যে তারিখ চাওয়া হয় সেটাই।
                     
-                    if start.year > current_year + 1 or start.year < current_year - 1:
-                        logger.warning(f"Adjusting unreasonable start year {start.year} to {current_year}")
-                        start = start.replace(year=current_year)
                     
-                    if end.year > current_year + 1 or end.year < current_year - 1:
-                        logger.warning(f"Adjusting unreasonable end year {end.year} to {current_year}")
-                        end = end.replace(year=current_year)
                     
                     if start > end:
                         start, end = end, start
@@ -159,10 +154,8 @@ class SaleViewSet(BaseCompanyViewSet):
             try:
                 start = self._parse_date(start_date)
                 if start:
-                    current_year = timezone.now().year
-                    if start.year > current_year + 1 or start.year < current_year - 1:
-                        logger.warning(f"Adjusting unreasonable start year {start.year} to {current_year}")
-                        start = start.replace(year=current_year)
+                    # FIX: আগে এক বছরের বেশি পুরনো তারিখ চুপচাপ এই বছরে বদলে দেওয়া হতো —
+                    # তাই পুরনো বিক্রি খুঁজলে ভুল (এই বছরের) data আসত। এখন যে তারিখ চাওয়া হয় সেটাই।
                     
                     queryset = queryset.filter(sale_date__gte=start)
             except ValueError as e:
@@ -172,10 +165,8 @@ class SaleViewSet(BaseCompanyViewSet):
             try:
                 end = self._parse_date(end_date)
                 if end:
-                    current_year = timezone.now().year
-                    if end.year > current_year + 1 or end.year < current_year - 1:
-                        logger.warning(f"Adjusting unreasonable end year {end.year} to {current_year}")
-                        end = end.replace(year=current_year)
+                    # FIX: আগে এক বছরের বেশি পুরনো তারিখ চুপচাপ এই বছরে বদলে দেওয়া হতো —
+                    # তাই পুরনো বিক্রি খুঁজলে ভুল (এই বছরের) data আসত। এখন যে তারিখ চাওয়া হয় সেটাই।
                     
                     end = end + timedelta(days=1) - timedelta(seconds=1)
                     
@@ -546,11 +537,8 @@ class SaleAllListViewSet(BaseCompanyViewSet):
                         else:
                             dt = datetime.strptime(date_str, '%Y-%m-%d')
                         
-                        current_year = timezone.now().year
-                        if dt.year > current_year + 1 or dt.year < current_year - 1:
-                            logger.warning(f"Adjusting unreasonable year {dt.year} to {current_year}")
-                            dt = dt.replace(year=current_year)
-                        
+                        # FIX: আগে এক বছরের বেশি পুরনো তারিখ চুপচাপ এই বছরে বদলে দেওয়া হতো —
+                        # তাই পুরনো বিক্রি খুঁজলে ভুল (এই বছরের) data আসত। এখন যে তারিখ চাওয়া হয় সেটাই।
                         return dt.date()
                     except Exception as e:
                         logger.error(f"Error parsing date '{date_str}': {e}")

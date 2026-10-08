@@ -131,6 +131,10 @@ class PurchaseViewSet(BaseCompanyViewSet):
         # Apply filters
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
+
+        # শুধু যেগুলোতে supplier এর কাছে বাকি আছে (বাতিল বাদে)
+        if (self.request.query_params.get('due_only') or '').lower() in ('true', '1', 'yes'):
+            queryset = queryset.filter(due_amount__gt=0).exclude(payment_status='cancelled')
             
         if supplier_id:
             queryset = queryset.filter(supplier_id=supplier_id)
@@ -274,7 +278,17 @@ class PurchaseViewSet(BaseCompanyViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.delete()
+            # FIX: আগে সরাসরি delete হত — কেনা stock আর দেওয়া টাকা কোনোটাই ফিরত না।
+            # এখন আগে বাতিলের নিয়মে stock ও টাকা উল্টে দিয়ে তারপর মুছে ফেলা হয়।
+            from django.db import transaction as db_transaction
+            try:
+                with db_transaction.atomic():
+                    if instance.payment_status != 'cancelled':
+                        instance.cancel_purchase('Deleted')
+                    instance.delete()
+            except ValueError as ve:
+                return custom_response(success=False, message=str(ve), data=None,
+                                       status_code=status.HTTP_400_BAD_REQUEST)
             return custom_response(
                 success=True,
                 message="Purchase deleted successfully.",
@@ -292,38 +306,45 @@ class PurchaseViewSet(BaseCompanyViewSet):
 
     @action(detail=False, methods=['get'])
     def summary(self, request):
-        """Get purchase summary statistics"""
+        """
+        Purchase এর মোট হিসাব — list এর একই filter এ।
+        FIX: আগে EXTRACT(...) দিয়ে raw SQL ছিল, যা SQLite এ চলে না — endpoint টা সবসময় 500 দিত।
+        এখন TruncMonth (সব database এ চলে)। বাতিল purchase মোট হিসাবে ধরা হয় না
+        (শুধু "cancelled" filter দিলে সেগুলোই দেখায়)।
+        """
+        from django.db.models.functions import TruncMonth
         try:
-            queryset = self.filter_queryset(self.get_queryset())
-            
-            total_purchases = queryset.count()
-            total_amount = queryset.aggregate(total=models.Sum('grand_total'))['total'] or 0
-            total_due = queryset.aggregate(total=models.Sum('due_amount'))['total'] or 0
-            total_paid = queryset.aggregate(total=models.Sum('paid_amount'))['total'] or 0
-            
-            # Count by payment status
-            status_count = queryset.values('payment_status').annotate(
-                count=models.Count('id'),
-                amount=models.Sum('grand_total')
+            queryset = self.filter_queryset(self.get_queryset()).order_by()
+            counted = queryset
+            if request.query_params.get('payment_status') != 'cancelled':
+                counted = queryset.exclude(payment_status='cancelled')
+
+            agg = counted.aggregate(
+                n=models.Count('id'),
+                amount=models.Sum('grand_total'),
+                due=models.Sum('due_amount'),
+                paid=models.Sum('paid_amount'),
             )
-            
-            # Get monthly summary
-            monthly_summary = queryset.extra(
-                {'month': "EXTRACT(month FROM purchase_date)", 'year': "EXTRACT(year FROM purchase_date)"}
-            ).values('year', 'month').annotate(
-                count=models.Count('id'),
-                total=models.Sum('grand_total')
-            ).order_by('-year', '-month')[:12]  # Last 12 months
-            
+            status_count = list(queryset.values('payment_status').annotate(
+                count=models.Count('id'), amount=models.Sum('grand_total')))
+            monthly = [
+                {'year': row['m'].year, 'month': row['m'].month, 'count': row['count'], 'total': float(row['total'] or 0)}
+                for row in counted.annotate(m=TruncMonth('purchase_date')).values('m')
+                .annotate(count=models.Count('id'), total=models.Sum('grand_total')).order_by('-m')[:12]
+                if row['m']
+            ]
             summary_data = {
-                'total_purchases': total_purchases,
-                'total_amount': float(total_amount),
-                'total_due': float(total_due),
-                'total_paid': float(total_paid),
-                'payment_status_breakdown': list(status_count),
-                'monthly_summary': list(monthly_summary)
+                'total_purchases': agg['n'] or 0,
+                'total_amount': float(agg['amount'] or 0),
+                'total_due': float(agg['due'] or 0),
+                'total_paid': float(agg['paid'] or 0),
+                'cancelled_count': queryset.filter(payment_status='cancelled').count(),
+                'payment_status_breakdown': [
+                    {'payment_status': r['payment_status'], 'count': r['count'], 'amount': float(r['amount'] or 0)}
+                    for r in status_count
+                ],
+                'monthly_summary': monthly,
             }
-            
             return custom_response(
                 success=True,
                 message="Purchase summary fetched successfully.",
@@ -603,6 +624,10 @@ class PurchaseAllListViewSet(BaseCompanyViewSet):
         # Apply filters
         if payment_status:
             queryset = queryset.filter(payment_status=payment_status)
+
+        # শুধু যেগুলোতে supplier এর কাছে বাকি আছে (বাতিল বাদে)
+        if (self.request.query_params.get('due_only') or '').lower() in ('true', '1', 'yes'):
+            queryset = queryset.filter(due_amount__gt=0).exclude(payment_status='cancelled')
             
         if supplier_id:
             queryset = queryset.filter(supplier_id=supplier_id)

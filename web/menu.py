@@ -19,15 +19,15 @@ MENU = [
     {'title': 'Sales', 'icon': 'cart', 'items': [
         {'title': 'Sale', 'url': None, 'perm': ('sales', 'create'), 'slug': 'sale'},
         {'title': 'POS Sale', 'url': None, 'perm': ('sales', 'create'), 'slug': 'pos-sale'},
-        {'title': 'Sale List', 'url': None, 'perm': SALES_VIEW, 'slug': 'sale-list'},
+        {'title': 'Sale List', 'url': 'web:sales', 'perm': SALES_VIEW, 'slug': 'sale-list'},
     ]},
     {'title': 'Money Receipt', 'icon': 'receipt', 'items': [
-        {'title': 'Create Money Receipt', 'url': None, 'perm': ('money_receipt', 'create'), 'slug': 'money-receipt-create'},
-        {'title': 'Money Receipt List', 'url': None, 'perm': ('money_receipt', 'view'), 'slug': 'money-receipts'},
+        {'title': 'Create Money Receipt', 'url': 'web:receipt_new', 'perm': ('money_receipt', 'create'), 'slug': 'money-receipt-create'},
+        {'title': 'Money Receipt List', 'url': 'web:receipts', 'perm': ('money_receipt', 'view'), 'slug': 'money-receipts'},
     ]},
     {'title': 'Purchase', 'icon': 'truck', 'items': [
-        {'title': 'Create Purchase', 'url': None, 'perm': ('purchases', 'create'), 'slug': 'purchase-create'},
-        {'title': 'Purchase List', 'url': None, 'perm': ('purchases', 'view'), 'slug': 'purchases'},
+        {'title': 'Create Purchase', 'url': 'web:purchase_new', 'perm': ('purchases', 'create'), 'slug': 'purchase-create'},
+        {'title': 'Purchase List', 'url': 'web:purchases', 'perm': ('purchases', 'view'), 'slug': 'purchases'},
     ]},
     {'title': 'Products', 'icon': 'box', 'items': [
         {'title': 'Products', 'url': None, 'perm': ('products', 'view'), 'slug': 'products'},

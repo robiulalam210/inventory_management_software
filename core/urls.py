@@ -5,7 +5,7 @@ from .views import (
     company_admin_signup, company_admin_login, dashboard, user_list, create_user, home, user_management
 )
 from rest_framework_simplejwt.views import TokenRefreshView
-from money_receipts.views import MoneyReceiptCreateAPIView, MoneyReceiptDetailAPIView
+from money_receipts.views import MoneyReceiptCreateAPIView, MoneyReceiptDetailAPIView, MoneyReceiptSummaryAPIView
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView
 # from purchases.views import PurchaseViewSet, PurchaseItemViewSet,PurchaseAllListViewSet
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet, PurchaseAllListViewSet
@@ -97,6 +97,7 @@ urlpatterns = [
     # নির্দিষ্ট একজন user এর permission (admin panel এর permission editor এর জন্য)
     path('user-permissions/user/<int:user_id>/', UserPermissionListView.as_view(), name='user_permission_detail'),
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
+    path('money-receipts/summary/', MoneyReceiptSummaryAPIView.as_view(), name='money_receipt_summary'),
     path('money-receipts/<int:receipt_id>/', MoneyReceiptDetailAPIView.as_view(), name='money_receipt_detail'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),
     path('supplier-payments/<int:pk>/', SupplierPaymentDetailAPIView.as_view(), name='supplier-payment-detail'),

@@ -17,6 +17,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
     sale_invoice_no = serializers.SerializerMethodField(read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
     payment_summary = serializers.SerializerMethodField()
+    allocation_detail = serializers.SerializerMethodField()
     company_name = serializers.CharField(source='company.name', read_only=True)
     
     # FIXED: Use DecimalField instead of CharField for amount
@@ -68,7 +69,7 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
             'account', 'account_id', 'account_name', 
             'seller', 'seller_id', 'seller_name',
             'cheque_status', 'cheque_id', 'payment_status', 
-            'created_at', 'updated_at', 'payment_summary'
+            'created_at', 'updated_at', 'payment_summary', 'allocation_detail'
         ]
         read_only_fields = [
             'id', 'mr_no', 'customer_name', 'customer_phone', 'sale_invoice_no', 
@@ -249,6 +250,23 @@ class MoneyReceiptSerializer(serializers.ModelSerializer):
         elif obj.sale_invoice_no:
             return obj.sale_invoice_no
         return None
+
+    def get_allocation_detail(self, obj):
+        """
+        রসিদের টাকা ঠিক কোন invoice এ কত বসেছিল আর কত advance — save এর সময়ের রেকর্ড (allocation) থেকে।
+        রসিদে "SL-2038 ৳144, SL-2011 ৳856" দেখানোর জন্য। পুরনো রসিদে রেকর্ড না থাকলে null।
+        """
+        alloc = obj.allocation or {}
+        if not alloc:
+            return None
+        sales_map = alloc.get('sales') or {}
+        ids = [int(k) for k in sales_map.keys() if str(k).isdigit()]
+        names = dict(Sale.objects.filter(pk__in=ids).values_list('pk', 'invoice_no')) if ids else {}
+        invoices = [
+            {'sale_id': int(k), 'invoice_no': names.get(int(k), f'#{k}'), 'amount': float(Decimal(str(v)))}
+            for k, v in sales_map.items() if str(k).isdigit()
+        ]
+        return {'invoices': invoices, 'advance': float(Decimal(str(alloc.get('advance') or '0')))}
 
     def get_payment_summary(self, obj):
         """Get payment summary from model method - SAFELY"""

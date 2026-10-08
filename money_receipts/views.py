@@ -43,24 +43,36 @@ class MoneyReceiptCreateAPIView(APIView):
         params = request.GET
         
         # Date range filtering
+        # FIX: payment_date একটা DateTimeField — আগে end_date="2026-10-08" মানে রাত ১২টা ধরা হত,
+        # তাই শেষ দিনের সব receipt বাদ পড়ত। এখন তারিখ (date) দিয়ে তুলনা — শেষ দিনও পুরোটা আসে।
         start_date = params.get('start_date')
         end_date = params.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(payment_date__range=[start_date, end_date])
-        elif start_date:
-            queryset = queryset.filter(payment_date__gte=start_date)
-        elif end_date:
-            queryset = queryset.filter(payment_date__lte=end_date)
+        if start_date:
+            queryset = queryset.filter(payment_date__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(payment_date__date__lte=end_date)
 
         # Customer filtering
-        customer_id = params.get('customer_id')
+        # FIX: app পাঠায় ?customer= / ?seller= — আগে শুধু customer_id বোঝা হত, তাই app এর
+        # customer/seller filter কাজই করত না। এখন দুই নামই চলে।
+        customer_id = params.get('customer_id') or params.get('customer')
         if customer_id:
             queryset = queryset.filter(customer_id=customer_id)
+
+        # Collected by (seller) filtering
+        seller_id = params.get('seller_id') or params.get('seller')
+        if seller_id:
+            queryset = queryset.filter(seller_id=seller_id)
 
         # Payment type filtering
         payment_type = params.get('payment_type')
         if payment_type:
             queryset = queryset.filter(payment_type=payment_type)
+
+        # Payment method filtering
+        payment_method = params.get('payment_method')
+        if payment_method:
+            queryset = queryset.filter(payment_method__iexact=payment_method)
 
         # Payment status filtering
         payment_status = params.get('payment_status')
@@ -68,22 +80,19 @@ class MoneyReceiptCreateAPIView(APIView):
             queryset = queryset.filter(payment_status=payment_status)
 
         # Search filtering
-        search = params.get('search')
+        # FIX: আগে দুইটা filter পরপর (AND) ছিল — "MR-1002" খুঁজলে customer এর নামেও
+        # "MR-1002" থাকতে হত, তাই প্রায় কিছুই পাওয়া যেত না। এখন যেকোনো একটায় মিললেই হবে (OR)।
+        search = (params.get('search') or '').strip()
         if search:
             queryset = queryset.filter(
                 Q(mr_no__icontains=search) |
                 Q(remark__icontains=search) |
-                Q(payment_method__icontains=search)
+                Q(payment_method__icontains=search) |
+                Q(customer__name__icontains=search) |
+                Q(customer__phone__icontains=search) |
+                Q(sale__invoice_no__icontains=search) |
+                Q(sale_invoice_no__icontains=search)
             )
-            # Safe related field search
-            try:
-                if search:
-                    queryset = queryset.filter(
-                        Q(customer__name__icontains=search) |
-                        Q(sale__invoice_no__icontains=search)
-                    )
-            except Exception as e:
-                logger.warning(f"Error in related field search: {e}")
 
         # Order by
         order_by = params.get('order_by', '-payment_date')
@@ -291,6 +300,36 @@ class MoneyReceiptCreateAPIView(APIView):
                 data=None,
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class MoneyReceiptSummaryAPIView(MoneyReceiptCreateAPIView):
+    """
+    /api/money-receipts/summary/ — list এর একই filter এ মোট হিসাব (তালিকা page ধরে নয়, পুরো filter এর)।
+    web app এর totals bar এটা দেখায়; list API এর filter হুবহু একই, তাই সংখ্যা সবসময় মেলে।
+    """
+
+    def get(self, request):
+        if not getattr(request.user, 'company', None):
+            return custom_response(success=False, message="User must be associated with a company.",
+                                   data=None, status_code=status.HTTP_400_BAD_REQUEST)
+        from django.db.models import Sum, Count
+        qs = self.apply_filters(self.get_queryset(), request).order_by()
+        total = qs.aggregate(n=Count('id'), amount=Sum('amount'))
+        by_type = {row['payment_type']: {'count': row['n'], 'amount': float(row['amount'] or 0)}
+                   for row in qs.values('payment_type').annotate(n=Count('id'), amount=Sum('amount'))}
+        by_method = [{'method': row['payment_method'] or '—', 'count': row['n'], 'amount': float(row['amount'] or 0)}
+                     for row in qs.values('payment_method').annotate(n=Count('id'), amount=Sum('amount')).order_by('-amount')]
+        return custom_response(
+            success=True,
+            message="Money receipt summary.",
+            data={
+                'total_receipts': total['n'] or 0,
+                'total_amount': float(total['amount'] or 0),
+                'by_type': by_type,
+                'by_method': by_method,
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
 
 class MoneyReceiptDetailAPIView(APIView):
