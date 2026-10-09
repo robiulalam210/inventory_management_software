@@ -30,6 +30,20 @@ class TransactionViewSet(viewsets.ModelViewSet):
     search_fields = ['transaction_no', 'description', 'account__name']
     ordering_fields = ['transaction_date', 'amount', 'created_at', 'transaction_no']
     ordering = ['-transaction_no'] 
+    # FIX (নিরাপত্তা): আগে PUT/PATCH/DELETE খোলা ছিল — যে কেউ লেনদেনের টাকা বদলাতে বা মুছতে পারত,
+    # অথচ account balance বদলাত না। লেনদেন বদলানো হয় শুধু উৎস (sale/receipt/purchase …) বাতিল করে।
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    # এই debug endpoint গুলো শুধু superuser এর জন্য — debug_all_companies সব company র লেনদেন দেখাত,
+    # আর test_create_transaction যেকোনো account এ ৳100 যোগ করে দিত।
+    DEBUG_ACTIONS = {'debug_all_companies', 'check_company_data', 'test_create_transaction',
+                     'check_company_accounts', 'transaction_creation_debug', 'debug_sql'}
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.action in self.DEBUG_ACTIONS and not getattr(request.user, 'is_superuser', False):
+            from rest_framework.exceptions import NotFound
+            raise NotFound()
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -66,15 +80,14 @@ class TransactionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status_filter)
             logger.info(f"  - After status filter: {queryset.count()}")
         
-        # Date range filter
-        if start_date and end_date:
-            try:
-                start_date = datetime.strptime(start_date, '%Y-%m-%d')
-                end_date = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
-                queryset = queryset.filter(transaction_date__range=[start_date, end_date])
-                logger.info(f"  - After date filter: {queryset.count()}")
-            except ValueError:
-                pass
+        # Date range filter (FIX: শুধু একটা তারিখ দিলেও কাজ করে; দিন হিসাব local তারিখে)
+        try:
+            if start_date:
+                queryset = queryset.filter(transaction_date__date__gte=datetime.strptime(start_date, '%Y-%m-%d').date())
+            if end_date:
+                queryset = queryset.filter(transaction_date__date__lte=datetime.strptime(end_date, '%Y-%m-%d').date())
+        except ValueError:
+            pass
         
         # FIXED: Use only essential select_related to avoid problematic joins
         queryset = queryset.select_related(

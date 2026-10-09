@@ -91,8 +91,16 @@ class Expense(models.Model):
             raise ValidationError("Expense amount must be greater than 0")
         if self.account and self.account.company != self.company:
             raise ValidationError("Account must belong to the same company")
-        if self.account and self.amount > self.account.balance:
-            raise ValidationError(f"Insufficient balance in account. Available: {self.account.balance}")
+        if self.account and self.amount is not None:
+            available = self.account.balance
+            # edit এর সময় একই account হলে আগের খরচের টাকা তো আগেই কাটা — সেটা ফেরত ধরে হিসাব করি।
+            # (আগে শুধু note বদলাতে গেলেও "Insufficient balance" আসত)
+            if self.pk:
+                old = Expense.objects.filter(pk=self.pk).values('account_id', 'amount').first()
+                if old and old['account_id'] == self.account_id and self.get_associated_transaction():
+                    available += old['amount']
+            if self.amount > available:
+                raise ValidationError(f"Insufficient balance in {self.account.name}. Available: {available}")
 
     def save(self, *args, **kwargs):
         """Save expense with proper transaction handling for both creation and updates"""
@@ -196,35 +204,29 @@ class Expense(models.Model):
             return None
 
     def delete(self, *args, **kwargs):
-        """Handle expense deletion - restore account balance and create reversal"""
-        try:
-            account = self.account
-            amount = self.amount
-            invoice = self.invoice_number
-            logger.info(f"🗑️ MODEL: Deleting expense {invoice} (Amount: {amount})")
-            if account and amount:
-                old_balance = account.balance
-                account.balance += amount
-                account.save(update_fields=['balance', 'updated_at'])
-                logger.info(f"💰 MODEL: Balance restored for {account.name}")
-                logger.info(f"   Before: {old_balance}, After: {account.balance}")
-                try:
-                    from transactions.models import Transaction
-                    Transaction.objects.create(
-                        company=self.company,
-                        transaction_type='credit',
-                        amount=amount,
-                        account=account,
-                        description=f"Reversal of deleted expense: {invoice}",
-                        status='completed'
-                    )
-                    logger.info(f"🔄 MODEL: Reversal transaction created")
-                except Exception as e:
-                    logger.warning(f"⚠️ MODEL: Could not create reversal transaction: {str(e)}")
-            super().delete(*args, **kwargs)
-            logger.info(f"✅ MODEL: Expense {invoice} deleted")
-        except Exception as e:
-            logger.error(f"❌ MODEL: Error in delete(): {str(e)}")
+        """
+        খরচ মুছলে টাকা account এ ফেরত যায় — একবারই।
+        আগে হাতে balance বাড়ানো + credit Transaction (যেটা নিজেও balance বাড়ায়) দুটোই হতো, তাই দ্বিগুণ ফেরত আসত।
+        এখন: মূল debit transaction বাতিল + একটা reversal credit (statement এ দুটোই দেখা যায়)।
+        """
+        from transactions.models import Transaction
+        with db_transaction.atomic():
+            original = self.get_associated_transaction()
+            if original:
+                Transaction.objects.create(
+                    company=self.company,
+                    transaction_type='credit',
+                    amount=original.amount,
+                    account=original.account,
+                    payment_method=self.payment_method,
+                    description=f"Reversal of deleted expense: {self.invoice_number}",
+                    reference_no=self.invoice_number,
+                    status='completed',
+                    transaction_date=timezone.localdate(),
+                    created_by=self.created_by,
+                )
+                original.status = 'cancelled'
+                original.save(update_fields=['status'])
             super().delete(*args, **kwargs)
 
     def generate_invoice_number(self):
@@ -363,7 +365,11 @@ class Expense(models.Model):
     def get_associated_transaction(self):
         try:
             from transactions.models import Transaction
-            transaction = Transaction.objects.filter(expense=self).first()
+            # শুধু চালু debit টা — edit এর পর পুরনোটা cancelled থাকে; সেটা ধরলে দ্বিতীয় edit এ
+            # পুরনো টাকা আবার ফেরত চলে যেত
+            transaction = Transaction.objects.filter(
+                expense=self, transaction_type='debit', status='completed'
+            ).order_by('-id').first()
             if transaction:
                 logger.info(f"Found associated transaction: {transaction.id}")
             else:

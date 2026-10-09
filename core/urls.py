@@ -6,6 +6,10 @@ from .views import (
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 from money_receipts.views import MoneyReceiptCreateAPIView, MoneyReceiptDetailAPIView, MoneyReceiptSummaryAPIView
+from .platform_views import (
+    PlatformCompanyListView, PlatformCompanyDetailView, PlatformCompanyAdminView,
+    PlatformUserPasswordView, PlatformUserToggleView,
+)
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView, SupplierPaymentCancelAPIView, SupplierPaymentSummaryAPIView
 # from purchases.views import PurchaseViewSet, PurchaseItemViewSet,PurchaseAllListViewSet
 from purchases.views import PurchaseViewSet, PurchaseItemViewSet, PurchaseAllListViewSet
@@ -97,6 +101,12 @@ urlpatterns = [
     # নির্দিষ্ট একজন user এর permission (admin panel এর permission editor এর জন্য)
     path('user-permissions/user/<int:user_id>/', UserPermissionListView.as_view(), name='user_permission_detail'),
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
+    # Super Admin — কোম্পানি খোলা, এডমিন বানানো, মেয়াদ/প্ল্যান
+    path('platform/companies/', PlatformCompanyListView.as_view(), name='platform-companies'),
+    path('platform/companies/<int:pk>/', PlatformCompanyDetailView.as_view(), name='platform-company'),
+    path('platform/companies/<int:pk>/admins/', PlatformCompanyAdminView.as_view(), name='platform-company-admins'),
+    path('platform/companies/<int:pk>/users/<int:uid>/password/', PlatformUserPasswordView.as_view(), name='platform-user-password'),
+    path('platform/companies/<int:pk>/users/<int:uid>/toggle/', PlatformUserToggleView.as_view(), name='platform-user-toggle'),
     path('money-receipts/summary/', MoneyReceiptSummaryAPIView.as_view(), name='money_receipt_summary'),
     path('money-receipts/<int:receipt_id>/', MoneyReceiptDetailAPIView.as_view(), name='money_receipt_detail'),
     path('supplier-payments/', SupplierPaymentListCreateAPIView.as_view(), name='supplier-payment-list-create'),

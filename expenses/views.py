@@ -19,6 +19,17 @@ import traceback
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _deny(request, action):
+    """খরচের অনুমতি — আগে login থাকলেই যে কেউ খরচ লিখতে/মুছতে পারত"""
+    u = request.user
+    if getattr(u, 'role', '') == 'SUPER_ADMIN' or u.is_superuser or u.has_permission('expense', action):
+        return None
+    verb = {'view': 'see', 'create': 'add', 'edit': 'change', 'delete': 'delete'}[action]
+    return custom_response(False, f"You don't have permission to {verb} expenses.", None, status.HTTP_403_FORBIDDEN)
+
+
 class BaseCompanyViewSet(viewsets.ModelViewSet):
     """Filters queryset by logged-in user's company"""
     company_field = 'company'
@@ -44,13 +55,24 @@ class ExpenseHeadListView(APIView):
             if not company:
                 return custom_response(False, "User has no associated company.", None, status.HTTP_400_BAD_REQUEST)
 
-            heads = ExpenseHead.objects.filter(company=company)
-            serializer = ExpenseHeadSerializer(heads, many=True)
-            return custom_response(True, "Expense heads fetched successfully.", serializer.data, status.HTTP_200_OK)
+            from django.db.models import Count, Sum
+            heads = ExpenseHead.objects.filter(company=company).annotate(
+                expense_count=Count('expense', distinct=True), expense_total=Sum('expense__amount'),
+                subhead_count=Count('subheads', distinct=True),
+            ).order_by('name')
+            data = ExpenseHeadSerializer(heads, many=True).data
+            for row, h in zip(data, heads):
+                row['expense_count'] = h.expense_count
+                row['expense_total'] = str(h.expense_total or 0)
+                row['subhead_count'] = h.subhead_count
+            return custom_response(True, "Expense heads fetched successfully.", data, status.HTTP_200_OK)
         except Exception as e:
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
+        denied = _deny(request, 'create')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             if not company:
@@ -58,6 +80,9 @@ class ExpenseHeadListView(APIView):
 
             data = request.data.copy()
             data['company'] = company.id
+            data['name'] = (data.get('name') or '').strip()
+            if data['name'] and ExpenseHead.objects.filter(company=company, name__iexact=data['name']).exists():
+                return custom_response(False, "Validation error.", {'name': ['This expense head already exists.']}, status.HTTP_400_BAD_REQUEST)
             serializer = ExpenseHeadSerializer(data=data)
 
             if serializer.is_valid():
@@ -94,8 +119,16 @@ class ExpenseHeadDetailView(APIView):
             head = ExpenseHead.objects.filter(id=pk, company=company).first()
             if not head:
                 return custom_response(False, "Expense head not found.", None, status.HTTP_404_NOT_FOUND)
-                
-            serializer = ExpenseHeadSerializer(head, data=request.data, partial=True)
+            denied = _deny(request, 'edit')
+            if denied:
+                return denied
+            # company আগে বদলানো যেত (অন্য কোম্পানিতে head সরিয়ে দেওয়া) — এখন শুধু নাম আর চালু/বন্ধ
+            data = {k: v for k, v in request.data.items() if k in ('name', 'is_active')}
+            if 'name' in data:
+                data['name'] = (data['name'] or '').strip()
+                if ExpenseHead.objects.filter(company=company, name__iexact=data['name']).exclude(pk=head.pk).exists():
+                    return custom_response(False, "Validation error.", {'name': ['This expense head already exists.']}, status.HTTP_400_BAD_REQUEST)
+            serializer = ExpenseHeadSerializer(head, data=data, partial=True)
             if serializer.is_valid():
                 serializer.save()
                 return custom_response(True, "Expense head updated successfully.", serializer.data, status.HTTP_200_OK)
@@ -110,10 +143,14 @@ class ExpenseHeadDetailView(APIView):
             if not head:
                 return custom_response(False, "Expense head not found.", None, status.HTTP_404_NOT_FOUND)
                 
-            # Check if head has any subheads before deleting
-            if head.subheads.exists():
-                return custom_response(False, "Cannot delete expense head that has subheads.", None, status.HTTP_400_BAD_REQUEST)
-                
+            denied = _deny(request, 'delete')
+            if denied:
+                return denied
+            # খরচ বা sub head থাকলে মুছি না, বন্ধ করি — মুছলে সেই খরচগুলোর head হারিয়ে যেত
+            if head.expense_set.exists() or head.subheads.exists():
+                head.is_active = False
+                head.save(update_fields=['is_active'])
+                return custom_response(True, f"{head.name} is in use, so it was turned off instead of deleted.", None, status.HTTP_200_OK)
             head.delete()
             return custom_response(True, "Expense head deleted successfully.", None, status.HTTP_204_NO_CONTENT)
         except IntegrityError as e:
@@ -138,10 +175,16 @@ class ExpenseSubHeadListView(APIView):
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
+        denied = _deny(request, 'create')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             data = request.data.copy()
             data['company'] = company.id
+            data['name'] = (data.get('name') or '').strip()
+            if data.get('head') and ExpenseSubHead.objects.filter(company=company, head_id=data.get('head'), name__iexact=data['name']).exists():
+                return custom_response(False, "Validation Error.", {'name': ['This sub head already exists under that head.']}, status.HTTP_400_BAD_REQUEST)
             
             # Validate that head exists and belongs to company
             head_id = data.get('head')
@@ -183,6 +226,9 @@ class ExpenseSubHeadDetailView(APIView):
             subhead = ExpenseSubHead.objects.filter(id=pk, company=company).first()
             if not subhead:
                 return custom_response(False, "Expense SubHead not found.", None, status.HTTP_404_NOT_FOUND)
+            denied = _deny(request, 'edit')
+            if denied:
+                return denied
             
             # Validate head if provided in update
             head_id = request.data.get('head')
@@ -191,7 +237,12 @@ class ExpenseSubHeadDetailView(APIView):
                 if not head_exists:
                     return custom_response(False, "Expense Head not found or doesn't belong to your company.", None, status.HTTP_400_BAD_REQUEST)
             
-            serializer = ExpenseSubHeadSerializer(subhead, data=request.data, partial=True)
+            data = {k: v for k, v in request.data.items() if k in ('name', 'head', 'is_active')}
+            if 'name' in data:
+                data['name'] = (data['name'] or '').strip()
+                if ExpenseSubHead.objects.filter(company=company, head_id=data.get('head', subhead.head_id), name__iexact=data['name']).exclude(pk=subhead.pk).exists():
+                    return custom_response(False, "Validation Error.", {'name': ['This sub head already exists under that head.']}, status.HTTP_400_BAD_REQUEST)
+            serializer = ExpenseSubHeadSerializer(subhead, data=data, partial=True)
             if serializer.is_valid():
                 serializer.save()
                 return custom_response(True, "Expense SubHead updated successfully.", serializer.data, status.HTTP_200_OK)
@@ -206,9 +257,13 @@ class ExpenseSubHeadDetailView(APIView):
             if not subhead:
                 return custom_response(False, "Expense SubHead not found.", None, status.HTTP_404_NOT_FOUND)
             
-            # Check if subhead has any expenses before deleting
+            denied = _deny(request, 'delete')
+            if denied:
+                return denied
             if subhead.expense_set.exists():
-                return custom_response(False, "Cannot delete expense subhead that has expenses.", None, status.HTTP_400_BAD_REQUEST)
+                subhead.is_active = False
+                subhead.save(update_fields=['is_active'])
+                return custom_response(True, f"{subhead.name} has expenses, so it was turned off instead of deleted.", None, status.HTTP_200_OK)
                 
             subhead.delete()
             return custom_response(True, "Expense SubHead deleted successfully.", None, status.HTTP_204_NO_CONTENT)
@@ -226,6 +281,9 @@ class ExpenseListView(APIView):
     pagination_class = CustomPageNumberPagination
 
     def get(self, request):
+        denied = _deny(request, 'view')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             if not company:
@@ -248,20 +306,17 @@ class ExpenseListView(APIView):
 
             # Apply search filter
             if search:
-                expenses = expenses.filter(
-                    Q(note__icontains=search) |
-                    Q(invoice_number__icontains=search) |
-                    Q(head__name__icontains=search) |
-                    Q(subhead__name__icontains=search) |
-                    Q(payment_method__icontains=search)
-                )
-                
-                # Handle numeric search for amount separately
+                q = (Q(note__icontains=search) | Q(invoice_number__icontains=search) | Q(head__name__icontains=search)
+                     | Q(subhead__name__icontains=search) | Q(payment_method__icontains=search))
+                # সংখ্যা হলে টাকার পরিমাণও মেলাই — আগে AND ছিল, তাই "1001" লিখলে EXP-1001 আসত না
                 try:
-                    amount_value = float(search)
-                    expenses = expenses.filter(amount=amount_value)
+                    q |= Q(amount=float(search.replace(',', '')))
                 except (ValueError, TypeError):
                     pass
+                expenses = expenses.filter(q)
+            account_id = request.GET.get('account_id')
+            if account_id:
+                expenses = expenses.filter(account_id=account_id)
 
             # Date range filter
             if start_date and end_date:
@@ -325,6 +380,9 @@ class ExpenseListView(APIView):
 
     def post(self, request):
         """Handle expense creation - FIXED: Use ExpenseCreateSerializer"""
+        denied = _deny(request, 'create')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             if not company:
@@ -342,9 +400,9 @@ class ExpenseListView(APIView):
             
             subhead_id = data.get('subhead')
             if subhead_id:
-                subhead_exists = ExpenseSubHead.objects.filter(id=subhead_id, company=company).exists()
+                subhead_exists = ExpenseSubHead.objects.filter(id=subhead_id, company=company, **({'head_id': head_id} if head_id else {})).exists()
                 if not subhead_exists:
-                    return custom_response(False, "Expense SubHead not found.", None, status.HTTP_400_BAD_REQUEST)
+                    return custom_response(False, "Pick a sub head that belongs to the chosen head.", {'subhead': ['Pick a sub head under the chosen head.']}, status.HTTP_400_BAD_REQUEST)
             
             # Validate account if provided
             account_id = data.get('account')
@@ -375,6 +433,9 @@ class ExpenseDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        denied = _deny(request, 'view')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             expense = Expense.objects.filter(pk=pk, company=company).first()
@@ -386,6 +447,9 @@ class ExpenseDetailView(APIView):
         except Exception as e:
             return custom_response(False, f"Server Error: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
     def patch(self, request, pk):
+        denied = _deny(request, 'edit')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             expense = Expense.objects.filter(pk=pk, company=company).first()
@@ -420,9 +484,21 @@ class ExpenseDetailView(APIView):
                     data['subhead'] = None
             
             # Use ExpenseUpdateSerializer for PATCH
+            hid = data.get('head', expense.head_id)
+            sid = data.get('subhead') if 'subhead' in data else expense.subhead_id
+            if sid and hid and not ExpenseSubHead.objects.filter(id=sid, head_id=hid).exists():
+                return custom_response(False, "Pick a sub head that belongs to the chosen head.", {'subhead': ['Pick a sub head under the chosen head.']}, status.HTTP_400_BAD_REQUEST)
+            acc = data.get('account')
+            if acc not in (None, '', 'null'):
+                from accounts.models import Account
+                if not Account.objects.filter(id=acc, company=company).exists():
+                    return custom_response(False, "Account not found.", None, status.HTTP_400_BAD_REQUEST)
             serializer = ExpenseUpdateSerializer(expense, data=data, partial=True, context={'request': request})
             if serializer.is_valid():
-                updated_expense = serializer.save()
+                try:
+                    updated_expense = serializer.save()
+                except ValidationError as e:
+                    return custom_response(False, ' '.join(e.messages), None, status.HTTP_400_BAD_REQUEST)
                 # Return the full updated expense data
                 response_serializer = ExpenseSerializer(updated_expense)
                 return custom_response(True, "Expense updated successfully.", response_serializer.data, status.HTTP_200_OK)
@@ -450,6 +526,9 @@ class ExpenseDetailView(APIView):
     #         return custom_response(False, f"Delete failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete(self, request, pk):
+        denied = _deny(request, 'delete')
+        if denied:
+            return denied
         try:
             company = getattr(request.user, 'company', None)
             expense = Expense.objects.filter(pk=pk, company=company).first()
@@ -467,8 +546,50 @@ class ExpenseDetailView(APIView):
             expense.delete()
             
             logger.info(f"✅ Expense deleted successfully: {expense_info}")
-            return custom_response(True, "Expense deleted successfully.", None, status.HTTP_204_NO_CONTENT)
+            return custom_response(True, f"{expense_info.split(' - ')[0]} deleted. The money went back to the account.", None, status.HTTP_200_OK)
             
         except Exception as e:
             logger.error(f"❌ Error in ExpenseDetailView DELETE: {str(e)}", exc_info=True)
             return custom_response(False, f"Delete failed: {str(e)}", None, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ExpenseSummaryView(APIView):
+    """খরচের মোট আর head/account অনুযায়ী ভাগ — list এর একই filter মেনে"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        denied = _deny(request, 'view')
+        if denied:
+            return denied
+        from django.db.models import Count, Sum
+        company = getattr(request.user, 'company', None)
+        if not company:
+            return custom_response(False, "User has no associated company.", None, status.HTTP_400_BAD_REQUEST)
+        qs = Expense.objects.filter(company=company)
+        p = request.GET
+        search = (p.get('search') or '').strip()
+        if search:
+            q = Q(note__icontains=search) | Q(invoice_number__icontains=search) | Q(head__name__icontains=search) | Q(subhead__name__icontains=search)
+            try:
+                q |= Q(amount=float(search.replace(',', '')))
+            except ValueError:
+                pass
+            qs = qs.filter(q)
+        if p.get('start_date'):
+            qs = qs.filter(expense_date__gte=p['start_date'])
+        if p.get('end_date'):
+            qs = qs.filter(expense_date__lte=p['end_date'])
+        if p.get('head_id'):
+            qs = qs.filter(head_id=p['head_id'])
+        if p.get('subhead_id'):
+            qs = qs.filter(subhead_id=p['subhead_id'])
+        if p.get('account_id'):
+            qs = qs.filter(account_id=p['account_id'])
+        tot = qs.aggregate(total=Sum('amount'), count=Count('id'))
+        by_head = qs.values('head_id', 'head__name').annotate(total=Sum('amount'), count=Count('id')).order_by('-total')
+        by_account = qs.values('account_id', 'account__name').annotate(total=Sum('amount')).order_by('-total')
+        return custom_response(True, "Expense summary", {
+            'total': str(tot['total'] or 0), 'count': tot['count'],
+            'by_head': [{'id': r['head_id'], 'name': r['head__name'] or 'No head', 'total': str(r['total']), 'count': r['count']} for r in by_head],
+            'by_account': [{'id': r['account_id'], 'name': r['account__name'] or 'No account', 'total': str(r['total'])} for r in by_account],
+        }, status.HTTP_200_OK)

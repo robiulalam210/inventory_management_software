@@ -1,3 +1,4 @@
+from django.db.models import F, Count
 # products/views.py
 
 from rest_framework import viewsets, permissions, filters, status, serializers
@@ -125,7 +126,25 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    # কে লিখতে পারবে — আগে login থাকলেই যে কেউ category/brand/unit তৈরি, বদল, মুছতে পারত।
+    # তৈরি: setup এর অনুমতি, অথবা product তৈরির অনুমতি (product form থেকে quick-add এর জন্য)।
+    def _deny(self, request, action):
+        u = request.user
+        if getattr(u, 'role', '') == 'SUPER_ADMIN' or u.is_superuser:
+            return None
+        ok = u.has_permission('administration', action)
+        if action == 'create' and not ok:
+            ok = u.has_permission('products', 'create')
+        if ok:
+            return None
+        verb = {'create': 'add', 'edit': 'change', 'delete': 'delete'}[action]
+        return custom_response(success=False, message=f"You don't have permission to {verb} {self.item_name.lower()}s.",
+                               data=None, status_code=status.HTTP_403_FORBIDDEN)
+
     def create(self, request, *args, **kwargs):
+        denied = self._deny(request, 'create')
+        if denied:
+            return denied
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
@@ -139,9 +158,18 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
                 )
             
             company = request.user.company
-            name = serializer.validated_data.get(self.name_field)
+            name = (serializer.validated_data.get(self.name_field) or '').strip()
+            if not name:
+                return custom_response(
+                    success=False,
+                    message="Validation Error",
+                    data={self.name_field: ["This field may not be blank."]},
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            serializer.validated_data[self.name_field] = name
             
-            if self.model_class.objects.filter(company=company, **{self.name_field: name}).exists():
+            # "Pcs" আর "pcs" একই জিনিস — বড়/ছোট হাতের অক্ষর আলাদা ধরে duplicate হতে দিই না
+            if self.model_class.objects.filter(company=company, **{f'{self.name_field}__iexact': name}).exists():
                 return custom_response(
                     success=False,
                     message=f"A {self.item_name.lower()} with this {self.name_field} already exists.",
@@ -176,12 +204,30 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
             )
 
     def update(self, request, *args, **kwargs):
+        denied = self._deny(request, 'edit')
+        if denied:
+            return denied
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         try:
             serializer.is_valid(raise_exception=True)
+            if self.name_field in serializer.validated_data:
+                name = (serializer.validated_data.get(self.name_field) or '').strip()
+                if not name:
+                    raise serializers.ValidationError({self.name_field: ["This field may not be blank."]})
+                serializer.validated_data[self.name_field] = name
+                company_id = getattr(instance, 'company_id', None)
+                if company_id and self.model_class.objects.filter(
+                    company_id=company_id, **{f'{self.name_field}__iexact': name}
+                ).exclude(pk=instance.pk).exists():
+                    return custom_response(
+                        success=False,
+                        message=f"A {self.item_name.lower()} with this {self.name_field} already exists.",
+                        data={self.name_field: [f"Another {self.item_name.lower()} already uses this {self.name_field}."]},
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
             self.perform_update(serializer)
             
             return custom_response(
@@ -210,6 +256,9 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
         Custom delete method that prevents deletion if item has products
         and instead marks it as inactive
         """
+        denied = self._deny(request, 'delete')
+        if denied:
+            return denied
         try:
             instance = self.get_object()
             
@@ -241,6 +290,11 @@ class BaseInventoryCRUDViewSet(BaseInventoryViewSet):
                 except Exception:
                     pass
             
+            # Unit মুছলে তার sale mode গুলো (KG→GRAM ইত্যাদি) CASCADE এ মুছে যায়, সাথে product এর দাম-সেটিং।
+            # তাই sale mode থাকলেও মুছি না, inactive করি।
+            if not has_products and self.model_class == Unit and instance.sale_modes.exists():
+                has_products = True
+
             if has_products:
                 # Instead of deleting, mark as inactive
                 instance.is_active = False
@@ -338,6 +392,10 @@ class CategoryViewSet(BaseInventoryCRUDViewSet):
     model_class = Category
     item_name = "Category"
 
+    def get_queryset(self):
+        # কতগুলো product এটা ব্যবহার করছে — তালিকায় দেখানো আর মোছার আগে সতর্ক করার জন্য
+        return super().get_queryset().annotate(product_count=Count('products', distinct=True)).order_by('name')
+
 # Unit ViewSet
 class UnitViewSet(BaseInventoryCRUDViewSet):
     queryset = Unit.objects.all()
@@ -347,12 +405,23 @@ class UnitViewSet(BaseInventoryCRUDViewSet):
     model_class = Unit
     item_name = "Unit"
 
+    def get_queryset(self):
+        # কতগুলো product আর sale mode এই unit ব্যবহার করছে — এক query তেই
+        return super().get_queryset().annotate(
+            product_count=Count('products', distinct=True),
+            sale_mode_count=Count('sale_modes', distinct=True),
+        ).order_by('name')
+
 # Brand ViewSet
 class BrandViewSet(BaseInventoryCRUDViewSet):
     queryset = Brand.objects.all()
     serializer_class = BrandSerializer
     model_class = Brand
     item_name = "Brand"
+
+    def get_queryset(self):
+        # কতগুলো product এটা ব্যবহার করছে — তালিকায় দেখানো আর মোছার আগে সতর্ক করার জন্য
+        return super().get_queryset().annotate(product_count=Count('product', distinct=True)).order_by('name')
 
 # Group ViewSet
 class GroupViewSet(BaseInventoryCRUDViewSet):
@@ -361,12 +430,20 @@ class GroupViewSet(BaseInventoryCRUDViewSet):
     model_class = Group
     item_name = "Group"
 
+    def get_queryset(self):
+        # কতগুলো product এটা ব্যবহার করছে — তালিকায় দেখানো আর মোছার আগে সতর্ক করার জন্য
+        return super().get_queryset().annotate(product_count=Count('product', distinct=True)).order_by('name')
+
 # Source ViewSet
 class SourceViewSet(BaseInventoryCRUDViewSet):
     queryset = Source.objects.all()
     serializer_class = SourceSerializer
     model_class = Source
     item_name = "Source"
+
+    def get_queryset(self):
+        # কতগুলো product এটা ব্যবহার করছে — তালিকায় দেখানো আর মোছার আগে সতর্ক করার জন্য
+        return super().get_queryset().annotate(product_count=Count('product', distinct=True)).order_by('name')
 
 class ProductSaleModeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing product-sale mode configurations"""
@@ -616,8 +693,56 @@ class SaleModeViewSet(BaseInventoryCRUDViewSet):
         """Filter sale modes by user's company"""
         user = self.request.user
         if hasattr(user, 'company') and user.company:
-            return SaleMode.objects.filter(company=user.company)
+            qs = SaleMode.objects.filter(company=user.company).select_related('base_unit')
+            is_active = self.request.query_params.get('is_active')
+            if is_active is not None:
+                qs = qs.filter(is_active=is_active.lower() in ('true', '1', 'yes'))
+            # কতগুলো product এ দাম বসানো আছে, আর কতবার বিক্রিতে ব্যবহার হয়েছে
+            return qs.annotate(
+                product_count=Count('product_sale_modes', distinct=True),
+                sale_count=Count('saleitem', distinct=True),
+            ).order_by('base_unit__name', 'conversion_factor', 'name')
         return SaleMode.objects.none()
+
+    def _clash(self, request, data, instance=None):
+        """একই কোম্পানিতে একই নাম বা code — আগে DB constraint থেকে 500 আসত"""
+        company = request.user.company
+        out = {}
+        qs = SaleMode.objects.filter(company=company)
+        if instance is not None:
+            qs = qs.exclude(pk=instance.pk)
+        name = (data.get('name') or '').strip()
+        code = (data.get('code') or '').strip()
+        if name and qs.filter(name__iexact=name).exists():
+            out['name'] = ['A sale mode with this name already exists.']
+        if code and qs.filter(code__iexact=code).exists():
+            out['code'] = ['Another sale mode already uses this code.']
+        return out
+
+    def update(self, request, *args, **kwargs):
+        denied = self._deny(request, 'edit')
+        if denied:
+            return denied
+        clash = self._clash(request, request.data, instance=self.get_object())
+        if clash:
+            return custom_response(success=False, message="Validation Error", data=clash, status_code=status.HTTP_400_BAD_REQUEST)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """product এ দাম বসানো থাকলে বা বিক্রিতে ব্যবহার হলে মুছি না, বন্ধ করি —
+        মুছলে CASCADE এ সব product এর এই মাপের দাম আর price tier মুছে যেত"""
+        denied = self._deny(request, 'delete')
+        if denied:
+            return denied
+        instance = self.get_object()
+        if instance.product_sale_modes.exists() or instance.saleitem_set.exists():
+            instance.is_active = False
+            instance.save(update_fields=['is_active', 'updated_at'])
+            return custom_response(success=True,
+                                   message=f"{instance.name} is in use, so it was turned off instead of deleted.",
+                                   data=None, status_code=status.HTTP_200_OK)
+        instance.delete()
+        return custom_response(success=True, message=f"{instance.name} deleted.", data=None, status_code=status.HTTP_204_NO_CONTENT)
     
     def perform_create(self, serializer):
         """Set company when creating sale mode"""
@@ -638,6 +763,14 @@ class SaleModeViewSet(BaseInventoryCRUDViewSet):
     
     def create(self, request, *args, **kwargs):
         """Override create to handle data parsing"""
+        denied = self._deny(request, 'create')
+        if denied:
+            return denied
+        if not getattr(request.user, 'company', None):
+            return custom_response(success=False, message="User does not have an associated company.", data=None, status_code=status.HTTP_400_BAD_REQUEST)
+        clash = self._clash(request, request.data)
+        if clash:
+            return custom_response(success=False, message="Validation Error", data=clash, status_code=status.HTTP_400_BAD_REQUEST)
         try:
             # Parse base_unit from string to int if needed
             data = request.data.copy()
@@ -1257,6 +1390,18 @@ class ProductViewSet(BaseInventoryViewSet):
             elif is_active.lower() in ['false', '0', 'no']:
                 queryset = queryset.filter(is_active=False)
                 filters_applied.append("active=false")
+
+        # stock অবস্থা: out (শেষ), low (alert এর সমান বা কম, কিন্তু শেষ নয়), in (যথেষ্ট আছে)
+        stock = (request.query_params.get('stock') or '').lower()
+        if stock == 'out':
+            queryset = queryset.filter(stock_qty__lte=0)
+            filters_applied.append("stock=out")
+        elif stock == 'low':
+            queryset = queryset.filter(stock_qty__gt=0, stock_qty__lte=F('alert_quantity'))
+            filters_applied.append("stock=low")
+        elif stock == 'in':
+            queryset = queryset.filter(stock_qty__gt=F('alert_quantity'))
+            filters_applied.append("stock=in")
 
         return queryset, filters_applied
 

@@ -149,7 +149,9 @@ class SaleMode(models.Model):
     ]
     
     name = models.CharField(max_length=50, help_text="KG, GRAM, PACKET, BOSTA, DOZEN, etc.")
-    code = models.CharField(max_length=20, unique=True, help_text="Unique code for mode")
+    # আগে unique=True ছিল — পুরো system এ একটাই "KG" হতে পারত, তাই দ্বিতীয় কোম্পানি KG বানাতে পারত না।
+    # এখন শুধু নিজের কোম্পানির ভেতরে unique (নিচের UniqueConstraint)।
+    code = models.CharField(max_length=20, help_text="Short code, unique within the company")
     base_unit = models.ForeignKey('Unit', on_delete=models.CASCADE, related_name='sale_modes')
     conversion_factor = models.DecimalField(
         max_digits=12, 

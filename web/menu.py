@@ -13,6 +13,9 @@ Sidebar menu — desktop app এর sidebar এর হুবহু একই গ
 SALES_VIEW = ('sales', 'view')
 
 MENU = [
+    {'title': 'Platform', 'icon': 'building', 'items': [
+        {'title': 'Companies', 'url': 'web:platform_companies', 'roles': ('SUPER_ADMIN',), 'slug': 'platform-companies'},
+    ]},
     {'title': 'Dashboard', 'icon': 'dashboard', 'items': [
         {'title': 'My Dashboard', 'url': 'web:home', 'perm': ('dashboard', 'view'), 'slug': 'dashboard'},
     ]},
@@ -30,10 +33,10 @@ MENU = [
         {'title': 'Purchase List', 'url': 'web:purchases', 'perm': ('purchases', 'view'), 'slug': 'purchases'},
     ]},
     {'title': 'Products', 'icon': 'box', 'items': [
-        {'title': 'Products', 'url': None, 'perm': ('products', 'view'), 'slug': 'products'},
+        {'title': 'Products', 'url': 'web:products', 'perm': ('products', 'view'), 'slug': 'products'},
     ]},
     {'title': 'Accounts', 'icon': 'wallet', 'items': [
-        {'title': 'Accounts', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'accounts'},
+        {'title': 'Accounts', 'url': 'web:accounts', 'perm': ('accounts', 'view'), 'slug': 'accounts'},
     ]},
     {'title': 'Customers', 'icon': 'users', 'items': [
         {'title': 'Customers', 'url': 'web:customers', 'perm': ('customers', 'view'), 'slug': 'customers'},
@@ -43,14 +46,14 @@ MENU = [
         {'title': 'Supplier Payment', 'url': 'web:supplier_payments', 'perm': ('suppliers', 'view'), 'slug': 'supplier-payments'},
     ]},
     {'title': 'Expense', 'icon': 'expense', 'items': [
-        {'title': 'Expense List', 'url': None, 'perm': ('expense', 'view'), 'slug': 'expenses'},
-        {'title': 'Expense Head', 'url': None, 'perm': ('expense', 'view'), 'slug': 'expense-heads'},
-        {'title': 'Expense Sub Head', 'url': None, 'perm': ('expense', 'view'), 'slug': 'expense-subheads'},
+        {'title': 'Expense List', 'url': 'web:expenses', 'perm': ('expense', 'view'), 'slug': 'expenses'},
+        {'title': 'Expense Head', 'url': 'web:expense_heads', 'perm': ('expense', 'view'), 'slug': 'expense-heads'},
+        {'title': 'Expense Sub Head', 'url': 'web:expense_subheads', 'perm': ('expense', 'view'), 'slug': 'expense-subheads'},
     ]},
     {'title': 'Return', 'icon': 'return', 'items': [
-        {'title': 'Sales Return', 'url': None, 'perm': ('return', 'view'), 'slug': 'sales-returns'},
-        {'title': 'Bad Stock List', 'url': None, 'perm': ('return', 'view'), 'slug': 'bad-stock'},
-        {'title': 'Purchase Return', 'url': None, 'perm': ('return', 'view'), 'slug': 'purchase-returns'},
+        {'title': 'Sales Return', 'url': 'web:sales_returns', 'perm': ('return', 'view'), 'slug': 'sales-returns'},
+        {'title': 'Bad Stock List', 'url': 'web:bad_stock', 'perm': ('return', 'view'), 'slug': 'bad-stock'},
+        {'title': 'Purchase Return', 'url': 'web:purchase_returns', 'perm': ('return', 'view'), 'slug': 'purchase-returns'},
     ]},
     {'title': 'Reports', 'icon': 'chart', 'items': [
         {'title': 'Sales Report', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-sales'},
@@ -66,27 +69,27 @@ MENU = [
         {'title': 'Expense Report', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-expenses'},
     ]},
     {'title': 'Administration', 'icon': 'settings', 'items': [
-        {'title': 'Staff', 'url': None, 'perm': ('users', 'view'), 'slug': 'staff'},
-        {'title': 'Source', 'url': None, 'perm': ('administration', 'view'), 'slug': 'sources'},
-        {'title': 'Unit', 'url': None, 'perm': ('administration', 'view'), 'slug': 'units'},
-        {'title': 'Brand', 'url': None, 'perm': ('administration', 'view'), 'slug': 'brands'},
-        {'title': 'Category', 'url': None, 'perm': ('administration', 'view'), 'slug': 'categories'},
-        {'title': 'Group', 'url': None, 'perm': ('administration', 'view'), 'slug': 'groups'},
-        {'title': 'Sale Mode', 'url': None, 'perm': ('administration', 'view'), 'slug': 'sale-modes'},
-        {'title': 'Company Profile', 'url': None, 'perm': ('administration', 'view'), 'slug': 'profile'},
+        {'title': 'Staff', 'url': 'web:staff', 'perm': ('users', 'view'), 'slug': 'staff'},
+        {'title': 'Source', 'url': 'web:sources', 'perm': ('administration', 'view'), 'slug': 'sources'},
+        {'title': 'Unit', 'url': 'web:units', 'perm': ('administration', 'view'), 'slug': 'units'},
+        {'title': 'Brand', 'url': 'web:brands', 'perm': ('administration', 'view'), 'slug': 'brands'},
+        {'title': 'Category', 'url': 'web:categories', 'perm': ('administration', 'view'), 'slug': 'categories'},
+        {'title': 'Group', 'url': 'web:groups', 'perm': ('administration', 'view'), 'slug': 'groups'},
+        {'title': 'Sale Mode', 'url': 'web:sale_modes', 'perm': ('administration', 'view'), 'slug': 'sale-modes'},
+        {'title': 'Company Profile', 'url': 'web:company_profile', 'perm': ('administration', 'view'), 'slug': 'profile'},
     ]},
     {'title': 'Income', 'icon': 'income', 'items': [
-        {'title': 'Income List', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'incomes'},
-        {'title': 'Income Head', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'income-heads'},
+        {'title': 'Income List', 'url': 'web:incomes', 'perm': ('accounts', 'view'), 'slug': 'incomes'},
+        {'title': 'Income Head', 'url': 'web:income_heads', 'perm': ('accounts', 'view'), 'slug': 'income-heads'},
     ]},
     {'title': 'Transfer Balance', 'icon': 'transfer', 'items': [
-        {'title': 'Account Transfer', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'transfer-create'},
-        {'title': 'Transfer List', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'transfers'},
-        {'title': 'Transactions', 'url': None, 'perm': ('accounts', 'view'), 'slug': 'transactions'},
+        {'title': 'Account Transfer', 'url': 'web:transfer_new', 'perm': ('accounts', 'view'), 'slug': 'transfer-create'},
+        {'title': 'Transfer List', 'url': 'web:transfers', 'perm': ('accounts', 'view'), 'slug': 'transfers'},
+        {'title': 'Transactions', 'url': 'web:transactions', 'perm': ('accounts', 'view'), 'slug': 'transactions'},
     ]},
     {'title': 'Security', 'icon': 'shield', 'items': [
-        {'title': 'Audit Log', 'url': None, 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'audit-log'},
-        {'title': 'User Permissions', 'url': None, 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'user-permissions'},
+        {'title': 'Audit Log', 'url': 'web:audit_log', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'audit-log'},
+        {'title': 'User Permissions', 'url': 'web:user_permissions', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'user-permissions'},
     ]},
 ]
 
@@ -106,10 +109,14 @@ def build_menu(user, current_path=''):
     perms = user.get_permissions() if hasattr(user, 'get_permissions') else {}
     role = (getattr(user, 'role', '') or '').upper()
     if getattr(user, 'is_superuser', False):
-        role = role or 'SUPER_ADMIN'
+        role = 'SUPER_ADMIN'
+    # কোনো দোকানের সাথে যুক্ত নয় এমন super admin — তার শুধু Platform দরকার, দোকানের menu খালি data দেখাত
+    platform_only = role == 'SUPER_ADMIN' and not getattr(user, 'company_id', None)
 
     sections = []
     for section in MENU:
+        if platform_only and section['title'] != 'Platform':
+            continue
         items = []
         for item in section['items']:
             if not _allowed(item, perms, role):

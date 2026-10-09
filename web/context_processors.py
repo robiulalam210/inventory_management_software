@@ -46,7 +46,7 @@ def web_shell(request):
             'picture': picture.url if picture else None,
         },
         'web_company': {
-            'name': company.name if company else 'No company',
+            'name': company.name if company else ('Platform console' if (getattr(user, 'role', '') == 'SUPER_ADMIN' or user.is_superuser) else 'No company'),
             'logo': logo.url if logo else None,
         },
         'web_expiry': expiry,

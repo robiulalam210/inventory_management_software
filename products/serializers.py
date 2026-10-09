@@ -59,9 +59,23 @@ class CleanedChoiceField(serializers.ChoiceField):
         return super().to_internal_value(data)
 
 
+def _product_count(obj, field):
+    """list এ annotate করা থাকে; create/update এর উত্তরে না থাকলে গুনে নিই"""
+    v = getattr(obj, 'product_count', None)
+    if v is not None:
+        return v
+    if not obj.pk:
+        return 0
+    from .models import Product
+    return Product.objects.filter(**{field: obj}).count()
+
 class CategorySerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    product_count = serializers.SerializerMethodField()
+
+    def get_product_count(self, obj):
+        return _product_count(obj, 'category')
     
     class Meta:
         model = Category
@@ -74,6 +88,10 @@ class CategorySerializer(serializers.ModelSerializer):
 class BrandSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    product_count = serializers.SerializerMethodField()
+
+    def get_product_count(self, obj):
+        return _product_count(obj, 'brand')
     
     class Meta:
         model = Brand
@@ -83,6 +101,10 @@ class BrandSerializer(serializers.ModelSerializer):
 class GroupSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    product_count = serializers.SerializerMethodField()
+
+    def get_product_count(self, obj):
+        return _product_count(obj, 'group')
     
     class Meta:
         model = Group
@@ -92,6 +114,10 @@ class GroupSerializer(serializers.ModelSerializer):
 class SourceSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    product_count = serializers.SerializerMethodField()
+
+    def get_product_count(self, obj):
+        return _product_count(obj, 'source')
     
     class Meta:
         model = Source
@@ -101,10 +127,21 @@ class SourceSerializer(serializers.ModelSerializer):
 class UnitSerializer(serializers.ModelSerializer):
     company = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    product_count = serializers.SerializerMethodField()
+    sale_mode_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Unit
         fields = '__all__'
+
+    # list এ annotate করা থাকে; create/update এর উত্তরে না থাকলে গুনে নিই
+    def get_product_count(self, obj):
+        v = getattr(obj, 'product_count', None)
+        return v if v is not None else (obj.products.count() if obj.pk else 0)
+
+    def get_sale_mode_count(self, obj):
+        v = getattr(obj, 'sale_mode_count', None)
+        return v if v is not None else (obj.sale_modes.count() if obj.pk else 0)
 # serializers.py
 class PriceTierSerializer(serializers.ModelSerializer):
     product_sale_mode = serializers.IntegerField(write_only=True)
@@ -335,6 +372,15 @@ class SaleModeSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'company', 'created_by', 'created_at', 'updated_at']
+
+    def to_representation(self, instance):
+        # কতগুলো product এ এই মাপের দাম বসানো, আর কতবার বিক্রি হয়েছে (list এ annotate করা থাকে)
+        data = super().to_representation(instance)
+        pc = getattr(instance, 'product_count', None)
+        sc = getattr(instance, 'sale_count', None)
+        data['product_count'] = pc if pc is not None else (instance.product_sale_modes.count() if instance.pk else 0)
+        data['sale_count'] = sc if sc is not None else (instance.saleitem_set.count() if instance.pk else 0)
+        return data
     
     def validate_base_unit(self, value):
         """Validate base_unit exists and belongs to user's company"""
@@ -501,6 +547,22 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             }
         return None
     
+def _check_same_company(serializer, data):
+    """
+    FIX (নিরাপত্তা): category / unit / brand / group / source এর id যেকোনো company র হতে পারত —
+    অন্য দোকানের category তে নিজের পণ্য বসানো যেত। এখন নিজের company র হতে হবে।
+    """
+    request = serializer.context.get('request')
+    company = getattr(getattr(request, 'user', None), 'company', None)
+    if not company:
+        return
+    for key in ('category', 'unit', 'brand', 'group', 'source'):
+        obj = data.get(key)
+        if obj is not None and getattr(obj, 'company_id', company.id) != company.id:
+            raise serializers.ValidationError({key: "Not found in your company."})
+
+
+
 class ProductCreateSerializer(serializers.ModelSerializer):
     discount_type = CleanedChoiceField(
         choices=Product.DISCOUNT_TYPE_CHOICES,
@@ -589,6 +651,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
+        _check_same_company(self, data)
         purchase_price = data.get('purchase_price', Decimal('0.00'))
         selling_price = data.get('selling_price', Decimal('0.00'))
         
@@ -761,6 +824,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
+        _check_same_company(self, data)
         errors = {}
 
         instance = self.instance
