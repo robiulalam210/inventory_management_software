@@ -123,21 +123,18 @@ class Account(models.Model):
         # Generate company-specific AC_NO
         if is_new and not self.ac_no:
             company_prefix = self.company.name[:3].upper() if self.company else "COM"
-            last_account = Account.objects.filter(
-                company=self.company, 
-                ac_no__isnull=False,
-                ac_no__startswith=f'{company_prefix}-ACC-'
-            ).order_by('-ac_no').first()
-            
-            if last_account and last_account.ac_no:
+            # ac_no পুরো system এ unique, কিন্তু prefix আসে কোম্পানির নামের প্রথম ৩ অক্ষর থেকে —
+            # "Rahman Traders" আর "Rahim Store" দুজনেরই "RAH"। তাই শুধু নিজের কোম্পানি নয়,
+            # এই prefix এর সব account দেখে পরের খালি নম্বর নিই (আগে দ্বিতীয় কোম্পানিতে crash করত)।
+            numbers = []
+            for no in Account.objects.filter(ac_no__startswith=f'{company_prefix}-ACC-').values_list('ac_no', flat=True):
                 try:
-                    last_number = int(last_account.ac_no.split('-')[-1])
-                    new_number = last_number + 1
+                    numbers.append(int(no.rsplit('-', 1)[-1]))
                 except (ValueError, IndexError):
-                    new_number = 1001
-            else:
-                new_number = 1001
-                
+                    pass
+            new_number = max(numbers) + 1 if numbers else 1001
+            while Account.objects.filter(ac_no=f"{company_prefix}-ACC-{new_number}").exists():
+                new_number += 1
             self.ac_no = f"{company_prefix}-ACC-{new_number}"
         
         # Save the account first

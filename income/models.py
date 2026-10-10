@@ -52,13 +52,52 @@ class Income(models.Model):
             raise ValidationError("Account must belong to the same company")
 
     def save(self, *args, **kwargs):
+        """
+        নতুন আয় → account এ একবার credit।
+        আগে credit Transaction (যেটা নিজেই balance বাড়ায়) + হাতে balance += দুটোই হতো — প্রতিটা আয় দ্বিগুণ উঠত।
+        Edit এ টাকা বা account বদলালে আগেরটা উল্টে নতুনটা বসাই (আগে কিছুই হতো না, balance ভুল থেকে যেত)।
+        """
         is_new = self.pk is None
+        old = None if is_new else Income.objects.filter(pk=self.pk).values('account_id', 'amount').first()
         if is_new and not self.invoice_number:
             self.invoice_number = self.generate_invoice_number()
         self.clean()
-        super().save(*args, **kwargs)
         with db_transaction.atomic():
-            self.create_income_transaction(is_new=is_new)
+            super().save(*args, **kwargs)
+            if is_new:
+                self.create_income_transaction(is_new=True)
+            elif old and (old['account_id'] != self.account_id or old['amount'] != self.amount):
+                self._reverse_transaction('Edited')
+                self.create_income_transaction(is_new=True)
+
+    def active_transaction(self):
+        return self.transactions.filter(transaction_type='credit', status='completed').order_by('-id').first()
+
+    def _reverse_transaction(self, why):
+        """আগের credit টা বাতিল করে সমান debit — টাকা খরচ হয়ে গিয়ে থাকলে (balance কম) এখানেই আটকায়"""
+        from transactions.models import Transaction
+        original = self.active_transaction()
+        if not original:
+            return
+        Transaction.objects.create(
+            company=self.company,
+            transaction_type='debit',
+            amount=original.amount,
+            account=original.account,
+            payment_method=self.payment_method,
+            description=f"Reversal - {why} income: {self.invoice_number}",
+            reference_no=self.invoice_number,
+            status='completed',
+            transaction_date=timezone.localdate(),
+            created_by=self.created_by,
+        )
+        original.status = 'cancelled'
+        original.save(update_fields=['status'])
+
+    def delete(self, *args, **kwargs):
+        with db_transaction.atomic():
+            self._reverse_transaction('Deleted')
+            super().delete(*args, **kwargs)
 
     def generate_invoice_number(self):
         if not self.company:
@@ -87,9 +126,8 @@ class Income(models.Model):
     def create_income_transaction(self, is_new=True):
         if not self.account:
             return
-        try:
-            from transactions.models import Transaction
-            if is_new:
+        from transactions.models import Transaction
+        if is_new:
                 Transaction.objects.create(
                     company=self.company,
                     transaction_type='credit',
@@ -103,11 +141,4 @@ class Income(models.Model):
                     transaction_date=self.income_date,
                     created_by=self.created_by
                 )
-                self.account.balance += self.amount
-                self.account.save(update_fields=['balance'])
-                self.account.refresh_from_db()
-        except Exception as e:
-            import logging, traceback
-            logger = logging.getLogger(__name__)
-            logger.error(f"Error creating income transaction: {str(e)}")
-            logger.error(traceback.format_exc())
+                # Transaction.save() নিজেই balance বাড়ায় — এখানে আবার বাড়ালে দ্বিগুণ হয়

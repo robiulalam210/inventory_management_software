@@ -390,7 +390,10 @@ class MoneyReceipt(models.Model):
             return self.customer.name
         elif self.sale and self.sale.customer:
             return self.sale.customer.name
-        return "Unknown Customer"
+        elif self.sale:
+            # walk-in বিক্রি — "Unknown Customer" এর বদলে বোধগম্য নাম
+            return self.sale.customer_name or "Walk-in customer"
+        return "Walk-in customer"
 
     @property
     def is_specific_payment(self):

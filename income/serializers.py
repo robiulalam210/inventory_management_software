@@ -9,8 +9,13 @@ class IncomeHeadSerializer(serializers.ModelSerializer):
 class IncomeSerializer(serializers.ModelSerializer):
     head_name = serializers.CharField(source='head.name', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
-    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
+
+    def get_created_by_name(self, obj):
+        # নাম না থাকলে username — আগে ফাঁকা দেখাত
+        u = obj.created_by
+        return ((u.get_full_name() or '').strip() or u.username) if u else ''
 
     class Meta:
         model = Income

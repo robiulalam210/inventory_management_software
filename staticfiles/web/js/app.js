@@ -1,3 +1,4 @@
+(function () { try { var t = localStorage.getItem('mm-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { /* ignore */ } })();
 /*
  * Meherin Mart web — সব module এর সাধারণ JavaScript helper।
  *
@@ -69,10 +70,97 @@
 
   const fmtMoney = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  /*
+   * টাকা কথায় — রসিদে লেখার জন্য, দেশি গণনায় (crore / lakh / thousand)।
+   * 1512.50 → "Taka one thousand five hundred twelve and paisa fifty only"
+   */
+  const ONES = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven',
+    'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+  const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+  function under100(n) { return n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (n % 10 ? '-' + ONES[n % 10] : ''); }
+  function under1000(n) {
+    const h = Math.floor(n / 100), r = n % 100;
+    return [h ? ONES[h] + ' hundred' : '', r ? under100(r) : ''].filter(Boolean).join(' ');
+  }
+  function inWords(n) {
+    if (n === 0) return 'zero';
+    const parts = [];
+    const crore = Math.floor(n / 1e7); n %= 1e7;
+    const lakh = Math.floor(n / 1e5); n %= 1e5;
+    const thousand = Math.floor(n / 1e3); n %= 1e3;
+    if (crore) parts.push(inWords(crore) + ' crore');
+    if (lakh) parts.push(under100(lakh) + ' lakh');
+    if (thousand) parts.push(under100(thousand) + ' thousand');
+    if (n) parts.push(under1000(n));
+    return parts.join(' ');
+  }
+  function takaWords(v) {
+    const total = Math.round(Math.abs(Number(v || 0)) * 100);
+    const taka = Math.floor(total / 100), paisa = total % 100;
+    let out = 'Taka ' + inWords(taka);
+    if (paisa) out += ' and paisa ' + inWords(paisa);
+    return out + ' only';
+  }
+
   window.App = {
     api,
     ApiError,
     cookie,
-    taka: (v) => '৳ ' + fmtMoney.format(Number(v || 0)),
+    takaWords,
+    // theme: 'light' | 'dark' | 'system' — browser এ মনে রাখে
+    theme: {
+      get() { try { return localStorage.getItem('mm-theme') || 'system'; } catch (e) { return 'system'; } },
+      set(t) {
+        try { if (t === 'light' || t === 'dark') localStorage.setItem('mm-theme', t); else localStorage.removeItem('mm-theme'); } catch (e) { /* private window */ }
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
+      },
+    },
+    // ৳ আর অঙ্কের মাঝে non-breaking space — দুই লাইনে ভাঙে না
+    taka: (v) => '৳\u00A0' + fmtMoney.format(Number(v || 0)),
   };
 })();
+
+/*
+ * combo — search সহ dropdown (সব module এ ব্যবহারের জন্য)।
+ * ব্যবহার: {% include "web/_combo.html" with model="f.customer" source="customers" placeholder="All customers" %}
+ *   • options: [{ value, label, sub }]  • ↑ ↓ দিয়ে বাছাই, Enter এ নির্বাচন, Esc এ বন্ধ
+ */
+document.addEventListener('alpine:init', () => {
+  Alpine.data('combo', (cfg = {}) => ({
+    value: '',
+    options: [],
+    open: false,
+    q: '',
+    hi: 0,
+    placeholder: cfg.placeholder || 'Select',
+    get label() {
+      const o = this.options.find(o => String(o.value) === String(this.value));
+      return o ? o.label : '';
+    },
+    get filtered() {
+      const q = this.q.trim().toLowerCase();
+      const list = q ? this.options.filter(o => (o.label + ' ' + (o.sub || '')).toLowerCase().includes(q)) : this.options;
+      return list.slice(0, 200);
+    },
+    toggle() {
+      this.open = !this.open;
+      if (this.open) {
+        this.q = '';
+        this.hi = Math.max(0, this.filtered.findIndex(o => String(o.value) === String(this.value)));
+        this.$nextTick(() => this.$refs.q && this.$refs.q.focus());
+      }
+    },
+    close() { this.open = false; },
+    pick(o) { this.value = o ? o.value : ''; this.open = false; },
+    move(d) {
+      const n = this.filtered.length;
+      if (!n) return;
+      this.hi = (this.hi + d + n) % n;
+      this.$nextTick(() => {
+        const el = this.$refs.list && this.$refs.list.children[this.hi];
+        if (el) el.scrollIntoView({ block: 'nearest' });
+      });
+    },
+    enter() { const o = this.filtered[this.hi]; if (o) this.pick(o); },
+  }));
+});

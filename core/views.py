@@ -16,6 +16,8 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 
 import logging
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 logger = logging.getLogger(__name__)
 
 from django.contrib.auth import get_user_model
@@ -181,6 +183,44 @@ class CompanyViewSet(viewsets.ModelViewSet):
         
         return super().create(request, *args, **kwargs)
 
+    # plan, মেয়াদ, user/product limit, চালু/বন্ধ — এগুলো শুধু super admin বদলাতে পারে।
+    # না হলে কোম্পানির admin নিজের মেয়াদ নিজেই বাড়িয়ে নিতে পারত।
+    PLATFORM_ONLY_FIELDS = ('plan_type', 'start_date', 'expiry_date', 'is_active',
+                            'max_users', 'max_products', 'max_branches', 'company_code')
+
+    def update(self, request, *args, **kwargs):
+        if request.user.role != User.Role.SUPER_ADMIN and not request.user.is_superuser:
+            # দোকানের নাম/ঠিকানা invoice এ ছাপা হয় — যে কেউ বদলাতে পারত, এখন setup এর edit অনুমতি লাগে
+            if not request.user.has_permission('administration', 'edit'):
+                return custom_response(False, "You don't have permission to change the company profile", None, status.HTTP_403_FORBIDDEN)
+            # একই মান ফেরত পাঠালে (পুরো form save) আটকাই না — শুধু বদলানোর চেষ্টা আটকাই
+            instance = self.get_object()
+            def changed(f):
+                cur = getattr(instance, f, None)
+                new = request.data.get(f)
+                if isinstance(cur, bool):
+                    return str(new).lower() not in (str(cur).lower(), '1' if cur else '0')
+                return str(new if new is not None else '') != str(cur if cur is not None else '')
+            blocked = [f for f in self.PLATFORM_ONLY_FIELDS if f in request.data and changed(f)]
+            if blocked:
+                return custom_response(
+                    False,
+                    "Only the platform super admin can change: " + ", ".join(blocked),
+                    None,
+                    status.HTTP_403_FORBIDDEN
+                )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        # কোম্পানি মুছলে CASCADE এ তার সব বিক্রি, কেনা, হিসাব মুছে যায় — তাই কেউই মুছতে পারে না,
+        # super admin শুধু বন্ধ (suspend) করতে পারে
+        return custom_response(
+            False,
+            "Companies can't be deleted. The super admin can suspend it instead.",
+            None,
+            status.HTTP_403_FORBIDDEN
+        )
+
 
 # -------------------------
 # User ViewSet
@@ -204,7 +244,11 @@ class UserViewSet(viewsets.ModelViewSet):
         queryset = User.objects.all()
         
         if hasattr(user, 'company') and user.company:
-            return queryset.filter(company=user.company)
+            queryset = queryset.filter(company=user.company)
+            # platform এর super admin কোম্পানির তালিকায় দেখায় না, কেউ বদলাতেও পারে না
+            if user.role != User.Role.SUPER_ADMIN:
+                queryset = queryset.exclude(role=User.Role.SUPER_ADMIN)
+            return queryset
         
         return User.objects.none()
         
@@ -228,70 +272,116 @@ class UserViewSet(viewsets.ModelViewSet):
             data=serializer.data,
             status_code=status.HTTP_200_OK
         )
+    # ───── লেখা (তৈরি / বদল / বন্ধ) — নিয়ম core/team.py তে ─────
     def create(self, request, *args, **kwargs):
-        user = request.user
-        if not user.has_permission('users', 'create'):
+        from . import team
+        actor = request.user
+        if not actor.has_permission('users', 'create'):
+            return custom_response(False, "You don't have permission to add users", None, status.HTTP_403_FORBIDDEN)
+        company = actor.company
+        if company is None:
+            return custom_response(False, "Open a company first — people are added from the Companies page.", None, status.HTTP_400_BAD_REQUEST)
+        data, errors = team.validate_person(request.data, actor)
+        if errors:
+            return custom_response(False, "Please fix the highlighted fields.", errors, status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(company=company, is_active=True).count() >= company.max_users:
             return custom_response(
-                False, 
-                "You don't have permission to create users", 
-                None, 
-                status.HTTP_403_FORBIDDEN
-            )
-        
-        if user.role != User.Role.SUPER_ADMIN and user.company:
-            request.data['company'] = user.company.id
-        
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            return custom_response(
-                True, 
-                "User created successfully", 
-                serializer.data, 
-                status.HTTP_201_CREATED
-            )
-        except Exception as e:
-            return custom_response(
-                False, 
-                f"User creation failed: {str(e)}", 
-                None, 
-                status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                False,
+                f"Your plan allows {company.max_users} active users. Turn someone off first, or ask to raise the limit.",
+                None, status.HTTP_400_BAD_REQUEST)
+        password = data.pop('password')
+        u = User(company=company, is_active=True, **data)
+        u.set_password(password)
+        u.save()   # role অনুযায়ী default permission এখানেই বসে
+        return custom_response(True, f"{u.username} can now sign in.", team.person_row(u, actor), status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
-        user = request.user
-        if not user.has_permission('users', 'edit'):
-            return custom_response(
-                False, 
-                "You don't have permission to edit users", 
-                None, 
-                status.HTTP_403_FORBIDDEN
-            )
-        
-        return super().update(request, *args, **kwargs)
+        from . import team
+        actor = request.user
+        instance = self.get_object()
+        if not actor.has_permission('users', 'edit') and actor.pk != instance.pk:
+            return custom_response(False, "You don't have permission to edit users", None, status.HTTP_403_FORBIDDEN)
+        if not team.can_touch(actor, instance):
+            return custom_response(False, "You can't change this person.", None, status.HTTP_403_FORBIDDEN)
+        # company, is_superuser, is_staff, permission_source এখান থেকে বদলায় না — শুধু নিচের ঘরগুলো
+        allowed = {k: v for k, v in request.data.items()
+                   if k in ('first_name', 'last_name', 'phone', 'username', 'email', 'role', 'password', 'is_active')}
+        data, errors = team.validate_person(allowed, actor, instance=instance)
+        if errors:
+            return custom_response(False, "Please fix the highlighted fields.", errors, status.HTTP_400_BAD_REQUEST)
+        problem = team.check_change(actor, instance, data)
+        if problem:
+            return custom_response(False, problem, None, status.HTTP_400_BAD_REQUEST)
+        password = data.pop('password', None)
+        role_changed = 'role' in data and data['role'] != instance.role
+        for k, v in data.items():
+            setattr(instance, k, v)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        if role_changed:
+            # নতুন role এর default permission — না হলে STAFF থেকে ADMIN করেও কিছু করতে পারত না
+            instance.reset_to_role_permissions()
+        instance.refresh_from_db()
+        msg = "Saved."
+        if 'is_active' in data:
+            msg = f"{instance.username} can sign in again." if instance.is_active else f"{instance.username} can no longer sign in."
+        elif role_changed:
+            msg = f"{instance.username} is now {instance.get_role_display()}. Their access was reset to that role's defaults."
+        return custom_response(True, msg, team.person_row(instance, actor), status.HTTP_200_OK)
 
     def destroy(self, request, *args, **kwargs):
-        user = request.user
-        if not user.has_permission('users', 'delete'):
-            return custom_response(
-                False, 
-                "You don't have permission to delete users", 
-                None, 
-                status.HTTP_403_FORBIDDEN
-            )
-        
+        """মুছে ফেলার বদলে বন্ধ করি — তাদের করা বিক্রি/রসিদে "কে করেছে" থেকে যায়"""
+        from . import team
+        actor = request.user
+        if not actor.has_permission('users', 'delete'):
+            return custom_response(False, "You don't have permission to remove users", None, status.HTTP_403_FORBIDDEN)
         instance = self.get_object()
-        if instance.id == request.user.id:
-            return custom_response(
-                False, 
-                "You cannot delete your own account", 
-                None, 
-                status.HTTP_400_BAD_REQUEST
-            )
-        
-        return super().destroy(request, *args, **kwargs)
-    
+        if instance.id == actor.id:
+            return custom_response(False, "You cannot remove your own account", None, status.HTTP_400_BAD_REQUEST)
+        if not team.can_touch(actor, instance):
+            return custom_response(False, "You can't change this person.", None, status.HTTP_403_FORBIDDEN)
+        problem = team.check_change(actor, instance, {'is_active': False})
+        if problem:
+            return custom_response(False, problem, None, status.HTTP_400_BAD_REQUEST)
+        instance.is_active = False
+        instance.save(update_fields=['is_active'])
+        return custom_response(True, f"{instance.username} was turned off. Their past work stays on record.", None, status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'])
+    def team(self, request):
+        """web এর Staff page — প্রত্যেকের role, permission আর actor কী করতে পারবে"""
+        from . import team as T
+        actor = request.user
+        if not actor.has_permission('users', 'view'):
+            return custom_response(False, "You don't have permission to see users", None, status.HTTP_403_FORBIDDEN)
+        qs = self.get_queryset().order_by('-is_active', 'first_name', 'username')
+        rows = [T.person_row(u, actor) for u in qs]
+        company = actor.company
+        return custom_response(True, f"{len(rows)} people", {
+            'results': rows,
+            'limit': company.max_users if company else None,
+            'active': sum(1 for r in rows if r['is_active']),
+            'assignable': [r for r in T.ASSIGNABLE if T.can_assign(actor, r)],
+            'can_manage_permissions': T.is_admin(actor),
+        }, status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='set-password')
+    def set_password(self, request, pk=None):
+        from . import team
+        actor = request.user
+        target = self.get_object()
+        if not (actor.has_permission('users', 'edit') and team.can_touch(actor, target)):
+            return custom_response(False, "You can't change this person's password.", None, status.HTTP_403_FORBIDDEN)
+        pw = request.data.get('password') or ''
+        try:
+            validate_password(pw, user=target)
+        except DjangoValidationError as e:
+            return custom_response(False, ' '.join(e.messages), {'password': ' '.join(e.messages)}, status.HTTP_400_BAD_REQUEST)
+        target.set_password(pw)
+        target.save(update_fields=['password'])
+        return custom_response(True, f"Password changed for {target.username}.", None, status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'])
     def assign_role(self, request, pk=None):
         user = self.get_object()
@@ -1088,6 +1178,8 @@ class CompanyLogoUpdateAPIView(APIView):
                 company = get_object_or_404(Company, pk=pk)
             else:
                 company = getattr(request.user, 'company', None)
+                if company and request.user.role != User.Role.SUPER_ADMIN and not request.user.has_permission('administration', 'edit'):
+                    return custom_response(False, "You don't have permission to change the logo", None, status.HTTP_403_FORBIDDEN)
                 if not company:
                     return custom_response(
                         False, 
@@ -1325,6 +1417,9 @@ def user_dashboard_stats(request):
 # Admin Web Views (Optional)
 # --------------------------
 def company_admin_signup(request):
+    # বন্ধ: যে কেউ নিজে নিজে কোম্পানি খুলে ফেলতে পারত। কোম্পানি এখন শুধু Super Admin খোলে
+    # (/app/platform/companies/), আর তার এডমিনকে login এর তথ্য দেয়।
+    return redirect('/app/login/')
     if CompanyAdminSignupForm is None:
         return render(request, 'error.html', {'error': 'Forms module not available'})
     

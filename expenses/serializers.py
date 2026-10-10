@@ -22,11 +22,16 @@ class ExpenseSerializer(serializers.ModelSerializer):
     head_name = serializers.CharField(source='head.name', read_only=True)
     subhead_name = serializers.CharField(source='subhead.name', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
-    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
     description = serializers.CharField(read_only=True)
     status = serializers.CharField(read_only=True)
     expense_summary = serializers.SerializerMethodField()
     
+    def get_created_by_name(self, obj):
+        # নাম না থাকলে username — আগে ফাঁকা দেখাত
+        u = obj.created_by
+        return ((u.get_full_name() or '').strip() or u.username) if u else ''
+
     class Meta:
         model = Expense
         fields = [

@@ -17,11 +17,13 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
     )
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True, source='subtotal')
+    # product_id শুধু লেখার জন্য; পড়ার সময় product এর id পেতে এই field (Purchase Return এ লাগে)
+    product = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = PurchaseItem
-        fields = ['id', 'product_id', 'product_name', 'qty', 'price', 'discount', 'discount_type', 'product_total']
-        read_only_fields = ['id', 'product_name', 'product_total']
+        fields = ['id', 'product_id', 'product', 'product_name', 'qty', 'price', 'discount', 'discount_type', 'product_total']
+        read_only_fields = ['id', 'product', 'product_name', 'product_total']
 
     def validate_price(self, value):
         if value <= 0:

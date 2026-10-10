@@ -89,6 +89,14 @@
             <b>{{ web_user.name }}</b>
             <span>{{ web_user.email|default:web_user.role }}</span>
           </div>
+          <div x-data="{ t: App.theme.get() }">
+            <div class="theme-lbl">Appearance</div>
+            <div class="theme-seg" role="group" aria-label="Appearance">
+              <button type="button" :aria-pressed="(t === 'light').toString()" @click="t = 'light'; App.theme.set('light')">Light</button>
+              <button type="button" :aria-pressed="(t === 'dark').toString()" @click="t = 'dark'; App.theme.set('dark')">Dark</button>
+              <button type="button" :aria-pressed="(t === 'system').toString()" @click="t = 'system'; App.theme.set('system')">Auto</button>
+            </div>
+          </div>
           <a class="menu-item" role="menuitem" href="{% url 'web:soon' 'profile' %}">{% icon "user" 18 %} My profile <span class="soon">Soon</span></a>
           <a class="menu-item" role="menuitem" href="{% url 'web:soon' 'profile' %}">{% icon "key" 18 %} Change password <span class="soon">Soon</span></a>
           <button type="button" class="menu-item danger" role="menuitem" @click="open = false; signOut = true">

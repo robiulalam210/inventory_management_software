@@ -1,3 +1,4 @@
+(function () { try { var t = localStorage.getItem('mm-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { /* ignore */ } })();
 /*
  * Meherin Mart web — সব module এর সাধারণ JavaScript helper।
  *
@@ -106,6 +107,14 @@
     ApiError,
     cookie,
     takaWords,
+    // theme: 'light' | 'dark' | 'system' — browser এ মনে রাখে
+    theme: {
+      get() { try { return localStorage.getItem('mm-theme') || 'system'; } catch (e) { return 'system'; } },
+      set(t) {
+        try { if (t === 'light' || t === 'dark') localStorage.setItem('mm-theme', t); else localStorage.removeItem('mm-theme'); } catch (e) { /* private window */ }
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
+      },
+    },
     // ৳ আর অঙ্কের মাঝে non-breaking space — দুই লাইনে ভাঙে না
     taka: (v) => '৳\u00A0' + fmtMoney.format(Number(v || 0)),
   };

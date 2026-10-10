@@ -124,3 +124,29 @@ class AccountSerializer(serializers.ModelSerializer):
         account.full_clean()
         account.save(creating_user=user)
         return account
+
+    def update(self, instance, validated_data):
+        """
+        FIX: আগে opening balance বদলালে শুধু ওই ঘরটা বদলাত, আসল balance একই থাকত — দুটো আর মিলত না।
+        এখন যতটুকু বদলাল, balance ও ঠিক ততটুকু বদলায়, আর opening balance এর রেকর্ড (transaction) ও।
+        """
+        from django.db import transaction as db_transaction
+        new_opening = validated_data.get('opening_balance', instance.opening_balance)
+        if new_opening is None:
+            new_opening = Decimal('0.00')
+        delta = Decimal(str(new_opening)) - (instance.opening_balance or Decimal('0.00'))
+        with db_transaction.atomic():
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            if delta:
+                instance.balance = (instance.balance or Decimal('0.00')) + delta
+            instance.save()
+            if delta:
+                from transactions.models import Transaction
+                ob = Transaction.objects.filter(account=instance, is_opening_balance=True).order_by('id').first()
+                if ob:
+                    Transaction.objects.filter(pk=ob.pk).update(amount=new_opening)
+                elif new_opening > 0:
+                    request = self.context.get('request')
+                    instance.create_opening_balance_transaction(getattr(request, 'user', None))
+        return instance

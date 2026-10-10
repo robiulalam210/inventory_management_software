@@ -80,6 +80,18 @@ class CompanySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['company_code', 'created_at', 'updated_at']
 
+    def validate_name(self, value):
+        # "Zaimah Ltd" আর "zaimah ltd" একই দোকান — বড়/ছোট হাতের অক্ষরে আলাদা নাম হতে দিই না
+        value = (value or '').strip()
+        if not value:
+            raise serializers.ValidationError('Enter the company name.')
+        qs = Company.objects.filter(name__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('A company with this name already exists.')
+        return value
+
 
 # -----------------------------
 # User Permission Serializers

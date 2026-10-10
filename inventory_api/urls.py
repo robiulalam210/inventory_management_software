@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.shortcuts import render
-from core.views import home
+from shop.views import home_store_view
 from django.conf import settings
 from django.conf.urls.static import static
 # def home(request):
@@ -32,7 +32,8 @@ def health_check(request):
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('health/', health_check, name='health-check'),
-    path('', home, name='home'),
+    path('', home_store_view, name='home'),  # হোম = ই-কমার্স শপ (Login বাটনসহ)
+    path('shop/', include('shop.urls')),  # কাস্টমারের অনলাইন শপ (পাবলিক)
         path('api/', include('core.urls')),  # core app APIs
     path('app/', include('web.urls')),  # web software (browser থেকে — admin panel নয়)
 

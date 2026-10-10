@@ -493,6 +493,102 @@ class AccountViewSet(BaseInventoryViewSet):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    def destroy(self, request, *args, **kwargs):
+        """
+        FIX (গুরুতর): আগে সাধারণ delete ছিল — account মুছলে তার সব transaction ও (CASCADE) মুছে যেত,
+        ফলে বিক্রি/কেনা/খরচের টাকার হিসাব হারিয়ে যেত। এখন লেনদেন থাকলে শুধু inactive হয়।
+        """
+        try:
+            instance = self.get_object()
+        except Http404:
+            return custom_response(success=False, message="Account not found.", data=None,
+                                   status_code=status.HTTP_404_NOT_FOUND)
+        from transactions.models import Transaction
+        used = Transaction.objects.filter(account=instance).count()
+        if used or (instance.balance or 0) != 0:
+            instance.is_active = False
+            instance.save(update_fields=['is_active', 'updated_at'])
+            reason = f"{used} transactions" if used else f"a balance of {instance.balance}"
+            return custom_response(
+                success=True,
+                message=f"This account has {reason}, so it was marked inactive instead of deleted.",
+                data={'id': instance.id, 'is_active': False, 'deletion_blocked': True},
+                status_code=status.HTTP_200_OK)
+        name = instance.name
+        instance.delete()
+        return custom_response(success=True, message=f"Account '{name}' deleted.", data=None,
+                               status_code=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'])
+    def statement(self, request, pk=None):
+        """
+        GET /api/accounts/<id>/statement/?start=YYYY-MM-DD&end=YYYY-MM-DD
+        এই account এর সব টাকা আসা-যাওয়া, তারিখের ক্রমে, প্রতিটার পরে balance সহ।
+        শুরুর আগের সব হিসাব "opening"। শেষে মিলিয়ে দেখা হয়: transaction গুলো যোগ করলে যা হয়, আসল
+        balance তার সাথে মেলে কিনা — না মিললে "unexplained" (আগের কোনো bug এ হাতে বদলানো balance)।
+        pending / failed লেনদেন balance বদলায় না, তাই বাদ।
+        """
+        from datetime import datetime as _dt
+        from django.utils import timezone as _tz
+        from transactions.models import Transaction
+        try:
+            account = self.get_object()
+        except Http404:
+            return custom_response(success=False, message="Account not found.", data=None,
+                                   status_code=status.HTTP_404_NOT_FOUND)
+
+        def _d(v):
+            try:
+                return _dt.strptime(v, '%Y-%m-%d').date() if v else None
+            except ValueError:
+                return None
+        start, end = _d(request.query_params.get('start')), _d(request.query_params.get('end'))
+
+        txns = (Transaction.objects.filter(account=account).exclude(status__in=['pending', 'failed'])
+                .select_related('created_by').order_by('transaction_date', 'id'))
+        opening = Decimal('0.00')
+        total = Decimal('0.00')
+        rows = []
+        cin = cout = Decimal('0.00')
+        for t in txns:
+            effect = t.amount if t.transaction_type == 'credit' else -t.amount
+            when = _tz.localtime(t.transaction_date) if _tz.is_aware(t.transaction_date) else t.transaction_date
+            d = when.date()
+            total += effect
+            if start and d < start:
+                opening += effect
+                continue
+            if end and d > end:
+                continue
+            if t.transaction_type == 'credit':
+                cin += t.amount
+            else:
+                cout += t.amount
+            rows.append({
+                'id': t.id, 'no': t.transaction_no, 'date': when.isoformat(),
+                'type': t.transaction_type, 'amount': float(t.amount),
+                'description': t.description or '', 'method': t.payment_method,
+                'reference': t.reference_no or '', 'status': t.status,
+                'is_opening_balance': t.is_opening_balance,
+                'by': t.created_by.username if t.created_by else '',
+            })
+        running = opening
+        for r in rows:
+            running += Decimal(str(r['amount'])) if r['type'] == 'credit' else -Decimal(str(r['amount']))
+            r['balance'] = float(running)
+        unexplained = (account.balance or Decimal('0.00')) - total
+        return custom_response(success=True, message="Account statement.", data={
+            'account': {'id': account.id, 'name': account.name, 'ac_type': account.ac_type,
+                        'number': account.number, 'balance': float(account.balance or 0)},
+            'start': start.isoformat() if start else None,
+            'end': end.isoformat() if end else None,
+            'opening_balance': float(opening),
+            'money_in': float(cin), 'money_out': float(cout),
+            'closing_balance': float(running),
+            'unexplained': float(unexplained),
+            'rows': rows,
+        }, status_code=status.HTTP_200_OK)
+
     @action(detail=False, methods=['get'])
     def types(self, request):
         """Get available account types"""

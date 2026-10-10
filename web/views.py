@@ -21,8 +21,26 @@ LOGIN_URL = reverse_lazy('web:login')
 REMEMBER_SECONDS = 7 * 24 * 60 * 60
 
 
+def is_platform_admin(user):
+    return bool(user and user.is_authenticated and (getattr(user, 'role', '') == 'SUPER_ADMIN' or user.is_superuser))
+
+
+def company_blocked(user):
+    """কোম্পানি বন্ধ (suspended) থাকলে তার কেউ web এ ঢুকতে পারে না — super admin বাদে"""
+    company = getattr(user, 'company', None)
+    return bool(company is not None and not company.is_active and not is_platform_admin(user))
+
+
 def web_login_required(view):
-    return login_required(view, login_url=LOGIN_URL)
+    from functools import wraps
+
+    @wraps(view)
+    def inner(request, *args, **kwargs):
+        if request.user.is_authenticated and company_blocked(request.user):
+            logout(request)
+            return redirect(reverse('web:login') + '?suspended=1')
+        return view(request, *args, **kwargs)
+    return login_required(inner, login_url=LOGIN_URL)
 
 
 def has_perm(user, module, action='view'):
@@ -87,6 +105,11 @@ def login_view(request):
                 ctx['warning'] = f'{left} attempt{"s" if left != 1 else ""} left before sign-in is paused for 15 minutes.'
             return render(request, 'web/auth/login.html', ctx, status=401)
 
+        if company_blocked(user):
+            ctx['error'] = (f'{user.company.name} is suspended, so nobody from it can sign in right now. '
+                            'Please contact your software provider.')
+            return render(request, 'web/auth/login.html', ctx, status=403)
+
         auth.clear_failures(request, identifier)
         login(request, user)  # session id নতুন করে তৈরি হয় (session fixation ঠেকাতে)
         request.session.set_expiry(REMEMBER_SECONDS if remember else 0)
@@ -95,6 +118,8 @@ def login_view(request):
 
     if request.GET.get('expired'):
         ctx['info'] = 'Your session has ended. Please sign in again.'
+    if request.GET.get('suspended'):
+        ctx['error'] = 'Your company has been suspended. Please contact your software provider.'
     return render(request, 'web/auth/login.html', ctx)
 
 
@@ -118,6 +143,9 @@ def home_view(request):
     কোন অংশ দেখাবে তা permission অনুযায়ী (যেমন Accounts দেখার অনুমতি না থাকলে balance দেখায় না)।
     Dashboard এর অনুমতি না থাকলে শুধু তার module গুলোর shortcut দেখায়।
     """
+    # Super admin এর কোনো দোকান নেই — তার কাজ কোম্পানি চালানো
+    if is_platform_admin(request.user) and not getattr(request.user, 'company', None):
+        return redirect('web:platform_companies')
     perms = request.user.get_permissions()
 
     def can(module, action='view'):
@@ -126,7 +154,16 @@ def home_view(request):
     now = timezone.localtime()
     greeting = 'Good morning' if now.hour < 12 else 'Good afternoon' if now.hour < 17 else 'Good evening'
     if can('dashboard'):
+        shop_ctx = {}
+        company = getattr(request.user, 'company', None)
+        if company is not None and can('sales'):
+            from shop.models import ShopOrder, ShopSettings
+            shop_ctx = {
+                'shop_url': ShopSettings.for_company(company).public_url(request),
+                'shop_pending': ShopOrder.objects.filter(company=company, status='pending').count(),
+            }
         return render(request, 'web/dashboard.html', {
+            **shop_ctx,
             'page_title': 'My Dashboard',
             'greeting': greeting,
             'today': now,
@@ -404,3 +441,471 @@ def customers_view(request):
             'statement': has_perm(u, 'reports', 'view'),
         },
     })
+
+
+@web_login_required
+@never_cache
+def products_view(request):
+    """
+    Products — সব পণ্য: stock অবস্থা (যথেষ্ট / কম / শেষ), দাম ও লাভের হার, যোগ/সম্পাদনা (ছবি সহ),
+    আর SKU এর barcode label print — POS এ scan করার জন্য।
+    """
+    u = request.user
+    if not has_perm(u, 'products', 'view'):
+        return forbidden(request, 'Products')
+    return render(request, 'web/products/list.html', {
+        'page_title': 'Products',
+        'pr_perms': {
+            'create': has_perm(u, 'products', 'create'),
+            'edit': has_perm(u, 'products', 'edit'),
+            'delete': has_perm(u, 'products', 'delete'),
+            'buy': has_perm(u, 'purchases', 'create'),
+            'reports': has_perm(u, 'reports', 'view'),
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def accounts_view(request):
+    """
+    Accounts — Cash / Bank / Mobile banking এর balance, আর প্রতিটা account এর statement (কোন টাকা কবে
+    এল-গেল, প্রতিটার পরে balance)। হিসাব না মিললে সেটাও দেখায়।
+    """
+    u = request.user
+    if not has_perm(u, 'accounts', 'view'):
+        return forbidden(request, 'Accounts')
+    return render(request, 'web/accounts/list.html', {
+        'page_title': 'Accounts',
+        'ac_perms': {
+            'create': has_perm(u, 'accounts', 'create'),
+            'edit': has_perm(u, 'accounts', 'edit'),
+            'delete': has_perm(u, 'accounts', 'delete'),
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def units_view(request):
+    """
+    Units — product কোন মাপে বিক্রি হয় (Pcs, Kg, Litre…)। Unit ছাড়া product তৈরি হয় না, তাই নতুন
+    কোম্পানির জন্য এক ক্লিকে সাধারণ unit গুলো যোগ করার ব্যবস্থাও আছে।
+    """
+    u = request.user
+    if not has_perm(u, 'administration', 'view'):
+        return forbidden(request, 'Units')
+    return render(request, 'web/admin/units.html', {
+        'page_title': 'Units',
+        'un_perms': {
+            'create': has_perm(u, 'administration', 'create'),
+            'edit': has_perm(u, 'administration', 'edit'),
+            'delete': has_perm(u, 'administration', 'delete'),
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def platform_companies_view(request):
+    """
+    Companies (Super Admin) — সব কোম্পানি, নতুন কোম্পানি + তার এডমিন একবারে খোলা, প্ল্যান/মেয়াদ/limit,
+    বন্ধ/চালু, এডমিনের password বদলানো। কোম্পানির নিজের admin এই page দেখতে পায় না।
+    """
+    if not is_platform_admin(request.user):
+        return forbidden(request, 'Companies')
+    from core.models import Company
+    return render(request, 'web/platform/companies.html', {
+        'page_title': 'Companies',
+        'pf_plans': [{'value': v, 'label': l} for v, l in Company.PlanType.choices],
+    })
+
+
+def _team_page(request, title, start):
+    u = request.user
+    from core.team import is_admin
+    return render(request, 'web/admin/staff.html', {
+        'page_title': title,
+        'tm_init': {
+            'start': start,
+            'perms': {
+                'create': has_perm(u, 'users', 'create'),
+                'edit': has_perm(u, 'users', 'edit'),
+                'delete': has_perm(u, 'users', 'delete'),
+            },
+            'is_admin': is_admin(u),
+            'me': u.id,
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def staff_view(request):
+    """
+    Staff — কোম্পানির মানুষ: কে login করতে পারে, কোন role, শেষ কবে এসেছে। নতুন মানুষ যোগ, role বদল,
+    password বদল, বন্ধ/চালু। মুছে ফেলা হয় না — তাদের করা বিক্রি/রসিদে নাম থেকে যায়।
+    """
+    if not has_perm(request.user, 'users', 'view'):
+        return forbidden(request, 'Staff')
+    return _team_page(request, 'Staff', 'people')
+
+
+@web_login_required
+@never_cache
+def user_permissions_view(request):
+    """
+    User Permissions — প্রত্যেকে কোন module এ কী করতে পারবে (দেখা / তৈরি / বদল / মোছা)।
+    শুধু Admin; Admin দের নিজেদের সব থাকে, তাই তাদের বদলানো যায় না।
+    """
+    from core.team import is_admin
+    if not is_admin(request.user):
+        return forbidden(request, 'User Permissions')
+    return _team_page(request, 'User Permissions', 'access')
+
+
+@web_login_required
+@never_cache
+def company_profile_view(request):
+    """
+    Company Profile — দোকানের নাম, logo, ঠিকানা, ফোন: invoice আর রসিদের মাথায় যা ছাপা হয়।
+    Plan, মেয়াদ, user limit শুধু দেখা যায় — ওগুলো Super Admin বদলান।
+    """
+    u = request.user
+    if not has_perm(u, 'administration', 'view'):
+        return forbidden(request, 'Company Profile')
+    if not getattr(u, 'company', None):
+        return redirect('web:home')
+    return render(request, 'web/admin/profile.html', {
+        'page_title': 'Company Profile',
+        'cp_init': {'id': u.company_id, 'can_edit': has_perm(u, 'administration', 'edit')},
+    })
+
+
+# Category / Brand / Group / Source — একই রকম ছোট তালিকা, একটাই template (web/admin/lookup.html)
+LOOKUPS = {
+    'categories': {
+        'title': 'Categories', 'singular': 'category', 'plural': 'categories', 'api': '/api/categories/',
+        'icon': 'box', 'has_description': True, 'filter_param': 'category',
+        'explain': 'Group products by type so they are easy to find on the sale and POS screens, and so reports can show what sells best.',
+        'examples': ['Groceries', 'Beverages', 'Snacks', 'Personal care', 'Household', 'Electronics'],
+    },
+    'brands': {
+        'title': 'Brands', 'singular': 'brand', 'plural': 'brands', 'api': '/api/brands/',
+        'icon': 'sparkle', 'has_description': False, 'filter_param': '',
+        'explain': 'Who makes the product. Lets you search and report by brand.',
+        'examples': [],
+    },
+    'groups': {
+        'title': 'Groups', 'singular': 'group', 'plural': 'groups', 'api': '/api/groups/',
+        'icon': 'store', 'has_description': False, 'filter_param': '',
+        'explain': 'Your own way of grouping products beyond category — for example fast-moving, seasonal or wholesale items.',
+        'examples': ['Fast moving', 'Seasonal', 'Wholesale', 'Slow moving'],
+    },
+    'sources': {
+        'title': 'Sources', 'singular': 'source', 'plural': 'sources', 'api': '/api/sources/',
+        'icon': 'globe', 'has_description': False, 'filter_param': '',
+        'explain': 'Where a product comes from — local market, imported, or made by you.',
+        'examples': ['Local', 'Imported', 'Own production'],
+    },
+}
+
+
+def _lookup_view(kind):
+    cfg = LOOKUPS[kind]
+
+    @web_login_required
+    @never_cache
+    def view(request):
+        u = request.user
+        if not has_perm(u, 'administration', 'view'):
+            return forbidden(request, cfg['title'])
+        lk = dict(cfg)
+        lk['singular_title'] = cfg['singular'].capitalize()
+        lk['perms'] = {
+            # product তৈরির অনুমতি থাকলেও যোগ করা যায় (backend এর নিয়মের সাথে মিল রেখে)
+            'create': has_perm(u, 'administration', 'create') or has_perm(u, 'products', 'create'),
+            'edit': has_perm(u, 'administration', 'edit'),
+            'delete': has_perm(u, 'administration', 'delete'),
+        }
+        return render(request, 'web/admin/lookup.html', {'page_title': cfg['title'], 'lk': lk})
+    view.__name__ = f'{kind}_view'
+    return view
+
+
+categories_view = _lookup_view('categories')
+brands_view = _lookup_view('brands')
+groups_view = _lookup_view('groups')
+sources_view = _lookup_view('sources')
+
+
+@web_login_required
+@never_cache
+def sale_modes_view(request):
+    """
+    Sale Mode — একই product ভিন্ন মাপে বিক্রি (Gram/KG, Piece/Dozen, বস্তা)। Stock সবসময় product এর
+    নিজের unit এ থাকে; sale mode বলে একবার বিক্রিতে কতটা কমবে, আর দাম কীভাবে হবে।
+    """
+    u = request.user
+    if not has_perm(u, 'administration', 'view'):
+        return forbidden(request, 'Sale Modes')
+    return render(request, 'web/admin/salemodes.html', {
+        'page_title': 'Sale Modes',
+        'sm_perms': {
+            'create': has_perm(u, 'administration', 'create') or has_perm(u, 'products', 'create'),
+            'edit': has_perm(u, 'administration', 'edit'),
+            'delete': has_perm(u, 'administration', 'delete'),
+        },
+    })
+
+
+# ───────────── Expense / Income ─────────────
+# খরচ: Expense module এর অনুমতি। আয়: Accounts module এর অনুমতি (menu তেও তাই)।
+def _money_perms(u, module):
+    return {a: has_perm(u, module, a) for a in ('create', 'edit', 'delete')}
+
+
+@web_login_required
+@never_cache
+def expenses_view(request):
+    """Expense List — দোকান চালাতে যা খরচ হয় (ভাড়া, বিল, বেতন…); কোন account থেকে গেল, খাত অনুযায়ী মোট"""
+    u = request.user
+    if not has_perm(u, 'expense', 'view'):
+        return forbidden(request, 'Expenses')
+    perms = _money_perms(u, 'expense')
+    return render(request, 'web/money/ledger.html', {'page_title': 'Expenses', 'lg': {
+        'kind': 'expense', 'noun': 'expense', 'plural': 'expenses', 'ref_label': 'EXP no.', 'icon': 'expense',
+        'api': '/api/expenses/expenses/', 'summary_api': '/api/expenses/expenses/summary/',
+        'heads_api': '/api/expenses/expense-heads/', 'subheads_api': '/api/expenses/expense-subheads/',
+        'perms': perms, 'can_add_head': perms['create'],
+        'empty_text': 'Record rent, bills, wages and other running costs. The money comes out of the account you pick, and profit reports count it.',
+    }})
+
+
+@web_login_required
+@never_cache
+def incomes_view(request):
+    """Income List — বিক্রি ছাড়া অন্য আয় (ভাড়া পাওয়া, কমিশন…); কোন account এ এল"""
+    u = request.user
+    if not has_perm(u, 'accounts', 'view'):
+        return forbidden(request, 'Income')
+    perms = _money_perms(u, 'accounts')
+    return render(request, 'web/money/ledger.html', {'page_title': 'Income', 'lg': {
+        'kind': 'income', 'noun': 'income', 'plural': 'income entries', 'ref_label': 'INC no.', 'icon': 'income',
+        'api': '/api/income/incomes/', 'summary_api': '/api/income/incomes/summary/',
+        'heads_api': '/api/income/income-heads/', 'subheads_api': '',
+        'perms': perms, 'can_add_head': perms['create'],
+        'empty_text': 'Money that comes in other than sales — rent you receive, commission, a refund. It goes into the account you pick.',
+    }})
+
+
+def _heads_page(request, kind, title, focus_sub=False):
+    u = request.user
+    module = 'expense' if kind == 'expense' else 'accounts'
+    if not has_perm(u, module, 'view'):
+        return forbidden(request, title)
+    exp = kind == 'expense'
+    return render(request, 'web/money/heads.html', {'page_title': title, 'hd': {
+        'kind': kind, 'icon': 'expense' if exp else 'income', 'focus_sub': focus_sub,
+        'heads_api': '/api/expenses/expense-heads/' if exp else '/api/income/income-heads/',
+        'subheads_api': '/api/expenses/expense-subheads/' if exp else '',
+        'list_url': reverse('web:expenses') if exp else reverse('web:incomes'),
+        'perms': _money_perms(u, module),
+        'explain': ('What your money is spent on. Use sub heads to split a head further — Utilities › Electricity, Water, Internet.'
+                    if exp else 'Where extra money comes from — anything other than sales.'),
+        'empty_text': ('Add heads like Rent, Utilities, Salaries, Transport. Every expense is filed under one, so you can see where money goes.'
+                       if exp else 'Add heads like Rent received, Commission or Interest.'),
+    }})
+
+
+@web_login_required
+@never_cache
+def expense_heads_view(request):
+    return _heads_page(request, 'expense', 'Expense Heads')
+
+
+@web_login_required
+@never_cache
+def expense_subheads_view(request):
+    return _heads_page(request, 'expense', 'Expense Sub Heads', focus_sub=True)
+
+
+@web_login_required
+@never_cache
+def income_heads_view(request):
+    return _heads_page(request, 'income', 'Income Heads')
+
+
+RETURN_KINDS = {
+    'sales': {
+        'kind': 'sales', 'noun': 'sales', 'new_url': 'web:sales_return_new',
+        'no_label': 'Receipt', 'party_label': 'Customer', 'party_all': 'All customers',
+        'refund_label': 'Refunded via', 'empty_hint': 'Goods customers send back will appear here.',
+    },
+    'purchase': {
+        'kind': 'purchase', 'noun': 'purchase', 'new_url': 'web:purchase_return_new',
+        'no_label': 'Invoice', 'party_label': 'Supplier', 'party_all': 'All suppliers',
+        'refund_label': 'Refund received via', 'empty_hint': 'Goods you send back to suppliers will appear here.',
+    },
+}
+
+
+def _returns_list(request, kind, title):
+    if not has_perm(request.user, 'return', 'view'):
+        return forbidden(request, title)
+    return render(request, 'web/returns/list.html', {
+        'page_title': title,
+        'rt': RETURN_KINDS[kind],
+        'can_create': has_perm(request.user, 'return', 'create'),
+        'can_update': has_perm(request.user, 'return', 'edit'),
+        'can_delete': has_perm(request.user, 'return', 'delete'),
+    })
+
+
+@web_login_required
+@never_cache
+def sales_returns_view(request):
+    """
+    Sales Return List — বিক্রি ফেরতের তালিকা: search, তারিখ/অবস্থা/customer filter, দেখা ও print, এবং অনুমতি
+    থাকলে Approve / Reject / Complete / Delete (app এর একই নিয়ম: pending → approved → completed)।
+    Data: /api/sales-returns/
+    """
+    return _returns_list(request, 'sales', 'Sales Returns')
+
+
+@web_login_required
+@never_cache
+def purchase_returns_view(request):
+    """Purchase Return List — supplier কে ফেরত পাঠানো মালের তালিকা। Data: /api/purchase-returns/ (workflow একই)"""
+    return _returns_list(request, 'purchase', 'Purchase Returns')
+
+
+@web_login_required
+@never_cache
+def sales_return_new_view(request):
+    """Create Sales Return — invoice বাছলে তার পণ্যগুলো আসে; কত ফেরত ও কত নষ্ট (damage) লেখা যায়।"""
+    if not has_perm(request.user, 'return', 'create'):
+        return forbidden(request, 'Create Sales Return')
+    return render(request, 'web/returns/sales_new.html', {
+        'page_title': 'New Sales Return',
+        'form_init': {
+            'invoice': request.GET.get('invoice') or '',
+            'canSeeList': has_perm(request.user, 'return', 'view'),
+            'canApprove': has_perm(request.user, 'return', 'edit'),
+        },
+    })
+
+
+@web_login_required
+@never_cache
+def purchase_return_new_view(request):
+    """Create Purchase Return — supplier বাছলে তার invoice আসে, invoice বাছলে পণ্য আসে।"""
+    if not has_perm(request.user, 'return', 'create'):
+        return forbidden(request, 'Create Purchase Return')
+    return render(request, 'web/returns/purchase_new.html', {
+        'page_title': 'New Purchase Return',
+        'form_init': {'canSeeList': has_perm(request.user, 'return', 'view')},
+    })
+
+
+@web_login_required
+@never_cache
+def bad_stock_view(request):
+    """Bad Stock List — নষ্ট/ক্ষতিগ্রস্ত মালের হিসাব (Sales Return এ damage দিলে এখানে আসে)। Data: /api/bad-stocks/"""
+    if not has_perm(request.user, 'return', 'view'):
+        return forbidden(request, 'Bad Stock')
+    return render(request, 'web/returns/bad_stock.html', {'page_title': 'Bad Stock'})
+
+
+@web_login_required
+@never_cache
+def transfer_new_view(request):
+    """
+    Account Transfer — এক account থেকে আরেক account এ টাকা। "Quick transfer" চালু থাকলে সাথে সাথে টাকা সরে;
+    বন্ধ থাকলে pending থাকে, পরে Transfer List থেকে execute করতে হয়। Data: /api/transfers/
+    """
+    if not has_perm(request.user, 'accounts', 'create'):
+        return forbidden(request, 'Account Transfer')
+    return render(request, 'web/transfers/new.html', {
+        'page_title': 'Account Transfer',
+        'form_init': {'canSeeList': has_perm(request.user, 'accounts', 'view')},
+    })
+
+
+@web_login_required
+@never_cache
+def transfers_view(request):
+    """Transfer List — সব transfer; pending এ Execute / Cancel, completed এ Reverse (app এর একই নিয়ম)।"""
+    u = request.user
+    if not has_perm(u, 'accounts', 'view'):
+        return forbidden(request, 'Transfer List')
+    return render(request, 'web/transfers/list.html', {
+        'page_title': 'Transfers',
+        'can_create': has_perm(u, 'accounts', 'create'),
+        'list_init': {'canEdit': has_perm(u, 'accounts', 'edit'), 'me': {'id': u.id}},
+    })
+
+
+@web_login_required
+@never_cache
+def transactions_view(request):
+    """Transactions — সব account এর লেনদেন (শুধু দেখা): sale, receipt, purchase, expense, transfer। Data: /api/transactions/"""
+    if not has_perm(request.user, 'accounts', 'view'):
+        return forbidden(request, 'Transactions')
+    return render(request, 'web/transfers/transactions.html', {'page_title': 'Transactions'})
+
+
+@web_login_required
+@never_cache
+def audit_log_view(request):
+    """
+    Audit Log — কে, কখন, কোন app/device থেকে, কোন record এ কী বদলেছে (আগে/পরে)। শুধু দেখা।
+    Super Admin ও Admin ছাড়া কেউ দেখে না — API ও একই নিয়ম মানে। Data: /api/sync/audit/ আর /api/sync/audit/meta/
+    """
+    u = request.user
+    role = (getattr(u, 'role', '') or '').upper()
+    if not (u.is_superuser or role in ('SUPER_ADMIN', 'ADMIN')):
+        return forbidden(request, 'Audit Log')
+    return render(request, 'web/security/audit.html', {'page_title': 'Audit Log'})
+
+
+REPORT_TITLES = {
+    'sales': 'Sales Report', 'purchases': 'Purchase Report', 'profit-loss': 'Profit / Loss',
+    'top-products': 'Top Selling Products', 'low-stock': 'Low Stock', 'stock': 'Stock Report',
+    'customer-ledger': 'Customer Ledger', 'customer-due': 'Customer Due / Advance',
+    'supplier-ledger': 'Supplier Ledger', 'supplier-due': 'Supplier Due / Advance', 'expenses': 'Expense Report',
+}
+
+
+@web_login_required
+@never_cache
+def report_view(request, key):
+    """সব report একই page — কোনটা, তা `key` ঠিক করে (web/static/web/js/reports.js এর REPORTS)।"""
+    if not has_perm(request.user, 'reports', 'view'):
+        return forbidden(request, 'Reports')
+    return render(request, 'web/reports/report.html', {'page_title': REPORT_TITLES[key], 'key': key})
+
+
+def _payroll_guard(request):
+    u = request.user
+    role = (getattr(u, 'role', '') or '').upper()
+    return None if (u.is_superuser or role in ('SUPER_ADMIN', 'ADMIN') or has_perm(u, 'payroll', 'view')) else forbidden(request, 'Payroll')
+
+
+@web_login_required
+@never_cache
+def payroll_view(request):
+    """Salary Sheet — মাসের বেতন স্লিপ, pay, payslip। শুধু Admin / Super Admin (API ও একই নিয়ম)।"""
+    return _payroll_guard(request) or render(request, 'web/payroll/sheet.html', {'page_title': 'Salary Sheet'})
+
+
+@web_login_required
+@never_cache
+def payroll_advances_view(request):
+    return _payroll_guard(request) or render(request, 'web/payroll/advances.html', {'page_title': 'Salary Advances'})
+
+
+@web_login_required
+@never_cache
+def payroll_report_view(request):
+    return _payroll_guard(request) or render(request, 'web/payroll/report.html', {'page_title': 'Payroll Report'})
