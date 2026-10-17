@@ -147,12 +147,11 @@ class SalesReportView(BaseReportView):
                 
                 # Calculate totals from items
                 for item in sale.items.all():
-                    item_sales_price = (item.quantity or 0) * (item.unit_price or 0)
-                    sales_price += float(item_sales_price)
+                    # সেল মোড/ফ্ল্যাট প্যাকেও ঠিক: gross_amount = ছাড়ের আগের লাইন টাকা, cost_amount = base_quantity × ক্রয়মূল্য
+                    sales_price += float(item.gross_amount())
                     
                     if hasattr(item, 'product') and item.product:
-                        item_cost_price = (item.quantity or 0) * (item.product.purchase_price or 0)
-                        cost_price += float(item_cost_price)
+                        cost_price += float(item.cost_amount())
                 
                 profit = sales_price - cost_price
                 collect_amount = float(sale.paid_amount or 0)
@@ -382,7 +381,7 @@ class LowStockReportView(BaseReportView):
                 total_sold = SaleItem.objects.filter(
                     product=product,
                     sale__company=company
-                ).aggregate(total_sold=Sum('quantity'))['total_sold'] or 0
+                ).aggregate(total_sold=Sum('base_quantity'))['total_sold'] or 0   # স্টকের এককে (গ্রাম/পিস)
                 
                 products_with_sales.append({
                     'product': product,
@@ -466,31 +465,21 @@ class TopSoldProductsReportView(BaseReportView):
             # Get limit
             limit = int(request.GET.get('limit', 10))
             
-            # FIX: Group by product and aggregate with proper output fields
-            product_stats = sale_items_query.values(
-                'product__id',
-                'product__name',
-                'product__selling_price',
-                'product__purchase_price',
-                'product__stock_qty'
-            ).annotate(
-                total_quantity_sold=Coalesce(
-                    Sum('quantity'),
-                    0,
-                    output_field=IntegerField()
-                ),
-                # FIXED: Use ExpressionWrapper for mixed field types
-                total_sales_amount=Coalesce(
-                    Sum(
-                        ExpressionWrapper(
-                            F('quantity') * F('unit_price'),
-                            output_field=DecimalField(max_digits=15, decimal_places=2)
-                        )
-                    ),
-                    0,
-                    output_field=DecimalField(max_digits=15, decimal_places=2)
-                )
-            ).order_by('-total_quantity_sold')[:limit]
+            # সেল মোডে SaleItem.quantity মোডের এককে (২ প্যাক, ১ কেজি, ৩৫০ গ্রাম) — যোগ করলে এক একক মিশে যায়।
+            # তাই বিক্রির পরিমাণ base_quantity (স্টকের এককে), টাকা subtotal(), খরচ base_quantity × ক্রয়মূল্য।
+            stats = {}
+            for item in sale_items_query:
+                prod = item.product
+                st = stats.setdefault(prod.id, {
+                    'product__id': prod.id, 'product__name': prod.name,
+                    'product__selling_price': prod.selling_price, 'product__purchase_price': prod.purchase_price,
+                    'product__stock_qty': prod.stock_qty,
+                    'qty': Decimal('0'), 'amount': Decimal('0'), 'cost': Decimal('0'),
+                })
+                st['qty'] += Decimal(str(item.base_quantity or 0))
+                st['amount'] += item.subtotal()
+                st['cost'] += item.cost_amount()
+            product_stats = sorted(stats.values(), key=lambda x: x['qty'], reverse=True)[:limit]
             
             print(f"Found {len(product_stats)} products with sales data")
             
@@ -502,16 +491,16 @@ class TopSoldProductsReportView(BaseReportView):
                 # Calculate profit
                 purchase_price = stat.get('product__purchase_price', 0) or 0
                 selling_price = stat.get('product__selling_price', 0) or 0
-                profit_per_unit = selling_price - purchase_price
-                total_profit = profit_per_unit * stat['total_quantity_sold']
+                total_profit = stat['amount'] - stat['cost']
+                qty = stat['qty']
                 
                 report_data.append({
                     'sl': sl_number,
                     'product_name': stat['product__name'],
                     'selling_price': float(selling_price),
                     'purchase_price': float(purchase_price),
-                    'total_sold_quantity': stat['total_quantity_sold'],
-                    'total_sold_price': float(stat.get('total_sales_amount', 0)),
+                    'total_sold_quantity': int(qty) if qty == qty.to_integral_value() else float(qty),
+                    'total_sold_price': float(stat['amount']),
                     'total_profit': float(total_profit),
                     'current_stock': stat.get('product__stock_qty', 0),
                     'product_id': stat['product__id']
@@ -1729,9 +1718,8 @@ class DashboardSummaryView(BaseReportView):
             ).select_related('product')
             total_profit = Decimal('0.00')
             for item in sale_items:
-                purchase_price = item.product.purchase_price if item.product and item.product.purchase_price else Decimal('0.00')
-                profit_per_item = (Decimal(str(item.unit_price)) - purchase_price) * Decimal(str(item.base_quantity))
-                total_profit += profit_per_item
+                # লাভ = লাইনের বিক্রি (ছাড়ের পর) − খরচ (base_quantity × ক্রয়মূল্য); ফ্ল্যাট প্যাকেও ঠিক থাকে
+                total_profit += item.subtotal() - item.cost_amount()
 
             # --- SALES RETURNS ---
             try:
@@ -1845,9 +1833,9 @@ class DashboardSummaryView(BaseReportView):
                     'customer': sale.customer.name if sale.customer else "Walk-in",
                     'amount': float(sale.grand_total or 0),
                     'due_amount': float(sale.due_amount or 0),
-                    'quantity': sale_quantity_agg['total_quantity'] or 0,
+                    'quantity': sale_quantity_agg['total_base_quantity'] or 0,          # স্টকের এককে
                     'base_quantity': sale_quantity_agg['total_base_quantity'] or 0,
-                    'sale_quantity': sale_quantity_agg['total_quantity'] or 0,
+                    'sale_quantity': sale_quantity_agg['total_base_quantity'] or 0,
                     'date': date_str
                 })
 
@@ -1933,8 +1921,8 @@ class DashboardSummaryView(BaseReportView):
                     'sales': {
                         'total': sales_total,
                         'count': today_sales['count'] or 0,
-                        'quantity': today_sales_quantity['total_quantity'] or 0,
-                        'sale_quantity': today_sales_quantity['total_quantity'] or 0,
+                        'quantity': today_sales_quantity['total_base_quantity'] or 0,       # স্টকের এককে
+                        'sale_quantity': today_sales_quantity['total_base_quantity'] or 0,
                         'base_quantity': today_sales_quantity['total_base_quantity'] or 0,
                         'total_due': sales_due,
                         'net_total': sales_net_amount
@@ -2006,4 +1994,121 @@ class DashboardSummaryView(BaseReportView):
         except Exception as e:
             import traceback
             traceback.print_exc()
+            return self.handle_exception(e)
+
+# --------------------
+# Low Stock Alert (dashboard / shop-open alert)
+# --------------------
+class LowStockAlertView(BaseReportView):
+    """
+    নিয়ম Product.get_low_stock_products() এর মতোই: নিজের company র active product, stock_qty <= alert_quantity।
+    """
+    MAX_ITEMS = 50
+
+    def get(self, request):
+        try:
+            from .perms import user_has_perm
+            if not any(user_has_perm(request.user, m) for m in ('dashboard', 'products', 'purchases', 'reports')):
+                return custom_response(False, "You do not have permission to view stock alerts", None, 403)
+
+            company = self.get_company(request)
+            alerts = Product.objects.filter(company=company, is_active=True, stock_qty__lte=F('alert_quantity'))
+            total = alerts.count()
+            out_of_stock = alerts.filter(stock_qty=0).count()
+
+            rows = alerts.select_related('category', 'brand').order_by('stock_qty', 'name')[:self.MAX_ITEMS]
+            report = [{
+                'sl': i,
+                'product_id': p.id,
+                'product_name': p.name,
+                'category': p.category.name if p.category else '',
+                'brand': p.brand.name if p.brand else '',
+                'alert_quantity': p.alert_quantity,
+                'total_stock_quantity': p.stock_qty,
+            } for i, p in enumerate(rows, start=1)]
+
+            return custom_response(True, "Low stock alert fetched successfully", {
+                'report': report,
+                'summary': {
+                    'total_low_stock_items': total,
+                    'critical_items': out_of_stock,
+                    'running_low': total - out_of_stock,
+                },
+            })
+        except Exception as e:
+            return self.handle_exception(e)
+
+
+# --------------------
+# Dashboard trends (charts)
+# --------------------
+class DashboardTrendsView(BaseReportView):
+    """
+    শেষ ৭ বা ৩০ দিনের প্রতিদিনের বিক্রি / কেনা / খরচ + খরচ head অনুযায়ী ভাগ (শুধু নিজের company)।
+    GET /api/reports/dashboard-trends/?days=7   (days: 7 অথবা 30)
+    """
+
+    def get(self, request):
+        try:
+            company = self.get_company(request)
+            try:
+                days = int(request.GET.get('days', 7))
+            except (TypeError, ValueError):
+                days = 7
+            if days not in (7, 30):
+                days = 7
+
+            end_date = timezone.localdate()
+            start_date = end_date - timedelta(days=days - 1)
+            day_list = [start_date + timedelta(days=i) for i in range(days)]
+            index = {d: i for i, d in enumerate(day_list)}
+
+            sales = [0.0] * days
+            purchases = [0.0] * days
+            expenses = [0.0] * days
+
+            start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            end_dt = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
+            for sale_date, total in Sale.objects.filter(
+                company=company, sale_date__gte=start_dt, sale_date__lte=end_dt
+            ).values_list('sale_date', 'grand_total'):
+                i = index.get(timezone.localtime(sale_date).date())
+                if i is not None:
+                    sales[i] += float(total or 0)
+
+            for p_date, total in Purchase.objects.filter(
+                company=company, purchase_date__gte=start_date, purchase_date__lte=end_date
+            ).values_list('purchase_date', 'grand_total'):
+                i = index.get(p_date)
+                if i is not None:
+                    purchases[i] += float(total or 0)
+
+            by_head = {}
+            for e_date, amount, head_name in Expense.objects.filter(
+                company=company, expense_date__gte=start_date, expense_date__lte=end_date
+            ).values_list('expense_date', 'amount', 'head__name'):
+                amount = float(amount or 0)
+                i = index.get(e_date)
+                if i is not None:
+                    expenses[i] += amount
+                name = head_name or 'Other'
+                by_head[name] = by_head.get(name, 0.0) + amount
+
+            ranked = sorted(by_head.items(), key=lambda kv: kv[1], reverse=True)
+            top_heads = [{'name': n, 'total': round(v, 2)} for n, v in ranked[:5] if v > 0]
+            rest = sum(v for _, v in ranked[5:])
+            if rest > 0:
+                top_heads.append({'name': 'Other', 'total': round(rest, 2)})
+
+            return custom_response(True, "Dashboard trends fetched successfully", {
+                'days': days,
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat(),
+                'labels': [d.isoformat() for d in day_list],
+                'sales': [round(v, 2) for v in sales],
+                'purchases': [round(v, 2) for v in purchases],
+                'expenses': [round(v, 2) for v in expenses],
+                'expense_by_head': top_heads,
+            })
+        except Exception as e:
             return self.handle_exception(e)

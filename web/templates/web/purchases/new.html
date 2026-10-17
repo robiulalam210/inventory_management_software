@@ -1,6 +1,23 @@
 {% extends "web/base.html" %}
 {% load static web_tags %}
-{% block head %}<script src="{% static 'web/js/purchases.js' %}"></script>{% endblock %}
+{% block head %}<script src="{% static 'web/js/purchases.js' %}"></script>
+<style>
+/* ক্রয়ের পণ্য-সারি ফিক্স — app.css এর পুরনো কপি সার্ভ হলেও যেন কাজ করে */
+.po-row { grid-template-columns: minmax(150px, 1fr) 84px 110px 130px 110px 36px; }
+.qty-in { width: 100%; max-width: 100px; }
+@container po (max-width: 900px) { .po-row { grid-template-columns: minmax(130px, 1fr) 76px 96px 116px 96px 32px; gap: 8px; } }
+@container po (max-width: 760px) {
+  .po-row-head { display: none; }
+  .po-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; padding: 12px; }
+  .po-prod { grid-column: 1 / 3; grid-row: 1; }
+  .po-prod b { white-space: normal; overflow-wrap: anywhere; }
+  .po-row .po-x { grid-column: 3; grid-row: 1; justify-self: end; align-self: start; }
+  .po-k { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
+  .po-cell .in.num { text-align: left; }
+  .po-amt { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; padding-top: 6px; border-top: 1px dashed var(--line); }
+  .po-amt .po-k { margin: 0; }
+}
+</style>{% endblock %}
 {% block topbar_actions %}
   {% if form_init.canSeeList %}<a class="btn btn-ghost top-act" href="{% url 'web:purchases' %}">{% icon "truck" 18 %}<span>All purchases</span></a>{% endif %}
 {% endblock %}
@@ -88,12 +105,12 @@
               <div class="po-row" :data-row="r.key" :class="{ 'row-err': r.err }">
                 <div class="po-prod">
                   <b x-text="r.name"></b>
-                  <span x-text="[r.sku, 'In stock ' + num(r.stock)].filter(Boolean).join(' · ')"></span>
+                  <span x-text="[r.sku, 'In stock ' + num(r.stock) + (r.unit ? ' ' + r.unit : '')].filter(Boolean).join(' · ')"></span>
                   <em x-show="r.lastCost > 0 && Number(r.price) > 0 && Number(r.price) !== r.lastCost" x-cloak
                       :class="Number(r.price) > r.lastCost ? 'up' : 'down'"
                       x-text="(Number(r.price) > r.lastCost ? '▲ ' : '▼ ') + 'was ' + taka(r.lastCost)"></em>
                 </div>
-                <label class="po-cell"><span class="po-k">Qty</span>
+                <label class="po-cell"><span class="po-k" x-text="'Qty' + (r.unit ? ' (' + r.unit + ')' : '')">Qty</span>
                   <input class="in num qty-in" type="text" inputmode="numeric" x-model="r.qty" @input="r.err = ''; r.qty = r.qty.replace(/[^0-9]/g, '')"
                          @keydown.enter.prevent="backToSearch()" :aria-label="'Quantity of ' + r.name"></label>
                 <label class="po-cell"><span class="po-k">Unit cost</span>

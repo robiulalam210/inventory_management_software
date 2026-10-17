@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from shop import staff_views
 
 app_name = 'web'
 
@@ -11,12 +12,14 @@ urlpatterns = [
     path('sales/', views.sales_list_view, name='sales'),
     path('sales/new/', views.sale_new_view, name='sale_new'),
     path('pos/', views.pos_view, name='pos'),
+    path('sales/short/', views.short_sale_view, name='short_sale'),
     path('money-receipts/', views.receipts_list_view, name='receipts'),
     path('money-receipts/new/', views.receipt_create_view, name='receipt_new'),
     path('purchases/', views.purchases_list_view, name='purchases'),
     path('purchases/new/', views.purchase_create_view, name='purchase_new'),
     path('suppliers/', views.suppliers_view, name='suppliers'),
     path('customers/', views.customers_view, name='customers'),
+    path('customers/due-reminders/', views.due_reminders_view, name='due_reminders'),
     path('products/', views.products_view, name='products'),
     path('accounts/', views.accounts_view, name='accounts'),
     path('units/', views.units_view, name='units'),
@@ -33,7 +36,10 @@ urlpatterns = [
     path('staff/', views.staff_view, name='staff'),
     path('company-profile/', views.company_profile_view, name='company_profile'),
     path('user-permissions/', views.user_permissions_view, name='user_permissions'),
+    path('register/', views.register_view, name='register'),
     path('platform/companies/', views.platform_companies_view, name='platform_companies'),
+    path('platform/companies/<int:company_id>/enter/', views.view_company_view, name='view_company'),
+    path('platform/exit/', views.exit_company_view, name='exit_company'),
     path('supplier-payments/', views.supplier_payments_view, name='supplier_payments'),
     path('supplier-payments/new/', views.supplier_payment_new_view, name='supplier_pay'),
     path('sales-returns/', views.sales_returns_view, name='sales_returns'),
@@ -44,6 +50,22 @@ urlpatterns = [
     path('transfers/', views.transfers_view, name='transfers'),
     path('transfers/new/', views.transfer_new_view, name='transfer_new'),
     path('transactions/', views.transactions_view, name='transactions'),
+    path('online-orders/', staff_views.orders_view, name='shop_orders'),
+    path('shop-settings/', staff_views.settings_view, name='shop_settings'),
     path('audit-log/', views.audit_log_view, name='audit_log'),
+    path('reports/sales/', views.report_view, {'key': 'sales'}, name='report_sales'),
+    path('reports/purchases/', views.report_view, {'key': 'purchases'}, name='report_purchases'),
+    path('reports/profit-loss/', views.report_view, {'key': 'profit-loss'}, name='report_profit_loss'),
+    path('reports/top-products/', views.report_view, {'key': 'top-products'}, name='report_top_products'),
+    path('reports/low-stock/', views.report_view, {'key': 'low-stock'}, name='report_low_stock'),
+    path('reports/stock/', views.report_view, {'key': 'stock'}, name='report_stock'),
+    path('reports/customer-ledger/', views.report_view, {'key': 'customer-ledger'}, name='report_customer_ledger'),
+    path('reports/customer-due/', views.report_view, {'key': 'customer-due'}, name='report_customer_due'),
+    path('reports/supplier-ledger/', views.report_view, {'key': 'supplier-ledger'}, name='report_supplier_ledger'),
+    path('reports/supplier-due/', views.report_view, {'key': 'supplier-due'}, name='report_supplier_due'),
+    path('reports/expenses/', views.report_view, {'key': 'expenses'}, name='report_expenses'),
+    path('payroll/', views.payroll_view, name='payroll'),
+    path('payroll/advances/', views.payroll_advances_view, name='payroll_advances'),
+    path('payroll/report/', views.payroll_report_view, name='payroll_report'),
     path('m/<slug:slug>/', views.soon_view, name='soon'),
 ]

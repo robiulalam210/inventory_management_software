@@ -255,7 +255,7 @@
         }
         this.saving = false;
       },
-      get signInUrl() { return location.origin + '/app/login/'; },
+      get signInUrl() { return location.origin + (location.pathname.indexOf('/app/') === 0 ? '/app' : '') + '/login/'; },
       credText(company, user, password) {
         return [
           `${company} — sign-in details`,

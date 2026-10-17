@@ -46,7 +46,7 @@
           <tbody>
             <template x-for="(l, i) in lines" :key="l.productId + '-' + i">
               <tr>
-                <td><b x-text="l.name"></b><span class="sub" x-text="'Sold: ' + l.max"></span></td>
+                <td><b x-text="l.name"></b><span class="sub" x-text="'Sold: ' + l.max + (l.modeName ? ' × ' + l.modeName : '')"></span></td>
                 <td class="num" x-text="taka(l.price)"></td>
                 <td class="num"><input class="in qty-in" type="number" min="0" :max="l.max" step="1" :value="l.qty"
                     @input="setQty(l, $event.target.value); $event.target.value = l.qty" aria-label="Return quantity"></td>

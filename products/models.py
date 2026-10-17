@@ -162,6 +162,11 @@ class SaleMode(models.Model):
     price_type = models.CharField(max_length=10, choices=PRICE_TYPE_CHOICES, default='unit')
     is_active = models.BooleanField(default=True)
     company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
+    # কোথায় দেখাবে — দুটোই ডিফল্ট true, তাই পুরনো সব মোড আগের মতোই সব জায়গায় দেখায়
+    show_in_shop = models.BooleanField(
+        default=True, help_text="অনলাইন শপে (ই-কমার্স) এই মোড দেখাবে")
+    show_in_webapp = models.BooleanField(
+        default=True, help_text="ওয়েব অ্যাপের Sale / POS ফর্মের 'Sold by' এ এই মোড দেখাবে")
     
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, 

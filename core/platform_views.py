@@ -24,7 +24,8 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q, Sum
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.permissions import BasePermission, IsAuthenticated
@@ -97,6 +98,43 @@ def _company_row(c, admins=None):
     if admins is not None:
         row['admins'] = admins
     return row
+
+
+def _activity(ids):
+    """
+    প্রতি কোম্পানি কেমন চলছে — মালিক (Super Admin) এর এক নজরের জন্য:
+      last_activity  — শেষ কবে কেউ কিছু করেছে (Audit log এর শেষ entry)
+      last_sale      — শেষ বিক্রি
+      sales_7d_count / sales_7d_total — গত ৭ দিনের বিক্রি
+      activity       — busy (গত ৩ দিনে কাজ) / quiet (৪–১৪ দিন) / idle (১৪ দিনের বেশি) / new (এখনো কোনো কাজ হয়নি)
+    """
+    from offline_sync.models import ChangeLog
+    from sales.models import Sale
+
+    now = timezone.now()
+    week_ago = now - timedelta(days=7)
+    last_log = dict(ChangeLog.objects.filter(company_id__in=ids).values_list('company_id').annotate(m=Max('created_at')))
+    last_sale = dict(Sale.objects.filter(company_id__in=ids).values_list('company_id').annotate(m=Max('sale_date')))
+    wk = {r['company_id']: r for r in Sale.objects.filter(company_id__in=ids, sale_date__gte=week_ago)
+          .values('company_id').annotate(n=Count('id'), t=Sum('grand_total'))}
+    out = {}
+    for cid in ids:
+        cand = [d for d in (last_log.get(cid), last_sale.get(cid)) if d]
+        last = max(cand) if cand else None
+        if last is None:
+            kind, idle_days = 'new', None
+        else:
+            idle_days = (now - last).days
+            kind = 'busy' if idle_days <= 3 else 'quiet' if idle_days <= 14 else 'idle'
+        w = wk.get(cid) or {}
+        out[cid] = {
+            'last_activity': last.isoformat() if last else None,
+            'last_sale': last_sale[cid].isoformat() if last_sale.get(cid) else None,
+            'idle_days': idle_days, 'activity': kind,
+            'sales_7d_count': w.get('n', 0) or 0,
+            'sales_7d_total': float(w.get('t') or 0),
+        }
+    return out
 
 
 def _annotated():
@@ -265,6 +303,9 @@ class PlatformCompanyListView(APIView):
             first_admin.setdefault(u.company_id, {'username': u.username, 'name': (u.get_full_name() or '').strip() or u.username})
         for r in rows:
             r['admin'] = first_admin.get(r['id'])
+        act = _activity(ids)
+        for r in rows:
+            r.update(act.get(r['id'], {}))
         return custom_response(True, f'{len(rows)} companies', {'results': rows, 'counts': counts})
 
     def post(self, request):

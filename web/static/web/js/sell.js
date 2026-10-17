@@ -34,13 +34,56 @@
   }
   const charge = (base, v, type) => (n(v) > 0 ? r2(type === 'percent' ? base * n(v) / 100 : n(v)) : 0);
 
+  // ── সেল মোড (কেজি / গ্রাম / প্যাক) — backend এর ProductSaleMode.get_final_price এর সাথে মেলানো ──
+  // দাম সবসময় "প্রতি সেল-মোড-ইউনিট": flat → flat_price; unit/tier → unit_price × factor।
+  // স্টক base unit এ (যেমন গ্রাম); qty × factor = base পরিমাণ।
+  const isWeightUnit = (u) => /^(g|gm|gram|grams|গ্রাম)$/i.test(String(u || '').trim());
+  function modesOf(p, basePrice, unitLabel) {
+    const out = [{ id: '', name: unitLabel || 'Unit', code: '', type: 'base', factor: 1, price: basePrice, flat: false, disc: 0, discType: 'fixed' }];
+    // show_in_webapp=false → শুধু ই-কমার্স শপের মোড (যেমন প্যাক), ওয়েব Sale/POS এর 'Sold by' এ আসবে না
+    (p.sale_modes || []).filter(m => m && m.is_active !== false && m.show_in_webapp !== false).forEach(m => {
+      const factor = n(m.conversion_factor) || 1;
+      const flat = m.price_type === 'flat';
+      const per = flat ? n(m.flat_price != null ? m.flat_price : m.effective_flat_price)
+                       : r2((n(m.unit_price != null ? m.unit_price : m.effective_unit_price) || basePrice) * factor);
+      if (!(per > 0)) return;
+      // এই মোডের নিজের ছাড় (ProductSaleMode.discount_*) — অনলাইন শপ ও অ্যাপের মতোই এখানেও ধরা হয়
+      const dv = n(m.discount_value);
+      const dt = m.discount_type === 'percentage' || m.discount_type === 'percent' ? 'percent' : 'fixed';
+      const disc = m.discount_type && dv > 0 ? dv : 0;
+      out.push({ id: String(m.sale_mode_id), name: m.sale_mode_name, code: m.sale_mode_code || '', type: m.price_type,
+                 factor, price: per, flat, disc, discType: dt });
+    });
+    // "গ্রাম" মতো factor=1 unit-মোড থাকলে আলাদা base-ইউনিট অপশন (একই জিনিস) বাদ
+    if (out.length > 1 && out.slice(1).some(m => m.factor === 1 && !m.flat)) out.shift();
+    return out;
+  }
+  // যে মোডে প্রথমে লাইন যোগ হবে: "kg" কোড থাকলে সেটা, নইলে সবচেয়ে ছোট প্যাক (factor > 1), নইলে base ইউনিট
+  function defaultMode(modes) {
+    const kg = modes.find(m => m.code === 'kg');
+    if (kg) return kg;
+    const packs = modes.filter(m => m.id && m.factor > 1).sort((a, b) => a.factor - b.factor);
+    return packs[0] || modes[0];
+  }
+
+  // ছাড়ের পরের দাম (দেখানোর জন্য) — লাইনের আসল হিসাব lineTotal() করে
+  function finalOf(m) {
+    if (!(m.disc > 0)) return m.price;
+    return r2(Math.max(0, m.discType === 'percent' ? m.price * (1 - m.disc / 100) : m.price - m.disc));
+  }
+
   function product(p) {
     const dt = p.discount_type === 'percentage' || p.discount_type === 'percent' ? 'percent' : 'fixed';
+    const unit = (p.unit_info && (p.unit_info.code || p.unit_info.name)) || '';
+    const price = n(p.selling_price);
+    const modes = modesOf(p, price, unit);
+    modes.forEach(m => { m.final = finalOf(m); });
+    const def = defaultMode(modes);
     return {
       id: p.id, name: p.name, sku: p.sku || '',
       stock: n(p.stock_qty), alert: n(p.alert_quantity),
-      unit: (p.unit_info && (p.unit_info.code || p.unit_info.name)) || '',
-      price: n(p.selling_price),
+      unit, weight: isWeightUnit(unit),
+      price: def.price, basePrice: price, modes, def,
       disc: p.discount_applied ? n(p.discount_value) : 0, discType: dt,
       cat: (p.category_info && p.category_info.name) || 'Other',
       image: p.image || '',
@@ -110,9 +153,10 @@
       errors: {}, saving: false, serverError: '', done: null,
 
       // ───── cart ─────
-      addProduct(p, qty) {
+      addProduct(p, qty, mode) {
         this.errors.items = '';
-        const ex = this.rows.find(r => r.product_id === p.id);
+        const m = mode || p.def;
+        const ex = this.rows.find(r => r.product_id === p.id && r.mode === m.id);
         if (ex) {
           ex.qty = String(r3(n(ex.qty) + (qty || 1)));
           ex.err = this.stockErr(ex);
@@ -120,22 +164,43 @@
         }
         const row = {
           key: ++seq, product_id: p.id, name: p.name, sku: p.sku, stock: p.stock, unit: p.unit, cat: p.cat,
-          qty: String(qty || 1), price: String(p.price), listPrice: p.price,
-          discount: p.disc ? String(p.disc) : '', discount_type: p.discType, err: '', open: false,
+          modes: p.modes, mode: m.id, modeName: m.name, factor: m.factor, flat: m.flat, weight: p.weight,
+          qty: String(qty || 1), price: String(m.price), listPrice: m.price,
+          pDisc: p.disc, pDiscType: p.discType,
+          discount: m.disc ? String(m.disc) : (p.disc ? String(p.disc) : ''), discount_type: m.disc ? m.discType : p.discType,
+          err: '', open: false,
         };
         row.err = this.stockErr(row);
         this.rows.push(row);
         return row;
       },
+      // সারির সেল মোড বদলালে: দাম ওই মোডের দামে ফিরে যায়, পরিমাণ একই থাকে
+      setMode(r, id) {
+        const m = r.modes.find(x => x.id === String(id)) || r.modes[0];
+        r.mode = m.id; r.modeName = m.name; r.factor = m.factor; r.flat = m.flat;
+        r.price = String(m.price); r.listPrice = m.price;
+        r.discount = m.disc ? String(m.disc) : (r.pDisc ? String(r.pDisc) : '');
+        r.discount_type = m.disc ? m.discType : (r.pDiscType || 'fixed');
+        r.err = this.stockErr(r);
+      },
+      step(r) { return r.weight && r.factor <= 1 ? 50 : 1; },      // গ্রামে ৫০ করে বাড়ে
+      baseQty(r) { return n(r.qty) * (r.factor || 1); },
+      availIn(r) { return r.stock / (r.factor || 1); },              // এই মোডের এককে কতটা আছে
+      // কার্টে এই পণ্য মোট কত base ইউনিট (সব মোড মিলিয়ে)
+      baseInCart(pid) { return this.rows.filter(x => x.product_id === pid).reduce((s, x) => s + this.baseQty(x), 0); },
       stockErr(r) {
         const q = n(r.qty);
         if (!(q > 0)) return 'Quantity must be above 0.';
-        if (q > r.stock) return r.stock > 0 ? `Only ${numFmt.format(r.stock)} in stock.` : 'Out of stock.';
+        const used = this.baseInCart(r.product_id) - this.baseQty(r);       // একই পণ্যের অন্য সারি
+        if (this.baseQty(r) + used > r.stock + 1e-9) {
+          const left = Math.max(0, r.stock - used) / (r.factor || 1);
+          return r.stock > 0 ? `Only ${numFmt.format(Math.floor(left * 1000) / 1000)} ${r.modeName} available.` : 'Out of stock.';
+        }
         if (!(n(r.price) > 0)) return 'Enter the selling price.';
         return '';
       },
       bump(r, d) {
-        const q = r3(n(r.qty) + d);
+        const q = r3(n(r.qty) + d * this.step(r));
         if (q <= 0) { this.remove(r); return; }
         r.qty = String(q);
         r.err = this.stockErr(r);
@@ -191,10 +256,7 @@
           sale_type: 'retail',
           sale_date: this.date,
           sale_by: Number(this.seller || this.me.id),
-          items: this.rows.map(r => ({
-            product_id: r.product_id, quantity: r3(r.qty).toFixed(3), unit_price: r2(r.price).toFixed(2),
-            discount: r2(r.discount).toFixed(2), discount_type: r.discount_type,
-          })),
+          items: this.rows.map(r => this.itemPayload(r)),
           overall_discount: r2(this.ch.discount).toFixed(2), overall_discount_type: this.ch.discount_type,
           vat: r2(this.ch.vat).toFixed(2), overall_vat_type: this.ch.vat_type,
           service_charge: r2(this.ch.service).toFixed(2), overall_service_type: this.ch.service_type,
@@ -206,6 +268,19 @@
         if (this.cust.mode === 'saved') body.customer_id = Number(this.cust.id);
         if (this.receivedNum > 0) { body.payment_method = this.pay.method; body.account_id = Number(this.pay.account); }
         return body;
+      },
+      // সেল মোড থাকলে: quantity = মোডের এককে (প্যাক সংখ্যা / গ্রাম / কেজি); backend নিজে base এ বদলায়।
+      //   flat  → flat_price = প্রতি প্যাকের দাম (subtotal = flat_price × quantity)
+      //   unit  → unit_price = প্রতি base ইউনিটের দাম (দাম ÷ factor)
+      itemPayload(r) {
+        const it = { product_id: r.product_id, quantity: r3(r.qty).toFixed(3),
+          discount: r2(r.discount).toFixed(2), discount_type: r.discount_type };
+        if (r.mode) {
+          it.sale_mode_id = Number(r.mode);
+          if (r.flat) { it.flat_price = r2(r.price).toFixed(2); it.unit_price = r2(r.price).toFixed(2); }
+          else it.unit_price = r2(n(r.price) / (r.factor || 1)).toFixed(2);
+        } else it.unit_price = r2(r.price).toFixed(2);
+        return it;
       },
       async submit() {
         this.serverError = '';
@@ -245,6 +320,12 @@
       },
       taka: (v) => App.taka(v),
       num: (v) => numFmt.format(n(v)),
+      // রসিদের লাইন: "২ ২৫০ গ্রাম প্যাক × ৳440" (মোডে) বা "500 × ৳1.70" (সাধারণ)
+      itemTerm(it) {
+        if (it.sale_mode_name && it.quantity != null)
+          return `${numFmt.format(n(it.quantity))} ${it.sale_mode_name} × ${App.taka(it.mode_unit_price != null ? it.mode_unit_price : it.unit_price)}`;
+        return `${numFmt.format(n(it.base_quantity))} × ${App.taka(it.unit_price)}`;
+      },
       words: (v) => App.takaWords(v),
       round2: r2,
       fmtDate(s) { const d = new Date(s); return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); },
@@ -321,6 +402,61 @@
   };
 
   // ─────────────────────────────── POS ───────────────────────────────
+  // ─────────────── Short Sale: ক্যাটাগরি → পণ্য → সেল মোড → পরিমাণ → "Add", তারপর customer/পেমেন্ট ───────────────
+  window.shortSale = function (init) {
+    return compose(window.saleForm(init), {
+      catalog: [], catLoading: true, catError: '',
+      qCat: '', qProd: '', qMode: '', qQty: '1', qPrice: '', qErr: '',
+
+      init() {
+        this.init0();
+        this.$watch('t.grand', (g) => { if (this.pay.followTotal) this.pay.received = g ? g.toFixed(2) : ''; });
+        this.loadCatalog();
+        this.$nextTick(() => this.$refs.qprod && this.$refs.qprod.focus());
+      },
+      async loadCatalog() {
+        try {
+          const r = await App.api('/api/products/', { query: { no_pagination: 'true', is_active: 'true' } });
+          this.catalog = listOf(r).map(product).sort((a, b) => a.name.localeCompare(b.name));
+          this.catError = '';
+        } catch (e) { this.catError = e.message; }
+        this.catLoading = false;
+      },
+      get qCats() { return [...new Set(this.catalog.map(p => p.cat))].sort((a, b) => a.localeCompare(b)); },
+      get qProducts() { return this.catalog.filter(p => !this.qCat || p.cat === this.qCat); },
+      get qP() { return this.catalog.find(p => String(p.id) === String(this.qProd)) || null; },
+      get qM() { const p = this.qP; return p ? (p.modes.find(m => m.id === this.qMode) || p.def) : null; },
+      get qAvail() { const p = this.qP, m = this.qM; return p ? Math.max(0, (p.stock - this.baseInCart(p.id)) / m.factor) : 0; },
+      // লাইনের টোটাল (ছাড় সহ) — সারিতে যোগ হলে যা হবে ঠিক তাই
+      get qTotal() {
+        const m = this.qM; if (!m) return 0;
+        return lineTotal(this.qQty, this.qPrice, m.disc || (this.qP && this.qP.disc) || 0, m.disc ? m.discType : (this.qP ? this.qP.discType : 'fixed'));
+      },
+      qPick() {
+        const p = this.qP; this.qErr = '';
+        if (!p) { this.qMode = ''; this.qPrice = ''; return; }
+        this.qMode = p.def.id; this.qQty = '1'; this.qPrice = String(p.def.price);
+      },
+      qSetMode() { const m = this.qM; if (m) { this.qPrice = String(m.price); } this.qErr = ''; },
+      qBump(d) { const m = this.qM; const st = this.qP && this.qP.weight && m && m.factor <= 1 ? 50 : 1; this.qQty = String(Math.max(0, r3(n(this.qQty) + d * st))); },
+      quickAdd() {
+        const p = this.qP, m = this.qM;
+        if (!p) { this.qErr = 'Choose a product.'; return; }
+        const q = n(this.qQty);
+        if (!(q > 0)) { this.qErr = 'Quantity must be above 0.'; return; }
+        if (!(n(this.qPrice) > 0)) { this.qErr = 'Enter the selling price.'; return; }
+        if (q * m.factor > p.stock - this.baseInCart(p.id) + 1e-9) {
+          this.qErr = `Only ${numFmt.format(Math.floor(this.qAvail * 1000) / 1000)} ${m.name} available.`; return;
+        }
+        const row = this.addProduct(p, q, m);
+        if (r2(this.qPrice) !== r2(m.price)) { row.price = String(r2(this.qPrice)); row.err = this.stockErr(row); }
+        this.qProd = ''; this.qMode = ''; this.qQty = '1'; this.qPrice = ''; this.qErr = '';
+        this.$nextTick(() => this.$refs.qprod && this.$refs.qprod.focus());
+      },
+      backToSearch() { this.$refs.qprod && this.$refs.qprod.focus(); },
+    });
+  };
+
   window.posScreen = function (init) {
     return compose(core(init), {
       catalog: [], catLoading: true, catError: '',
@@ -355,10 +491,10 @@
         return this.catalog.filter(p => (!this.cat || p.cat === this.cat) &&
           (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q))).slice(0, 120);
       },
-      inCart(p) { const r = this.rows.find(x => x.product_id === p.id); return r ? n(r.qty) : 0; },
+      inCart(p) { return this.rows.filter(x => x.product_id === p.id).reduce((s, x) => s + n(x.qty), 0); },
       tap(p) {
         if (p.stock <= 0) { this.say(`${p.name} is out of stock`); return; }
-        if (this.inCart(p) + 1 > p.stock) { this.say(`Only ${numFmt.format(p.stock)} ${p.name} in stock`); return; }
+        if (this.baseInCart(p.id) + p.def.factor > p.stock + 1e-9) { this.say(`Only ${numFmt.format(p.stock / p.def.factor)} ${p.def.name} of ${p.name} in stock`); return; }
         this.addProduct(p);
         this.say(`${p.name} added`);
       },

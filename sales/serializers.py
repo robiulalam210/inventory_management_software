@@ -197,7 +197,23 @@ class SaleItemSerializer(serializers.ModelSerializer):
     
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        representation['sale_quantity'] = representation.get('quantity', 0)
+        # quantity / product_id লেখার সময় write_only, তাই রেসপন্সে আগে ছিলই না (sale_quantity সবসময় 0 আসত)।
+        # প্রিন্ট, সেল লিস্ট ও রিটার্ন ফর্মের জন্য এগুলো এখানে বসাই।
+        qty = instance.quantity
+        representation['product_id'] = instance.product_id
+        representation['quantity'] = str(qty)
+        representation['sale_quantity'] = str(qty)
+        sm = instance.sale_mode
+        factor = sm.conversion_factor if sm else Decimal('1')
+        representation['conversion_factor'] = str(factor)
+        unit = getattr(instance.product, 'unit', None)
+        representation['base_unit_name'] = unit.name if unit else ''
+        # মোডের এককে দাম (প্যাক/কেজি/গ্রাম প্রতি): ফ্ল্যাটে flat_price; নইলে প্রতি-বেস-ইউনিট দাম × factor
+        if sm and instance.price_type == 'flat' and instance.flat_price:
+            per_mode = Decimal(str(instance.flat_price))
+        else:
+            per_mode = Decimal(str(instance.unit_price)) * Decimal(str(factor))
+        representation['mode_unit_price'] = str(per_mode.quantize(Decimal('0.01')))
         return representation
 
 

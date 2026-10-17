@@ -1,0 +1,132 @@
+{% load static web_tags %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Register your company — Meherin Mart</title>
+  <link rel="preload" href="{% static 'web/fonts/ibm-plex-sans-latin-400-normal.woff2' %}" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="{% static 'web/img/favicon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'web/css/app.css' %}">
+  <script>try{var t=localStorage.getItem("mm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+  <script defer src="{% static 'web/vendor/alpine-3.14.9.min.js' %}"></script>
+</head>
+<body>
+<main class="auth">
+
+  <section class="auth-brand" aria-label="Meherin Mart">
+    <div class="brand-mark">
+      <span class="brand-logo">M</span>
+      Meherin Mart
+    </div>
+
+    <div class="auth-pitch">
+      {# দোকানের দৈনন্দিন কাজের ছবি — একটা বিক্রির রসিদ #}
+      <div class="slip" aria-hidden="true">
+        <div class="slip-head"><b>INV-1042</b><span>Today, 11:42 AM</span></div>
+        <div class="slip-row"><span>Miniket rice 25 kg</span><span>৳ 1,850.00</span></div>
+        <div class="slip-row"><span>Soybean oil 5 L × 2</span><span>৳ 1,780.00</span></div>
+        <div class="slip-row"><span>Lentils 2 kg</span><span>৳ 290.00</span></div>
+        <div class="slip-row"><span>Sugar 1 kg × 3</span><span>৳ 400.00</span></div>
+        <div class="slip-total"><span>Total</span><span>৳ 4,320.00</span></div>
+        <span class="slip-stamp">PAID</span>
+      </div>
+      <h2>Your shop, from any browser.</h2>
+      <p>Sales, stock, dues and reports — the same data as your desktop and mobile app, always in sync.</p>
+    </div>
+  </section>
+
+  <section class="auth-main">
+    <div class="auth-card" x-data="{ show: false, busy: false }">
+      <h1>Register your company</h1>
+      <p class="lede">Start a <b>{{ trial_days }}-day free trial</b>. You will be the company's Admin and can add staff, products and sales right away.</p>
+
+      {% if error %}
+        <div class="notice notice-error" role="alert">{% icon "alert" 18 %}<span>{{ error }}</span></div>
+      {% endif %}
+
+      <form method="post" action="{% url 'web:register' %}" novalidate @submit="busy = true">
+        {% csrf_token %}
+        <div style="position:absolute;left:-9999px" aria-hidden="true"><input type="text" name="website_url" tabindex="-1" autocomplete="off"></div>
+
+        <label class="field">
+          <span class="field-label">Company / shop name</span>
+          <span class="input-wrap">
+            {% icon "building" 18 %}
+            <input class="input{% if errors.company_name %} is-invalid{% endif %}" type="text" name="company_name" value="{{ values.company_name }}" autocomplete="organization" required placeholder="e.g. Meherin Mart">
+          </span>
+          {% if errors.company_name %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.company_name }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Phone <span style="font-weight:400;color:var(--muted)">(optional)</span></span>
+          <span class="input-wrap">
+            {% icon "phone" 18 %}
+            <input class="input{% if errors.phone %} is-invalid{% endif %}" type="tel" name="phone" value="{{ values.phone }}" autocomplete="tel"  placeholder="01XXXXXXXXX">
+          </span>
+          {% if errors.phone %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.phone }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Your first name</span>
+          <span class="input-wrap">
+            {% icon "user" 18 %}
+            <input class="input{% if errors.first_name %} is-invalid{% endif %}" type="text" name="first_name" value="{{ values.first_name }}" autocomplete="given-name" required placeholder="First name">
+          </span>
+          {% if errors.first_name %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.first_name }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Last name <span style="font-weight:400;color:var(--muted)">(optional)</span></span>
+          <span class="input-wrap">
+            {% icon "user" 18 %}
+            <input class="input{% if errors.last_name %} is-invalid{% endif %}" type="text" name="last_name" value="{{ values.last_name }}" autocomplete="family-name"  placeholder="Last name">
+          </span>
+          {% if errors.last_name %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.last_name }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Username</span>
+          <span class="input-wrap">
+            {% icon "user" 18 %}
+            <input class="input{% if errors.username %} is-invalid{% endif %}" type="text" name="username" value="{{ values.username }}" autocomplete="username" required placeholder="Letters, numbers, dot, dash — no spaces">
+          </span>
+          {% if errors.username %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.username }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Email <span style="font-weight:400;color:var(--muted)">(optional)</span></span>
+          <span class="input-wrap">
+            {% icon "mail" 18 %}
+            <input class="input{% if errors.email %} is-invalid{% endif %}" type="email" name="email" value="{{ values.email }}" autocomplete="email"  placeholder="you@example.com">
+          </span>
+          {% if errors.email %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.email }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Password</span>
+          <span class="input-wrap">
+            {% icon "lock" 18 %}
+            <input class="input{% if errors.password %} is-invalid{% endif %}" :type="show ? 'text' : 'password'" type="password" name="password" autocomplete="new-password" required placeholder="At least 8 characters">
+          </span>
+          {% if errors.password %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.password }}</span>{% endif %}
+        </label>
+        <label class="field">
+          <span class="field-label">Confirm password</span>
+          <span class="input-wrap">
+            {% icon "lock" 18 %}
+            <input class="input{% if errors.password2 %} is-invalid{% endif %}" :type="show ? 'text' : 'password'" type="password" name="password2" autocomplete="new-password" required placeholder="Type it again">
+          </span>
+          {% if errors.password2 %}<span class="field-error" style="color:var(--red,#c0392b);font-size:12.5px">{{ errors.password2 }}</span>{% endif %}
+        </label>
+
+        <label class="check" style="margin-bottom:14px"><input type="checkbox" @change="show = $event.target.checked"> Show passwords</label>
+
+        <button class="btn btn-primary btn-block" type="submit" :disabled="busy">
+          <span x-text="busy ? 'Creating…' : 'Create my company'">Create my company</span>
+        </button>
+      </form>
+
+      <p class="auth-foot">
+        <span>Already have an account? <a href="{% url 'web:login' %}"><b>Sign in</b></a></span>
+      </p>
+    </div>
+  </section>
+
+</main>
+</body>
+</html>

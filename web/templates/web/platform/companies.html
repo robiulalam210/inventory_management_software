@@ -37,7 +37,7 @@
     <template x-if="!error">
       <div>
         <table class="dt pf-table" :class="{ 'is-loading': loading }">
-          <thead><tr><th>Company</th><th class="hide-md">Admin</th><th class="hide-md">Plan</th><th class="hide-md">Users</th><th>Subscription</th><th class="c">Status</th></tr></thead>
+          <thead><tr><th>Company</th><th class="hide-md">Admin</th><th class="hide-md">Plan</th><th class="hide-md">Users</th><th>Subscription</th><th class="hide-md">Activity</th><th class="c">Status</th></tr></thead>
           <tbody>
             <template x-for="r in rows" :key="r.id">
               <tr tabindex="0" @click="open(r)" @keydown.enter="open(r)" :aria-label="'Open ' + r.name" :class="{ 'is-void': r.state === 'suspended' }">
@@ -52,6 +52,12 @@
                 <td class="hide-md" data-k="Plan" x-text="planLabel(r.plan_type)"></td>
                 <td class="hide-md" data-k="Users"><span x-text="r.active_user_count + ' / ' + r.max_users"></span><span class="sub" x-text="r.product_count + ' products'"></span></td>
                 <td data-k="Subscription"><span x-text="date(r.expiry_date)"></span><span class="sub" :class="{ 'txt-due': r.days_left != null && r.days_left <= 7 }" x-text="left(r)"></span></td>
+                <td class="hide-md" data-k="Activity">
+                  <span class="pill" :class="{ 'st-paid': r.activity === 'busy', 'st-low': r.activity === 'quiet', 'st-pending': r.activity === 'idle', 'st-off': r.activity === 'new' }"
+                        x-text="r.activity === 'busy' ? 'Active' : r.activity === 'quiet' ? 'Quiet' : r.activity === 'idle' ? 'Idle' : 'No activity yet'"></span>
+                  <span class="sub" x-text="r.activity === 'new' ? '' : (r.idle_days === 0 ? 'Last: today' : 'Last: ' + r.idle_days + ' day' + (r.idle_days === 1 ? '' : 's') + ' ago')"></span>
+                  <span class="sub" x-text="r.sales_7d_count + ' sales this week'"></span>
+                </td>
                 <td class="c" data-k="Status"><span class="pill" :class="st(r).cls" x-text="st(r).label"></span></td>
               </tr>
             </template>
@@ -87,6 +93,9 @@
           <header class="drawer-head">
             <div><h2 x-text="sel.name"></h2><span class="pill" :class="st(sel).cls" x-text="st(sel).label"></span></div>
             <div class="drawer-actions">
+              <form method="post" :action="'{% url 'web:view_company' 0 %}'.replace('/0/', '/' + sel.id + '/')" style="display:inline">
+                {% csrf_token %}<button type="submit" class="btn btn-primary">{% icon "eye" 16 %} <span>View data</span></button>
+              </form>
               <button type="button" class="btn btn-ghost" @click="openEdit()">{% icon "pencil" 16 %} <span>Edit</span></button>
               <button type="button" class="icon-btn" @click="shut()" aria-label="Close">{% icon "x" 18 %}</button>
             </div>

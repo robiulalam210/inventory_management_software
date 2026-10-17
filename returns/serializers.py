@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework.relations import PrimaryKeyRelatedField
 from .models import SalesReturn, PurchaseReturn, BadStock, SalesReturnItem, PurchaseReturnItem
 from accounts.models import Account, Company
-from products.models import Product
+from products.models import Product, SaleMode
 
 
 class CompanyProductRelatedField(PrimaryKeyRelatedField):
@@ -28,15 +28,37 @@ class SalesReturnItemSerializer(serializers.ModelSerializer):
     product_id = CompanyProductRelatedField(source='product', write_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
     total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    # সেল মোড: quantity ওই মোডের এককে পাঠান (যেমন ২ × ২৫০ গ্রাম প্যাক); স্টকে বেস ইউনিটে ফেরে
+    sale_mode_id = serializers.PrimaryKeyRelatedField(
+        queryset=SaleMode.objects.all(), source='sale_mode', write_only=True, required=False, allow_null=True)
+    unit_name = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesReturnItem
         fields = ['id', 'product_id', 'product_name', 'quantity', 'damage_quantity',
-                  'unit_price', 'discount', 'discount_type', 'total']
-        read_only_fields = ['sales_return']
+                  'unit_price', 'discount', 'discount_type', 'total',
+                  'sale_mode_id', 'mode_name', 'base_multiplier', 'unit_name']
+        read_only_fields = ['sales_return', 'mode_name', 'base_multiplier', 'unit_name']
+
+    def get_unit_name(self, obj):
+        u = getattr(getattr(obj, 'product', None), 'unit', None)
+        return u.name if u else ''
 
     def validate(self, data):
         """Validate item data"""
+        sm = data.get('sale_mode')
+        if sm is not None:
+            request = self.context.get('request')
+            company = getattr(getattr(request, 'user', None), 'company', None)
+            if company is not None and sm.company_id and sm.company_id != company.id:
+                raise serializers.ValidationError({"sale_mode_id": "Sale mode not found in your company."})
+            factor = sm.conversion_factor
+            if factor <= 0 or factor != factor.to_integral_value():
+                raise serializers.ValidationError(
+                    {"sale_mode_id": "এই সেল মোডের factor পূর্ণসংখ্যা নয়; স্টক পূর্ণসংখ্যা বলে এতে রিটার্ন নেওয়া যায় না।"}
+                )
+            data['base_multiplier'] = int(factor)
+            data['mode_name'] = sm.name
         if 'damage_quantity' in data and 'quantity' in data:
             if data['damage_quantity'] > data['quantity']:
                 raise serializers.ValidationError(
@@ -158,13 +180,18 @@ class SalesReturnSerializer(serializers.ModelSerializer):
 class PurchaseReturnItemSerializer(serializers.ModelSerializer):
     product_id = CompanyProductRelatedField(source='product', write_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
+    unit_name = serializers.SerializerMethodField()
     total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = PurchaseReturnItem
-        fields = ['id', 'product_id', 'product_name', 'quantity', 'unit_price',
+        fields = ['id', 'product_id', 'product_name', 'unit_name', 'quantity', 'unit_price',
                   'discount', 'discount_type', 'total']
-        read_only_fields = ['purchase_return']
+        read_only_fields = ['purchase_return', 'unit_name']
+
+    def get_unit_name(self, obj):
+        u = getattr(getattr(obj, 'product', None), 'unit', None)
+        return u.name if u else ''
 
 
 class PurchaseReturnSerializer(serializers.ModelSerializer):

@@ -30,11 +30,11 @@ class BaseReportView(APIView):
     
     def get_company(self, request):
         """Get company from request user"""
-        try:
-            return request.user.company
-        except AttributeError:
-            logger.error("User has no company associated")
+        company = getattr(request.user, 'company', None)
+        if company is None:
+            # Super Admin এর নিজের কোম্পানি নেই — তার জন্য দোকানের report হয় না
             raise ValueError("User must be associated with a company")
+        return company
     
     def get_filters(self, request):
         """Validate and return filters"""

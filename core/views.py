@@ -1419,7 +1419,7 @@ def user_dashboard_stats(request):
 def company_admin_signup(request):
     # বন্ধ: যে কেউ নিজে নিজে কোম্পানি খুলে ফেলতে পারত। কোম্পানি এখন শুধু Super Admin খোলে
     # (/app/platform/companies/), আর তার এডমিনকে login এর তথ্য দেয়।
-    return redirect('/app/login/')
+    return redirect('web:login')
     if CompanyAdminSignupForm is None:
         return render(request, 'error.html', {'error': 'Forms module not available'})
     

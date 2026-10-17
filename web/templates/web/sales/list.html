@@ -169,8 +169,8 @@
                 <template x-for="it in sel.items" :key="it.id">
                   <tr>
                     <td><b x-text="it.product_name"></b><span class="sub" x-text="[it.product_sku, itemLine(it)].filter(Boolean).join(', ')"></span></td>
-                    <td class="num" x-text="num(it.base_quantity)"></td>
-                    <td class="num" x-text="taka(it.unit_price)"></td>
+                    <td class="num" x-text="itemQty(it)"></td>
+                    <td class="num" x-text="itemPrice(it)"></td>
                     <td class="num" x-text="taka(it.subtotal)"></td>
                   </tr>
                 </template>

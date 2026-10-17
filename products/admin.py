@@ -53,10 +53,10 @@ class ProductSaleModeInline(admin.TabularInline):
 # ==============================
 @admin.register(SaleMode)
 class SaleModeAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code', 'get_base_unit', 'conversion_factor', 'price_type', 'is_active', 'company']
-    list_filter = ['price_type', 'is_active', 'company']
+    list_display = ['name', 'code', 'get_base_unit', 'conversion_factor', 'price_type', 'is_active', 'show_in_shop', 'show_in_webapp', 'company']
+    list_filter = ['price_type', 'is_active', 'show_in_shop', 'show_in_webapp', 'company']
     search_fields = ['name', 'code', 'base_unit__name']
-    list_editable = ['is_active']
+    list_editable = ['is_active', 'show_in_shop', 'show_in_webapp']
     
     fieldsets = (
         ('Basic Information', {
@@ -67,6 +67,9 @@ class SaleModeAdmin(admin.ModelAdmin):
         }),
         ('Status & Company', {
             'fields': ('is_active', 'company')
+        }),
+        ('Where to show', {
+            'fields': ('show_in_shop', 'show_in_webapp')
         }),
     )
     

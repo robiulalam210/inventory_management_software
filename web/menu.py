@@ -22,7 +22,12 @@ MENU = [
     {'title': 'Sales', 'icon': 'cart', 'items': [
         {'title': 'Sale', 'url': 'web:sale_new', 'perm': ('sales', 'create'), 'slug': 'sale'},
         {'title': 'POS Sale', 'url': 'web:pos', 'perm': ('sales', 'create'), 'slug': 'pos-sale'},
+        {'title': 'Short Sale', 'url': 'web:short_sale', 'perm': ('sales', 'create'), 'slug': 'short-sale'},
         {'title': 'Sale List', 'url': 'web:sales', 'perm': SALES_VIEW, 'slug': 'sale-list'},
+    ]},
+    {'title': 'Online Shop', 'icon': 'cart', 'items': [
+        {'title': 'Online Orders', 'url': 'web:shop_orders', 'perm': ('sales', 'view'), 'slug': 'online-orders'},
+        {'title': 'Shop Settings', 'url': 'web:shop_settings', 'perm': ('sales', 'edit'), 'slug': 'shop-settings'},
     ]},
     {'title': 'Money Receipt', 'icon': 'receipt', 'items': [
         {'title': 'Create Money Receipt', 'url': 'web:receipt_new', 'perm': ('money_receipt', 'create'), 'slug': 'money-receipt-create'},
@@ -40,6 +45,7 @@ MENU = [
     ]},
     {'title': 'Customers', 'icon': 'users', 'items': [
         {'title': 'Customers', 'url': 'web:customers', 'perm': ('customers', 'view'), 'slug': 'customers'},
+        {'title': 'Due Reminders', 'url': 'web:due_reminders', 'perm': ('customers', 'view'), 'slug': 'due-reminders'},
     ]},
     {'title': 'Supplier', 'icon': 'store', 'items': [
         {'title': 'Supplier List', 'url': 'web:suppliers', 'perm': ('suppliers', 'view'), 'slug': 'suppliers'},
@@ -56,17 +62,17 @@ MENU = [
         {'title': 'Purchase Return', 'url': 'web:purchase_returns', 'perm': ('return', 'view'), 'slug': 'purchase-returns'},
     ]},
     {'title': 'Reports', 'icon': 'chart', 'items': [
-        {'title': 'Sales Report', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-sales'},
-        {'title': 'Purchase Report', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-purchases'},
-        {'title': 'Profit / Loss', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-profit-loss'},
-        {'title': 'Top Selling Products', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-top-products'},
-        {'title': 'Low Stock', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-low-stock'},
-        {'title': 'Stock Report', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-stock'},
-        {'title': 'Customer Ledger', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-customer-ledger'},
-        {'title': 'Customer Due / Advance', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-customer-due'},
-        {'title': 'Supplier Ledger', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-supplier-ledger'},
-        {'title': 'Supplier Due / Advance', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-supplier-due'},
-        {'title': 'Expense Report', 'url': None, 'perm': ('reports', 'view'), 'slug': 'report-expenses'},
+        {'title': 'Sales Report', 'url': 'web:report_sales', 'perm': ('reports', 'view'), 'slug': 'report-sales'},
+        {'title': 'Purchase Report', 'url': 'web:report_purchases', 'perm': ('reports', 'view'), 'slug': 'report-purchases'},
+        {'title': 'Profit / Loss', 'url': 'web:report_profit_loss', 'perm': ('reports', 'view'), 'slug': 'report-profit-loss'},
+        {'title': 'Top Selling Products', 'url': 'web:report_top_products', 'perm': ('reports', 'view'), 'slug': 'report-top-products'},
+        {'title': 'Low Stock', 'url': 'web:report_low_stock', 'perm': ('reports', 'view'), 'slug': 'report-low-stock'},
+        {'title': 'Stock Report', 'url': 'web:report_stock', 'perm': ('reports', 'view'), 'slug': 'report-stock'},
+        {'title': 'Customer Ledger', 'url': 'web:report_customer_ledger', 'perm': ('reports', 'view'), 'slug': 'report-customer-ledger'},
+        {'title': 'Customer Due / Advance', 'url': 'web:report_customer_due', 'perm': ('reports', 'view'), 'slug': 'report-customer-due'},
+        {'title': 'Supplier Ledger', 'url': 'web:report_supplier_ledger', 'perm': ('reports', 'view'), 'slug': 'report-supplier-ledger'},
+        {'title': 'Supplier Due / Advance', 'url': 'web:report_supplier_due', 'perm': ('reports', 'view'), 'slug': 'report-supplier-due'},
+        {'title': 'Expense Report', 'url': 'web:report_expenses', 'perm': ('reports', 'view'), 'slug': 'report-expenses'},
     ]},
     {'title': 'Administration', 'icon': 'settings', 'items': [
         {'title': 'Staff', 'url': 'web:staff', 'perm': ('users', 'view'), 'slug': 'staff'},
@@ -87,6 +93,11 @@ MENU = [
         {'title': 'Transfer List', 'url': 'web:transfers', 'perm': ('accounts', 'view'), 'slug': 'transfers'},
         {'title': 'Transactions', 'url': 'web:transactions', 'perm': ('accounts', 'view'), 'slug': 'transactions'},
     ]},
+    {'title': 'Payroll', 'icon': 'wallet', 'items': [
+        {'title': 'Salary Sheet', 'perm': ('payroll', 'view'), 'url': 'web:payroll', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'payroll'},
+        {'title': 'Advances', 'perm': ('payroll', 'view'), 'url': 'web:payroll_advances', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'payroll-advances'},
+        {'title': 'Payroll Report', 'perm': ('payroll', 'view'), 'url': 'web:payroll_report', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'payroll-report'},
+    ]},
     {'title': 'Security', 'icon': 'shield', 'items': [
         {'title': 'Audit Log', 'url': 'web:audit_log', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'audit-log'},
         {'title': 'User Permissions', 'url': 'web:user_permissions', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'user-permissions'},
@@ -96,8 +107,10 @@ MENU = [
 
 def _allowed(item, perms, role):
     roles = item.get('roles')
-    if roles:
-        return role in roles
+    if roles and role in roles:
+        return True
+    if roles and not item.get('perm'):
+        return False
     module, action = item['perm']
     return bool((perms.get(module) or {}).get(action))
 
@@ -112,13 +125,15 @@ def build_menu(user, current_path=''):
         role = 'SUPER_ADMIN'
     # কোনো দোকানের সাথে যুক্ত নয় এমন super admin — তার শুধু Platform দরকার, দোকানের menu খালি data দেখাত
     platform_only = role == 'SUPER_ADMIN' and not getattr(user, 'company_id', None)
+    # তার নিজের কোনো দোকান নেই — unit/category/product ইত্যাদি বানানোর জায়গা নেই। শুধু কোম্পানি চালানো ও সব কোম্পানির Audit দেখা।
+    platform_slugs = {'platform-companies', 'audit-log'}
 
     sections = []
     for section in MENU:
-        if platform_only and section['title'] != 'Platform':
-            continue
         items = []
         for item in section['items']:
+            if platform_only and item.get('slug') not in platform_slugs:
+                continue
             if not _allowed(item, perms, role):
                 continue
             if item['url']:
@@ -147,7 +162,7 @@ def build_menu(user, current_path=''):
         for sec in sections:
             for i in sec['items']:
                 h = i['href'].rstrip('/') + '/'
-                if i['ready'] and h != '/app/' and cur.startswith(h) and (not best or len(h) > len(best[1]['href'])):
+                if i['ready'] and h != reverse('web:home') and cur.startswith(h) and (not best or len(h) > len(best[1]['href'])):
                     best = (sec, i)
         if best:
             best[1]['active'] = True

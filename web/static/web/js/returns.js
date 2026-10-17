@@ -264,8 +264,12 @@
         const s = this.invoice;
         this.lines = s ? (s.items || []).map(it => ({
           productId: it.product_id || it.id, name: it.product_name || 'Unknown product',
-          price: n(it.unit_price), discount: n(it.discount), discountType: it.discount_type || 'fixed',
+          // দাম = মোডের এককে (প্যাক/কেজি প্রতি) কারণ quantity মোডের এককে; সেল এর 'percent' রিটার্নে 'percentage'
+          price: n(it.mode_unit_price != null ? it.mode_unit_price : it.unit_price), discount: n(it.discount),
+          discountType: it.discount_type === 'percent' ? 'percentage' : (it.discount_type || 'fixed'),
           max: n(it.quantity), qty: n(it.quantity), damage: 0,
+          // সেল মোডে বিক্রি হলে (কেজি / প্যাক): quantity ওই মোডের এককে; স্টকে বেস ইউনিটে ফেরে (সার্ভার হিসাব করে)
+          saleModeId: it.sale_mode_id || null, modeName: it.sale_mode_name || '',
         })) : [];
       },
 
@@ -313,6 +317,7 @@
         const items = this.lines.filter(l => l.qty > 0).map(l => ({
           product_id: l.productId, product_name: l.name, quantity: l.qty, damage_quantity: l.damage,
           unit_price: l.price, discount: l.discount, discount_type: l.discountType, total: this.lineTotal(l),
+          ...(l.saleModeId ? { sale_mode_id: l.saleModeId } : {}),
         }));
         const body = {
           receipt_no: this.invoice.invoice_no,
@@ -405,7 +410,7 @@
           name: it.product_name || 'Unknown product',
           price: n(String(it.price).replace(/,/g, '')), discount: n(String(it.discount || 0).replace(/,/g, '')),
           discountType: it.discount_type || 'fixed',
-          max: n(it.qty), qty: n(it.qty),
+          max: n(it.qty), qty: n(it.qty), unit: it.unit_name || '',
         })) : [];
       },
 

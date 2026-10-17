@@ -326,6 +326,8 @@ class ProductSaleModeNestedSerializer(serializers.ModelSerializer):
         read_only=True
     )
     base_unit_name = serializers.CharField(source='sale_mode.base_unit.name', read_only=True)
+    show_in_shop = serializers.BooleanField(source='sale_mode.show_in_shop', read_only=True)
+    show_in_webapp = serializers.BooleanField(source='sale_mode.show_in_webapp', read_only=True)
     
     # Include tiers
     tiers = PriceTierSerializer(many=True, read_only=True)
@@ -351,6 +353,7 @@ class ProductSaleModeNestedSerializer(serializers.ModelSerializer):
             'id', 'sale_mode_id', 'sale_mode_name', 'sale_mode_code',
             'price_type', 'unit_price', 'flat_price', 'conversion_factor',
             'base_unit_name', 'discount_type', 'discount_value', 'is_active',
+            'show_in_shop', 'show_in_webapp',
             'tiers', 
             'effective_unit_price', 'effective_flat_price',
             'created_at', 'updated_at'
@@ -367,7 +370,8 @@ class SaleModeSerializer(serializers.ModelSerializer):
         model = SaleMode
         fields = [
             'id', 'name', 'code', 'base_unit', 'base_unit_name',
-            'conversion_factor', 'price_type', 'is_active', 
+            'conversion_factor', 'price_type', 'is_active',
+            'show_in_shop', 'show_in_webapp',
             'company', 'company_name', 'created_by', 'created_by_name',
             'created_at', 'updated_at'
         ]
@@ -430,12 +434,15 @@ class ProductSaleModeSimpleSerializer(serializers.ModelSerializer):
     # Include tiers
     tiers = PriceTierSerializer(many=True, read_only=True)
     
+    show_in_shop = serializers.BooleanField(source='sale_mode.show_in_shop', read_only=True)
+    show_in_webapp = serializers.BooleanField(source='sale_mode.show_in_webapp', read_only=True)
+
     class Meta:
         model = ProductSaleMode
         fields = [
             'id', 'sale_mode_id', 'sale_mode_name', 'sale_mode_code',
             'price_type', 'unit_price', 'flat_price', 'discount_type',
-            'discount_value', 'is_active', 'tiers'  # Add tiers
+            'discount_value', 'is_active', 'show_in_shop', 'show_in_webapp', 'tiers'  # Add tiers
         ]
         
 class ProductDetailSerializer(serializers.ModelSerializer):

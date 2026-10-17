@@ -55,7 +55,7 @@
       get unusedExamples() { return cfg.examples.filter(n => !this.items.some(x => norm(x.name) === norm(n))); },
       used(x) { return Number(x.product_count) || 0; },
       usage(x) { const n = this.used(x); return n ? n + (n === 1 ? ' product' : ' products') : 'No products yet'; },
-      productsLink(x) { return cfg.filter_param ? `/app/products/?${cfg.filter_param}=${x.id}` : ''; },
+      productsLink(x) { return cfg.filter_param ? `${(location.pathname.indexOf('/app/') === 0 ? '/app' : '')}/products/?${cfg.filter_param}=${x.id}` : ''; },
 
       // ───── quick add (empty state chips) ─────
       async quickAdd(name) {

@@ -160,7 +160,7 @@
                 <template x-for="it in (sel.items || [])" :key="it.id || it.product_id">
                   <tr>
                     <td x-text="it.product_name || 'Unknown'"></td>
-                    <td class="num" x-text="it.quantity"></td>
+                    <td class="num" x-text="it.mode_name ? it.quantity + ' × ' + it.mode_name : it.quantity + (it.unit_name ? ' ' + it.unit_name : '')"></td>
                     <td class="num" x-show="cfg.hasDamage" x-text="it.damage_quantity || 0"></td>
                     <td class="num" x-text="taka(it.unit_price)"></td>
                     <td class="num" x-text="taka(it.total)"></td>

@@ -20,10 +20,17 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
     # product_id শুধু লেখার জন্য; পড়ার সময় product এর id পেতে এই field (Purchase Return এ লাগে)
     product = serializers.PrimaryKeyRelatedField(read_only=True)
 
+    # পরিমাণ বেস ইউনিটে (যেমন gram) — তালিকা/প্রিন্টে ইউনিটের নাম দেখাতে
+    unit_name = serializers.SerializerMethodField()
+
     class Meta:
         model = PurchaseItem
-        fields = ['id', 'product_id', 'product', 'product_name', 'qty', 'price', 'discount', 'discount_type', 'product_total']
-        read_only_fields = ['id', 'product', 'product_name', 'product_total']
+        fields = ['id', 'product_id', 'product', 'product_name', 'unit_name', 'qty', 'price', 'discount', 'discount_type', 'product_total']
+        read_only_fields = ['id', 'product', 'product_name', 'product_total', 'unit_name']
+
+    def get_unit_name(self, obj):
+        u = getattr(getattr(obj, 'product', None), 'unit', None)
+        return u.name if u else ''
 
     def validate_price(self, value):
         if value <= 0:

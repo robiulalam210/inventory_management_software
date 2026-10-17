@@ -173,7 +173,7 @@
                 <template x-for="it in sel.items" :key="it.id">
                   <tr>
                     <td><b x-text="it.product_name"></b><span class="sub" x-show="itemOff(it)" x-text="itemOff(it)"></span></td>
-                    <td class="num" x-text="num(it.qty)"></td>
+                    <td class="num" x-text="num(it.qty) + (it.unit_name ? ' ' + it.unit_name : '')"></td>
                     <td class="num" x-text="taka(it.price)"></td>
                     <td class="num" x-text="taka(it.product_total)"></td>
                   </tr>

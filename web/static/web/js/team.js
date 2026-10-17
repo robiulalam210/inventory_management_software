@@ -256,7 +256,7 @@
         this.formSaving = false;
       },
       openDone() { const u = this.people.find(x => x.id === this.done.user.id) || this.done.user; this.formOpen = false; this.open(u, 'access'); },
-      get signInUrl() { return location.origin + '/app/login/'; },
+      get signInUrl() { return location.origin + (location.pathname.indexOf('/app/') === 0 ? '/app' : '') + '/login/'; },
       async copyCreds(user, pw) {
         const text = [`Sign in at: ${this.signInUrl}`, `Username: ${user}`, `Password: ${pw}`, 'Please change the password after your first sign-in.'].join('\n');
         try { await navigator.clipboard.writeText(text); } catch (e) { /* পুরনো browser — নিজে copy করবে */ }

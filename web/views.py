@@ -1,9 +1,13 @@
 from django.conf import settings
 from django.contrib import messages
+from datetime import date, timedelta
+
 from django.contrib.auth import login, logout
+from django.core.cache import cache
+from django.db import transaction
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -31,6 +35,10 @@ def company_blocked(user):
     return bool(company is not None and not company.is_active and not is_platform_admin(user))
 
 
+# কোম্পানি-হীন Super Admin যে পেজগুলোতে ঢুকতে পারে
+PLATFORM_VIEWS = {'home_view', 'platform_companies_view', 'audit_log_view', 'view_company_view', 'exit_company_view'}
+
+
 def web_login_required(view):
     from functools import wraps
 
@@ -39,6 +47,11 @@ def web_login_required(view):
         if request.user.is_authenticated and company_blocked(request.user):
             logout(request)
             return redirect(reverse('web:login') + '?suspended=1')
+        # কোম্পানি-হীন Super Admin এর দোকানের কোনো পেজ (sale, product, unit...) নেই — সরাসরি URL এ গেলেও Companies এ ফেরত
+        if (request.user.is_authenticated and is_platform_admin(request.user)
+                and not getattr(request.user, 'company_id', None)
+                and getattr(view, '__name__', '') not in PLATFORM_VIEWS):
+            return redirect('web:platform_companies')
         return view(request, *args, **kwargs)
     return login_required(inner, login_url=LOGIN_URL)
 
@@ -55,7 +68,7 @@ def forbidden(request, title):
 
 def _safe_next(request, fallback):
     nxt = request.POST.get('next') or request.GET.get('next')
-    if nxt and nxt.startswith('/app/') and url_has_allowed_host_and_scheme(
+    if nxt and nxt.startswith('/') and not nxt.startswith('//') and url_has_allowed_host_and_scheme(
         nxt, allowed_hosts={request.get_host()}, require_https=request.is_secure()
     ):
         return nxt
@@ -154,7 +167,16 @@ def home_view(request):
     now = timezone.localtime()
     greeting = 'Good morning' if now.hour < 12 else 'Good afternoon' if now.hour < 17 else 'Good evening'
     if can('dashboard'):
+        shop_ctx = {}
+        company = getattr(request.user, 'company', None)
+        if company is not None and can('sales'):
+            from shop.models import ShopOrder, ShopSettings
+            shop_ctx = {
+                'shop_url': ShopSettings.for_company(company).public_url(request),
+                'shop_pending': ShopOrder.objects.filter(company=company, status='pending').count(),
+            }
         return render(request, 'web/dashboard.html', {
+            **shop_ctx,
             'page_title': 'My Dashboard',
             'greeting': greeting,
             'today': now,
@@ -395,6 +417,20 @@ def sale_new_view(request):
     except ValueError:
         init['customer'] = None
     return render(request, 'web/sales/new.html', {'page_title': 'New Sale', 'sell_init': init})
+
+
+@web_login_required
+@never_cache
+def short_sale_view(request):
+    """
+    Short Sale — app এর "Short Sale" এর মতো: ক্যাটাগরি → পণ্য → সেল মোড (কেজি/গ্রাম/প্যাক) → পরিমাণ → Add।
+    এরপর customer, ছাড়/চার্জ ও পেমেন্ট Sale ফর্মের মতোই; সেভ হয় একই /api/sales/ এ।
+    """
+    if not has_perm(request.user, 'sales', 'create'):
+        return forbidden(request, 'Short Sale')
+    init = _sell_init(request)
+    init['customer'] = None
+    return render(request, 'web/sales/short.html', {'page_title': 'Short Sale', 'sell_init': init})
 
 
 @web_login_required
@@ -858,3 +894,162 @@ def audit_log_view(request):
     if not (u.is_superuser or role in ('SUPER_ADMIN', 'ADMIN')):
         return forbidden(request, 'Audit Log')
     return render(request, 'web/security/audit.html', {'page_title': 'Audit Log'})
+
+
+REPORT_TITLES = {
+    'sales': 'Sales Report', 'purchases': 'Purchase Report', 'profit-loss': 'Profit / Loss',
+    'top-products': 'Top Selling Products', 'low-stock': 'Low Stock', 'stock': 'Stock Report',
+    'customer-ledger': 'Customer Ledger', 'customer-due': 'Customer Due / Advance',
+    'supplier-ledger': 'Supplier Ledger', 'supplier-due': 'Supplier Due / Advance', 'expenses': 'Expense Report',
+}
+
+
+@web_login_required
+@never_cache
+def report_view(request, key):
+    """সব report একই page — কোনটা, তা `key` ঠিক করে (web/static/web/js/reports.js এর REPORTS)।"""
+    if not has_perm(request.user, 'reports', 'view'):
+        return forbidden(request, 'Reports')
+    return render(request, 'web/reports/report.html', {'page_title': REPORT_TITLES[key], 'key': key})
+
+
+def _payroll_guard(request):
+    u = request.user
+    role = (getattr(u, 'role', '') or '').upper()
+    return None if (u.is_superuser or role in ('SUPER_ADMIN', 'ADMIN') or has_perm(u, 'payroll', 'view')) else forbidden(request, 'Payroll')
+
+
+@web_login_required
+@never_cache
+def payroll_view(request):
+    """Salary Sheet — মাসের বেতন স্লিপ, pay, payslip। শুধু Admin / Super Admin (API ও একই নিয়ম)।"""
+    return _payroll_guard(request) or render(request, 'web/payroll/sheet.html', {'page_title': 'Salary Sheet'})
+
+
+@web_login_required
+@never_cache
+def payroll_advances_view(request):
+    return _payroll_guard(request) or render(request, 'web/payroll/advances.html', {'page_title': 'Salary Advances'})
+
+
+@web_login_required
+@never_cache
+def payroll_report_view(request):
+    return _payroll_guard(request) or render(request, 'web/payroll/report.html', {'page_title': 'Payroll Report'})
+
+
+@web_login_required
+@never_cache
+def due_reminders_view(request):
+    """Due Reminders — যাদের কাছে বাকি আছে তাদের তালিকা, আর WhatsApp / SMS এ রিমাইন্ডার পাঠানোর লিংক।"""
+    if not has_perm(request.user, 'customers', 'view'):
+        return forbidden(request, 'Due Reminders')
+    return render(request, 'web/customers/due_reminders.html', {'page_title': 'Due Reminders'})
+
+
+REPORT_TITLES = {
+    'sales': 'Sales Report', 'purchases': 'Purchase Report', 'profit-loss': 'Profit / Loss',
+    'top-products': 'Top Selling Products', 'low-stock': 'Low Stock', 'stock': 'Stock Report',
+    'customer-ledger': 'Customer Ledger', 'customer-due': 'Customer Due / Advance',
+    'supplier-ledger': 'Supplier Ledger', 'supplier-due': 'Supplier Due / Advance', 'expenses': 'Expense Report',
+}
+
+
+# ---------------------------------------------------------------------------
+# নতুন কোম্পানি নিবন্ধন (পাবলিক) — ১ মাস ফ্রি ট্রায়াল, নিবন্ধনকারী হয় ADMIN (Super Admin নয়)
+# ---------------------------------------------------------------------------
+TRIAL_DAYS = 30
+REGISTER_LIMIT_PER_HOUR = 5   # একই IP থেকে ঘণ্টায় সর্বোচ্চ নিবন্ধন চেষ্টা (spam ঠেকাতে)
+
+
+def _client_ip(request):
+    fwd = request.META.get('HTTP_X_FORWARDED_FOR')
+    return (fwd.split(',')[0].strip() if fwd else request.META.get('REMOTE_ADDR')) or 'unknown'
+
+
+@sensitive_post_parameters('password', 'password2')
+@csrf_protect
+@never_cache
+def register_view(request):
+    from core.models import Company
+    from core.platform_views import _create_admin, _seed, _validate_admin, _validate_company
+
+    if request.user.is_authenticated:
+        return redirect('web:home')
+
+    ctx = {'trial_days': TRIAL_DAYS, 'values': {}, 'errors': {}, 'error': None}
+    if request.method != 'POST':
+        return render(request, 'web/auth/register.html', ctx)
+
+    post = request.POST
+    ctx['values'] = {k: (post.get(k) or '').strip() for k in
+                     ('company_name', 'phone', 'address', 'first_name', 'last_name', 'username', 'email')}
+
+    # spam: লুকানো ঘর ভরা থাকলে (bot) চুপচাপ ফিরিয়ে দিই
+    if post.get('website_url'):
+        return redirect('web:login')
+
+    key = f'web-register:{_client_ip(request)}'
+    attempts = cache.get(key, 0)
+    if attempts >= REGISTER_LIMIT_PER_HOUR:
+        ctx['error'] = 'Too many sign-up attempts from this connection. Please try again in an hour.'
+        return render(request, 'web/auth/register.html', ctx, status=429)
+    cache.set(key, attempts + 1, 60 * 60)
+
+    v = ctx['values']
+    cdata, cerr = _validate_company({
+        'name': v['company_name'], 'phone': v['phone'], 'address': v['address'], 'email': v['email'],
+    })
+    adata, aerr = _validate_admin({
+        'first_name': v['first_name'], 'last_name': v['last_name'], 'username': v['username'],
+        'email': v['email'], 'phone': v['phone'], 'password': post.get('password') or '',
+    })
+    if (post.get('password') or '') != (post.get('password2') or ''):
+        aerr['password2'] = 'The two passwords do not match.'
+    if cerr or aerr:
+        ctx['errors'] = {**{f'company_{k}': m for k, m in cerr.items()}, **aerr}
+        ctx['errors']['company_name'] = cerr.get('name') or ctx['errors'].get('company_name')
+        ctx['error'] = 'Please fix the highlighted fields.'
+        return render(request, 'web/auth/register.html', ctx, status=400)
+
+    # ট্রায়াল: আজ থেকে ৩০ দিন; plan basic; নিবন্ধনকারী ADMIN
+    cdata['plan_type'] = 'basic'
+    cdata['expiry_date'] = date.today() + timedelta(days=TRIAL_DAYS)
+    cdata['is_active'] = True
+    with transaction.atomic():
+        company = Company(**cdata)
+        company.save()
+        admin = _create_admin(company, adata, None)
+        _seed(company, admin)
+
+    login(request, admin, backend='django.contrib.auth.backends.ModelBackend')
+    request.session.set_expiry(REMEMBER_SECONDS)
+    request.session['web_client'] = 'web'
+    messages.success(request, f'Welcome! {company.name} is ready — your {TRIAL_DAYS}-day free trial has started.')
+    return redirect('web:home')
+
+
+# ---------------------------------------------------------------------------
+# Super Admin: একটা কোম্পানির ভেতরে ঢুকে সব দেখা (শুধু দেখা — সেভ/এডিট বন্ধ)
+# ---------------------------------------------------------------------------
+@require_POST
+@csrf_protect
+@web_login_required
+def view_company_view(request, company_id):
+    from core.middleware import PLATFORM_VIEW_SESSION_KEY
+    from core.models import Company
+    if not is_platform_admin(request.user) or getattr(request.user, 'company_id', None) and not request.platform_viewing:
+        return forbidden(request, 'Companies')
+    company = get_object_or_404(Company, pk=company_id)
+    request.session[PLATFORM_VIEW_SESSION_KEY] = company.pk
+    messages.info(request, f'Viewing {company.name} — view-only.')
+    return redirect('web:home')
+
+
+@require_POST
+@csrf_protect
+@web_login_required
+def exit_company_view(request):
+    from core.middleware import PLATFORM_VIEW_SESSION_KEY
+    request.session.pop(PLATFORM_VIEW_SESSION_KEY, None)
+    return redirect('web:platform_companies')

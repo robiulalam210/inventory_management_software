@@ -2,7 +2,7 @@
  * Sale Mode — একই product ভিন্ন মাপে বিক্রি (KG এর বদলে Gram, Piece এর বদলে Dozen, বস্তা…)।
  * Stock সবসময় product এর নিজের unit এ থাকে; sale mode বলে একবার বিক্রিতে কত unit কমবে।
  *   GET    /api/sale-modes/          সব, সাথে product_count, sale_count
- *   POST   /api/sale-modes/          { name, code, base_unit, conversion_factor, price_type }
+ *   POST   /api/sale-modes/          { name, code, base_unit, conversion_factor, price_type, show_in_shop, show_in_webapp }
  *   PATCH  /api/sale-modes/<id>/
  *   DELETE /api/sale-modes/<id>/     ব্যবহার হলে বন্ধ হয়, না হলে মুছে যায়
  */
@@ -87,14 +87,19 @@
         if (s) parts.push(s + (s === 1 ? ' sale line' : ' sale lines'));
         return parts.join(' · ') || 'Not used yet';
       },
+      // কোথায় দেখায় — তালিকার ছোট লেবেল
+      where(m) {
+        const s = m.show_in_shop !== false, w = m.show_in_webapp !== false;
+        return s && w ? 'Shop + Web app' : s ? 'Online shop only' : w ? 'Web app only' : 'Hidden everywhere';
+      },
       inUse(m) { return n(m.product_count) + n(m.sale_count) > 0; },
 
       // ───── form ─────
       openForm(m, baseUnit) {
         if (m ? !this.perms.edit : !this.perms.create) return;
         this.form = m
-          ? { id: m.id, name: m.name, code: m.code, base_unit: String(m.base_unit), factor: fmt(m.conversion_factor), inv: '', price_type: m.price_type, sold: n(m.sale_count), was: fmt(m.conversion_factor), codeTouched: true }
-          : { id: null, name: '', code: '', base_unit: baseUnit ? String(baseUnit) : (this.activeUnits[0] ? String(this.activeUnits[0].id) : ''), factor: '', inv: '', price_type: 'unit', sold: 0, codeTouched: false };
+          ? { id: m.id, name: m.name, code: m.code, base_unit: String(m.base_unit), factor: fmt(m.conversion_factor), inv: '', price_type: m.price_type, show_in_shop: m.show_in_shop !== false, show_in_webapp: m.show_in_webapp !== false, sold: n(m.sale_count), was: fmt(m.conversion_factor), codeTouched: true }
+          : { id: null, name: '', code: '', base_unit: baseUnit ? String(baseUnit) : (this.activeUnits[0] ? String(this.activeUnits[0].id) : ''), factor: '', inv: '', price_type: 'unit', show_in_shop: true, show_in_webapp: true, sold: 0, codeTouched: false };
         this.syncInv(); this.invEdit = false;
         this.fe = {}; this.formError = ''; this.formOpen = true;
         this.$nextTick(() => this.$refs.smName && this.$refs.smName.focus());
@@ -138,7 +143,7 @@
         this.fe = fe;
         if (Object.keys(fe).length || this.formSaving) return;
         this.formSaving = true; this.formError = '';
-        const body = { name, code, base_unit: Number(f.base_unit), conversion_factor: fmt(fac), price_type: f.price_type };
+        const body = { name, code, base_unit: Number(f.base_unit), conversion_factor: fmt(fac), price_type: f.price_type, show_in_shop: !!f.show_in_shop, show_in_webapp: !!f.show_in_webapp };
         try {
           f.id ? await App.api(`/api/sale-modes/${f.id}/`, { method: 'PATCH', body })
                : await App.api('/api/sale-modes/', { method: 'POST', body });

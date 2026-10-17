@@ -77,7 +77,7 @@
                   <span class="sm-name"><b x-text="m.name"></b><code class="un-code" x-text="m.code"></code></span>
                   <span class="sm-rule"><span x-text="rule(m)"></span><small x-show="inverse(m)" x-text="inverse(m)"></small></span>
                   <span class="sm-meta"><span class="pill" :class="'sm-p-' + m.price_type" x-text="priceShort(m.price_type)"></span>
-                    <small x-text="usage(m)"></small></span>
+                    <small x-text="usage(m) + ' · ' + where(m)"></small></span>
                   <span class="pill" :class="m.is_active === false ? 'st-off' : 'st-paid'" x-text="m.is_active === false ? 'Off' : 'Active'"></span>
                   <span class="un-acts" @click.stop>
                     <template x-if="perms.edit">
@@ -146,6 +146,13 @@
               <b x-text="p.label"></b><small x-text="p.note(modeName, baseName)"></small></button>
           </template>
         </div>
+      </div>
+      <div class="fld">
+        <label class="fld-label">Where should it show?</label>
+        <label class="fld-hint" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" x-model="form.show_in_webapp"> Web app — “Sold by” in Sale and POS</label>
+        <label class="fld-hint" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" x-model="form.show_in_shop"> Online shop (e-commerce)</label>
+        <p class="fld-hint warn" x-show="!form.show_in_webapp && !form.show_in_shop" x-cloak>Not shown anywhere. Turn one on, or use the Off switch instead.</p>
+        <p class="fld-hint" x-show="form.show_in_shop && !form.show_in_webapp" x-cloak>Pack-style mode: customers see it online; staff won't see it in the Sale form.</p>
       </div>
       <p class="modal-err" x-show="formError" x-text="formError"></p>
       <div class="modal-actions">

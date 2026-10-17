@@ -147,7 +147,7 @@ class SalesReturn(models.Model):
         """Update product stock_qty for returned items"""
         for item in self.items.all():
             # Calculate good quantity (non-damaged)
-            good_quantity = item.quantity - item.damage_quantity
+            good_quantity = (item.quantity - item.damage_quantity) * (item.base_multiplier or 1)
             
             if good_quantity > 0:
                 # FIXED: Use stock_qty instead of stock
@@ -189,7 +189,7 @@ class SalesReturn(models.Model):
             if item.damage_quantity > 0:
                 BadStock.objects.create(
                     product=item.product,
-                    quantity=item.damage_quantity,
+                    quantity=item.damage_quantity * (item.base_multiplier or 1),
                     company=self.company,
                     reason=f"Damaged in sales return {self.receipt_no} - {self.reason or 'No reason provided'}",
                     reference_type='sales_return',
@@ -204,7 +204,7 @@ class SalesReturn(models.Model):
             if self.status == 'approved':
                 # Reverse stock updates
                 for item in self.items.all():
-                    good_quantity = item.quantity - item.damage_quantity
+                    good_quantity = (item.quantity - item.damage_quantity) * (item.base_multiplier or 1)
                     if good_quantity > 0:
                         # FIXED: Use stock_qty instead of stock
                         Product.objects.filter(id=item.product.id).update(
@@ -231,6 +231,10 @@ class SalesReturnItem(models.Model):
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount_type = models.CharField(max_length=50, blank=True, null=True, choices=[('fixed', 'Fixed'), ('percentage', 'Percentage')])
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # সেল মোড (কেজি / প্যাক): quantity মোডের এককে; স্টকে ফেরে quantity × base_multiplier (বেস ইউনিটে, যেমন গ্রাম)
+    sale_mode = models.ForeignKey('products.SaleMode', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    mode_name = models.CharField(max_length=60, blank=True, default='')
+    base_multiplier = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ['id']

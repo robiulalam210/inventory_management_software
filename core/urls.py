@@ -117,6 +117,7 @@ urlpatterns = [
     path('reports/', include('reports.urls')),
     path('sync/', include('offline_sync.urls')),  # offline sync + audit
 
+    path('payroll/', include('payroll.urls')),
     path('expenses/', include('expenses.urls')),
     path('income/', include('income.urls')),
     

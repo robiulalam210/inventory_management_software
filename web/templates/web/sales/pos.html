@@ -1,6 +1,33 @@
 {% extends "web/base.html" %}
 {% load static web_tags %}
-{% block head %}<script src="{% static 'web/js/sell.js' %}"></script>{% endblock %}
+{% block head %}<script src="{% static 'web/js/sell.js' %}"></script>
+<style>
+/* POS ছোট স্ক্রিন ফিক্স — app.css এর পুরনো কপি সার্ভ হলেও যেন কাজ করে */
+.tile-name { flex: none; max-width: 100%; line-height: 1.5; max-height: 3em; }
+.tile > * { flex-shrink: 0; }
+.tile-foot { flex-wrap: wrap; gap: 2px 6px; min-width: 0; }
+.pos-grid { grid-auto-rows: max-content; }
+.pos-fcart { display: none; }
+@media (max-width: 860px) {
+  .pos { grid-template-columns: 1fr; height: auto; }
+  .pos-cat { max-height: 72vh; }
+  .pos-cart { position: static !important; max-height: none; overflow: visible; }
+  .pos-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .cart-lines { max-height: 50vh; }
+  .content-pos { padding-bottom: 76px; }
+  .pos-fcart { display: flex; align-items: center; gap: 10px; position: fixed; left: 12px; right: 130px; bottom: 12px; z-index: 45; height: 52px; padding: 0 16px 0 10px; border: 0; border-radius: 26px; background: var(--blue); color: #fff; font: 600 15px var(--font); cursor: pointer; box-shadow: 0 12px 28px -10px rgba(37, 99, 235, .65); }
+  .pos-fcart[x-cloak] { display: none; }
+  .pos-fcart b { margin-left: auto; font-size: 17px; }
+  .pos-fcart-n { min-width: 30px; height: 30px; border-radius: 15px; background: rgba(255, 255, 255, .22); display: grid; place-items: center; font-size: 14px; }
+}
+@media (max-width: 520px) {
+  .pos-fcart { right: 76px; }
+  .pos-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile { min-height: 120px; padding: 10px; }
+  .content-pos { padding: 8px 8px 76px; }
+}
+@media print { .pos-fcart { display: none !important; } }
+</style>{% endblock %}
 {% block topbar_actions %}
   <span class="pos-keys" aria-hidden="true"><kbd>F2</kbd> search <kbd>F9</kbd> charge</span>
   <a class="btn btn-ghost top-act" href="{% url 'web:sale_new' %}">{% icon "receipt" 18 %}<span>Full sale form</span></a>
@@ -32,9 +59,9 @@
           <b class="tile-name" x-text="p.name"></b>
           <span class="tile-sku" x-text="p.sku"></span>
           <span class="tile-foot">
-            <b x-text="taka(p.price)"></b>
+            <b x-text="taka(p.def.final) + (p.modes.length > 1 ? ' / ' + p.def.name : '')"></b><s x-show="p.def.disc > 0" x-text="taka(p.def.price)" style="font-size:11px;color:var(--muted);margin-left:4px"></s>
             <small :class="p.stock <= 0 ? 'out' : (p.alert && p.stock <= p.alert ? 'low' : '')"
-                   x-text="p.stock <= 0 ? 'Out' : num(p.stock) + ' left'"></small>
+                   x-text="p.stock <= 0 ? 'Out' : num(p.stock / p.def.factor) + ' ' + p.def.name + ' left'"></small>
           </span>
         </button>
       </template>
@@ -48,7 +75,7 @@
   </section>
 
   {# ───────────── cart ───────────── #}
-  <aside class="panel pos-cart" aria-label="Current sale">
+  <aside class="panel pos-cart" id="pos-cart" aria-label="Current sale">
     <div class="cart-head">
       <h3>Current sale <span x-show="rows.length" x-text="'(' + rows.length + ')'"></span></h3>
       <button type="button" class="btn-link" x-show="rows.length" x-cloak @click="clearCart()">Clear</button>
@@ -70,7 +97,7 @@
         <li :class="{ 'row-err': r.err, 'is-open': r.open }">
           <div class="cl-main" @click="r.open = !r.open">
             <b x-text="r.name"></b>
-            <span x-text="taka(r.price) + (Number(r.discount) > 0 ? ' · ' + (r.discount_type === 'percent' ? r.discount + '% off' : taka(r.discount) + ' off') : '')"></span>
+            <span x-text="taka(r.price) + ' / ' + r.modeName + (Number(r.discount) > 0 ? ' · ' + (r.discount_type === 'percent' ? r.discount + '% off' : taka(r.discount) + ' off') : '')"></span>
           </div>
           <div class="cl-qty">
             <button type="button" @click="bump(r, -1)" :aria-label="'One less ' + r.name">−</button>
@@ -78,7 +105,17 @@
             <button type="button" @click="bump(r, 1)" :aria-label="'One more ' + r.name">+</button>
           </div>
           <b class="cl-amt" x-text="taka(lineOf(r))"></b>
+          <div class="cl-modes" x-show="r.modes.length > 1" role="group" :aria-label="'Sold by for ' + r.name">
+            <template x-for="m in r.modes" :key="m.id">
+              <button type="button" :class="{ on: m.id === r.mode }" :aria-pressed="m.id === r.mode"
+                      @click="setMode(r, m.id)" x-text="m.name + ' · ' + taka(m.final) + (m.disc > 0 ? ' ↓' : '')"></button>
+            </template>
+          </div>
           <div class="cl-edit" x-show="r.open" x-cloak>
+            <label x-show="r.modes.length > 1"><span>Sold by</span>
+              <select class="in" x-model="r.mode" @change="setMode(r, r.mode)">
+                <template x-for="m in r.modes" :key="m.id"><option :value="m.id" x-text="m.name" :selected="m.id === r.mode"></option></template>
+              </select></label>
             <label><span>Price</span><input class="in num" type="text" inputmode="decimal" x-model="r.price" @input="r.price = r.price.replace(/[^0-9.]/g, ''); r.err = stockErr(r)"></label>
             <label><span>Discount</span>
               <span class="in-unit"><input class="in num" type="text" inputmode="decimal" placeholder="0" x-model="r.discount" @input="r.discount = r.discount.replace(/[^0-9.]/g, '')">
@@ -185,7 +222,7 @@
             <template x-for="it in done.items" :key="it.id">
               <tbody>
                 <tr><td colspan="2" x-text="it.product_name"></td></tr>
-                <tr class="th-sub"><td x-text="num(it.base_quantity) + ' × ' + taka(it.unit_price) + (Number(it.discount) > 0 ? ' − ' + (it.discount_type === 'percent' ? it.discount + '%' : taka(it.discount)) : '')"></td>
+                <tr class="th-sub"><td x-text="itemTerm(it) + (Number(it.discount) > 0 ? ' − ' + (it.discount_type === 'percent' ? it.discount + '%' : taka(it.discount)) : '')"></td>
                   <td class="num" x-text="taka(it.subtotal)"></td></tr>
               </tbody>
             </template>
@@ -210,5 +247,15 @@
   </div>
 
   <div class="pos-flash" x-show="flashMsg" x-cloak x-transition.opacity role="status" x-text="flashMsg"></div>
+  {# ছোট স্ক্রিনে: Charge বাটন দেখা না গেলে নিচে ভাসমান বার — ট্যাপ করলে কার্টে নামে #}
+  <button type="button" class="pos-fcart" x-cloak
+          x-data="{ vis: false }" x-init="if ('IntersectionObserver' in window) new IntersectionObserver((e) => { vis = e[0].isIntersecting; }).observe(document.querySelector('.pos-charge'))"
+          x-show="rows.length && !vis" x-transition.opacity.duration.150ms
+          @click="document.getElementById('pos-cart').scrollIntoView({ behavior: 'smooth', block: 'start' })"
+          aria-label="Go to current sale">
+    <span class="pos-fcart-n" x-text="rows.length"></span>
+    <span class="pos-fcart-l">Cart</span>
+    <b x-text="taka(t.grand)"></b>
+  </button>
 </div>
 {% endblock %}

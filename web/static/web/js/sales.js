@@ -222,10 +222,20 @@ function salesList(opts) {
       ];
       return rows.filter(([, v], i) => i === 0 || v !== 0);
     },
+    // সেল মোডে বিক্রি হলে "২ × ২৫০ গ্রাম প্যাক"; নইলে সাধারণ পরিমাণ
+    itemQty(it) {
+      if (it.sale_mode_name && it.quantity != null) return `${this.num(it.quantity)} × ${it.sale_mode_name}`;
+      return this.num(it.quantity != null ? it.quantity : it.base_quantity);
+    },
+    itemPrice(it) { return App.taka(it.mode_unit_price != null ? it.mode_unit_price : it.unit_price); },
     itemLine(it) {
+      const parts = [];
+      // প্যাক/কেজির সমান স্টক (যেমন "= 500 gram"), মোড বেস ইউনিটের চেয়ে আলাদা হলে
+      if (it.sale_mode_name && Number(it.conversion_factor) !== 1 && it.base_quantity != null)
+        parts.push(`= ${this.num(it.base_quantity)} ${it.base_unit_name || ''}`.trim());
       const d = Number(it.discount || 0);
-      if (!d) return '';
-      return it.discount_type === 'percent' ? `${d}% off` : `${App.taka(d)} off`;
+      if (d) parts.push(it.discount_type === 'percent' ? `${d}% off` : `${App.taka(d)} off`);
+      return parts.join(', ');
     },
     print() { window.print(); },
   };

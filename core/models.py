@@ -235,6 +235,12 @@ class User(AbstractUser):
         ]
 
     def save(self, *args, **kwargs):
+        # `manage.py createsuperuser` (বা নতুন user এ superuser টিক) দিলে role ডিফল্ট STAFF থাকত, আর নিচের নিয়মে
+        # is_superuser আবার false হয়ে যেত — ফলে সুপার অ্যাডমিন হতো না। নতুন user এর বেলায় role ঠিক করে দিই।
+        # (পুরনো user এর role বদলানো — যেমন Admin বানিয়ে দেওয়া — এতে ধরা পড়ে না, কারণ শুধু pk=None এ চলে)
+        if self.pk is None and self.is_superuser and self.role != self.Role.SUPER_ADMIN:
+            self.role = self.Role.SUPER_ADMIN
+
         # সুপারইউজারের জন্য বিশেষ হ্যান্ডলিং
         if self.role == self.Role.SUPER_ADMIN:
             self.is_staff = True

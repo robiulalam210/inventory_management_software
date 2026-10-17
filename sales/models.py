@@ -488,11 +488,18 @@ class SaleItem(models.Model):
                     
                     if self.sale_mode.price_type == 'flat' and product_sale_mode.flat_price:
                         self.flat_price = product_sale_mode.flat_price
-                        self.unit_price = product_sale_mode.flat_price / self.quantity if self.quantity else Decimal('0.00')
+                        self.unit_price = product_sale_mode.flat_price  # প্রতি প্যাকের দাম (subtotal = flat_price × quantity; রিটার্নে unit_price × qty ঠিক মেলে)
                     elif self.sale_mode.price_type == 'tier':
                         self.unit_price = product_sale_mode.get_tier_price(self.base_quantity)
                     else:
                         self.unit_price = product_sale_mode.get_unit_price()
+
+                    # সেল মোডের নিজের ছাড় — client আলাদা ছাড় না পাঠালে এখানে বসে
+                    # (ওয়েব/অ্যাপ সব জায়গায় একই দাম হওয়ার জন্য)
+                    mode_dv = product_sale_mode.discount_value
+                    if not self.discount and product_sale_mode.discount_type and mode_dv and mode_dv > 0:
+                        self.discount_type = 'percent' if str(product_sale_mode.discount_type).lower().startswith('percent') else 'fixed'
+                        self.discount = mode_dv
                 except ProductSaleMode.DoesNotExist:
                     self.unit_price = self.product.selling_price
             else:
@@ -530,7 +537,8 @@ class SaleItem(models.Model):
         """Calculate subtotal with multi-mode pricing"""
         try:
             if self.price_type == 'flat' and self.flat_price:
-                total = self.flat_price
+                # flat_price = প্রতি প্যাক/ইউনিটের দাম, তাই পরিমাণ দিয়ে গুণ করতে হবে
+                total = Decimal(str(self.flat_price)) * Decimal(str(self.quantity or 1))
             else:
                 total = Decimal(str(self.base_quantity)) * Decimal(str(self.unit_price))
             
@@ -547,6 +555,18 @@ class SaleItem(models.Model):
             logger.exception(f"Error calculating subtotal for item {self.id}: {e}")
             return Decimal('0.00')
     
+
+    def gross_amount(self):
+        """ছাড়ের আগে লাইনের টাকা: ফ্ল্যাটে flat_price × quantity, নইলে base_quantity × unit_price"""
+        if self.price_type == 'flat' and self.flat_price:
+            return Decimal(str(self.flat_price)) * Decimal(str(self.quantity or 1))
+        return Decimal(str(self.base_quantity)) * Decimal(str(self.unit_price))
+
+    def cost_amount(self):
+        """ক্রয়মূল্য হিসাবে খরচ — ক্রয়মূল্য বেস ইউনিটে, তাই base_quantity দিয়ে গুণ"""
+        pp = getattr(self.product, 'purchase_price', None) or 0
+        return Decimal(str(self.base_quantity)) * Decimal(str(pp))
+
     def get_item_details(self):
         """Get detailed item information"""
         return {

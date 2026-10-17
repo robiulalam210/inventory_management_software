@@ -65,6 +65,8 @@ INSTALLED_APPS = [
     'transactions',
     'supplier_payment',
     'account_transfer',
+    'shop',
+    'payroll',  # Payroll app
     'core.apps.CoreConfig',
     'offline_sync.apps.OfflineSyncConfig',
     'web.apps.WebConfig',  # web software (/app/) — admin panel নয়

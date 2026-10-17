@@ -109,6 +109,10 @@ class ProfitLossReportSerializer(serializers.Serializer):
     net_profit = serializers.FloatField()
     expense_breakdown = serializers.ListField(required=False)
     date_range = serializers.DictField(required=False)
+    # web: view এ হিসাব হয়, আগে serializer এ না থাকায় বাদ পড়ত (optional, তাই পুরনো client অক্ষত)
+    sales_returns = serializers.FloatField(required=False)
+    purchase_returns = serializers.FloatField(required=False)
+    transaction_counts = serializers.DictField(required=False)
 
 class PurchaseReturnReportSerializer(serializers.Serializer):
     sl = serializers.IntegerField()
