@@ -303,6 +303,8 @@ class ExpenseListView(APIView):
 
             # Base queryset
             expenses = Expense.objects.filter(company=company).select_related('head', 'subhead', 'account')
+            from core.branches import filter_qs
+            expenses = filter_qs(expenses, 'branch', request)   # বাছা শাখার খরচ (core/branches.py)
 
             # Apply search filter
             if search:
@@ -566,6 +568,8 @@ class ExpenseSummaryView(APIView):
         if not company:
             return custom_response(False, "User has no associated company.", None, status.HTTP_400_BAD_REQUEST)
         qs = Expense.objects.filter(company=company)
+        from core.branches import filter_qs
+        qs = filter_qs(qs, 'branch', request)
         p = request.GET
         search = (p.get('search') or '').strip()
         if search:

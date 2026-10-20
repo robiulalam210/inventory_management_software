@@ -1,0 +1,127 @@
+{% extends "web/base.html" %}
+{% load static web_tags %}
+{# শাখা — views.branches_view · branches.js · দুই ভাষা: {% tr %} আর L('en','bn') #}
+{% block head %}<script src="{% static 'web/js/branches.js' %}"></script>{% endblock %}
+{% block topbar_actions %}
+  <button type="button" class="btn btn-primary top-act" onclick="window.dispatchEvent(new CustomEvent('branch-new'))">{% icon "plus" 18 %}<span>{% tr "New branch" "নতুন শাখা" %}</span></button>
+{% endblock %}
+{% block content %}
+{{ br_init|json_script:"br-init" }}
+<div class="br" x-data="branchPage(JSON.parse(document.getElementById('br-init').textContent))"
+     @branch-new.window="full ? location.assign(packageUrl) : openForm(null)" @keydown.escape.window="formOpen = false; closing = null">
+
+  <p class="notice" x-show="error" x-cloak x-text="error"></p>
+
+  {# ───── এখনো ১টা শাখা: কী হবে বোঝানো ───── #}
+  <template x-if="!loading && !on">
+    <section class="panel br-intro">
+      <div class="br-intro-art" aria-hidden="true">
+        <div class="br-shop is-main">{% icon "store" 26 %}</div>
+        <div class="br-line"></div>
+        <div class="br-shop">{% icon "plus" 22 %}</div>
+      </div>
+      <div class="br-intro-body">
+        <h2>{% tr "One shop now. More than one place?" "এখন একটা দোকান। একাধিক জায়গায় ব্যবসা?" %}</h2>
+        <p>{% tr "Add a branch only if you sell from a second shop or counter. Until then nothing about branches appears anywhere — the software stays simple." "দ্বিতীয় দোকান বা কাউন্টার থেকে বিক্রি করলে তবেই শাখা যোগ করুন। তার আগে সফটওয়্যারের কোথাও শাখার কিছু দেখাবে না — সহজই থাকবে।" %}</p>
+        <ul class="br-points">
+          <li>{% icon "check" 16 %}<span>{% tr "Your current shop becomes the main branch. All old records stay with it." "আপনার এখনকার দোকান হবে প্রধান শাখা। আগের সব হিসাব সেখানেই থাকবে।" %}</span></li>
+          <li>{% icon "check" 16 %}<span>{% tr "Put each staff member in a branch — their sales go there and they see only that branch." "প্রতিটা স্টাফকে একটা শাখায় বসান — তাঁর বিক্রি সেই শাখায় যাবে, আর তিনি শুধু সেই শাখার হিসাব দেখবেন।" %}</span></li>
+          <li>{% icon "check" 16 %}<span>{% tr "You pick a branch at the top to see its sales, expenses and reports — or all together." "ওপরে শাখা বেছে সেই শাখার বিক্রি, খরচ, রিপোর্ট দেখবেন — বা সব একসাথে।" %}</span></li>
+          <li class="is-note">{% icon "info" 16 %}<span>{% tr "Stock is shared by all branches for now. Separate stock per branch comes next." "স্টক আপাতত সব শাখার এক জায়গায়। শাখা অনুযায়ী আলাদা স্টক পরের আপডেটে আসবে।" %}</span></li>
+        </ul>
+        <div class="br-intro-act">
+          <button type="button" class="btn btn-primary" x-show="!full" @click="openForm(null)">{% icon "plus" 18 %} {% tr "Add a second branch" "দ্বিতীয় শাখা যোগ করুন" %}</button>
+          <template x-if="full">
+            <div class="br-limit">{% icon "lock" 16 %}
+              <span>{% tr "Your package has 1 branch. Business package has 3." "আপনার প্যাকেজে ১টা শাখা। বিজনেস প্যাকেজে ৩টা।" %}</span>
+              <a class="btn btn-primary btn-sm" :href="packageUrl">{% tr "See packages" "প্যাকেজ দেখুন" %}</a>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+  </template>
+
+  {# ───── ২+ শাখা ───── #}
+  <template x-if="!loading && on">
+    <div>
+      <div class="br-head">
+        <p class="br-count"><b x-text="active.length"></b> <span>{% tr "branches" "টা শাখা" %}</span>
+          <template x-if="limit > 0"><span class="br-of"><span>{% tr "· your package allows" "· প্যাকেজে সর্বোচ্চ" %}</span> <b x-text="limit"></b></span></template></p>
+        <a class="link-btn" x-show="full" :href="packageUrl">{% tr "Need more branches?" "আরও শাখা লাগবে?" %}</a>
+      </div>
+      <div class="br-grid">
+        <template x-for="b in active" :key="b.id">
+          <article class="panel br-card" :class="{ 'is-main': b.is_main, 'is-cur': current === b.id }">
+            <div class="br-card-top">
+              <span class="br-ico">{% icon "store" 20 %}</span>
+              <div class="br-card-name"><h3 x-text="b.name"></h3>
+                <span class="pill sm st-paid" x-show="b.is_main">{% tr "Main" "প্রধান" %}</span>
+                <span class="pill sm" x-show="current === b.id">{% tr "Showing now" "এখন দেখছেন" %}</span></div>
+            </div>
+            <p class="br-addr" x-show="b.address || b.phone"><span x-text="b.address"></span><template x-if="b.address && b.phone"><span> · </span></template><span x-text="b.phone"></span></p>
+            <div class="br-stats">
+              <div><span>{% tr "Sales today" "আজকের বিক্রি" %}</span><b x-text="taka(b.today_sales)"></b></div>
+              <div><span>{% tr "Staff here" "এখানের স্টাফ" %}</span><b x-text="b.staff_count"></b></div>
+            </div>
+            <div class="br-card-act">
+              <button type="button" class="btn btn-ghost btn-sm" @click="pick(b)" x-show="current !== b.id">{% tr "Show this branch" "এই শাখা দেখুন" %}</button>
+              <button type="button" class="btn btn-ghost btn-sm" @click="openForm(b)">{% icon "pencil" 15 %} {% tr "Edit" "এডিট" %}</button>
+              <button type="button" class="btn btn-ghost btn-sm danger-text" x-show="!b.is_main" @click="askClose(b)">{% tr "Close" "বন্ধ" %}</button>
+            </div>
+          </article>
+        </template>
+        <button type="button" class="br-add" x-show="!full" @click="openForm(null)">{% icon "plus" 22 %}<span>{% tr "Add branch" "শাখা যোগ করুন" %}</span></button>
+      </div>
+      <p class="br-foot">{% icon "users" 16 %}<span><span>{% tr "Put staff in a branch from" "স্টাফকে শাখায় বসাতে" %}</span> <a :href="staffUrl">{% tr "Staff" "স্টাফ" %}</a>
+        <span>{% tr "— edit a person and pick their branch." "পেজে গিয়ে মানুষটিকে এডিট করে শাখা বাছুন।" %}</span></span></p>
+      <p class="br-foot">{% icon "info" 16 %} <span>{% tr "Stock is shared by all branches for now. Separate stock per branch comes next." "স্টক আপাতত সব শাখার এক জায়গায়। শাখা অনুযায়ী আলাদা স্টক পরের আপডেটে আসবে।" %}</span></p>
+    </div>
+  </template>
+
+  <template x-if="!loading && closed.length">
+    <section class="panel br-closed">
+      <div class="panel-head"><h3>{% tr "Closed branches" "বন্ধ শাখা" %}</h3><span>{% tr "Old records stay. Reopen any time." "পুরনো হিসাব থেকে যায়। যেকোনো সময় আবার চালু করা যায়।" %}</span></div>
+      <ul><template x-for="b in closed" :key="b.id"><li><span x-text="b.name"></span>
+        <button type="button" class="btn btn-ghost btn-sm" @click="setActive(b, true)">{% tr "Reopen" "আবার চালু" %}</button></li></template></ul>
+    </section>
+  </template>
+
+  {# ───── যোগ / এডিট ───── #}
+  <div class="modal-wrap" x-show="formOpen" x-cloak x-transition.opacity.duration.120ms @click.self="formOpen = false" role="dialog" aria-modal="true" aria-labelledby="bf-title">
+    <form class="modal" @submit.prevent="save()" novalidate>
+      <h2 id="bf-title" x-text="form.id ? L('Edit branch', 'শাখা এডিট') : L('New branch', 'নতুন শাখা')"></h2>
+      <p class="modal-sub" x-show="!form.id && !on">{% tr "Your current shop will become the main branch automatically." "আপনার এখনকার দোকান নিজে থেকেই প্রধান শাখা হয়ে যাবে।" %}</p>
+      <div class="fld" :class="{ 'has-error': fe.name }">
+        <label class="fld-label" for="bf-name">{% tr "Branch name" "শাখার নাম" %} <i>*</i></label>
+        <input id="bf-name" x-ref="bfName" class="in" type="text" maxlength="120" x-model="form.name" @input="fe.name = ''" placeholder="{% tr 'e.g. Uttara shop' 'যেমন: উত্তরা দোকান' %}">
+        <p class="fld-err" x-show="fe.name" x-text="fe.name"></p>
+      </div>
+      <div class="fld"><label class="fld-label" for="bf-addr">{% tr "Address" "ঠিকানা" %}</label>
+        <input id="bf-addr" class="in" type="text" maxlength="255" x-model="form.address"></div>
+      <div class="fld"><label class="fld-label" for="bf-ph">{% tr "Phone" "ফোন" %}</label>
+        <input id="bf-ph" class="in" type="tel" maxlength="20" x-model="form.phone"></div>
+      <p class="modal-err" x-show="formError" x-text="formError"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" @click="formOpen = false" :disabled="saving">{% tr "Cancel" "বাতিল" %}</button>
+        <button type="submit" class="btn btn-primary" :disabled="saving" x-text="saving ? L('Saving…', 'সেভ হচ্ছে…') : (form.id ? L('Save', 'সেভ করুন') : L('Add branch', 'শাখা যোগ করুন'))"></button>
+      </div>
+    </form>
+  </div>
+
+  {# ───── বন্ধ করা ───── #}
+  <div class="modal-wrap" x-show="closing" x-cloak x-transition.opacity.duration.120ms @click.self="closing = null" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h2>{% tr "Close" "বন্ধ করবেন" %} <span x-text="closing && closing.name"></span>?</h2>
+      <p class="modal-sub">{% tr "No new sales can be made there. Its old records stay in reports. You can reopen it later." "সেখানে আর নতুন বিক্রি করা যাবে না। পুরনো হিসাব রিপোর্টে থেকে যাবে। পরে আবার চালু করা যাবে।" %}</p>
+      <p class="modal-err" x-show="closeErr" x-text="closeErr"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" @click="closing = null">{% tr "Keep open" "চালু থাক" %}</button>
+        <button type="button" class="btn btn-danger" @click="setActive(closing, false)">{% tr "Close branch" "শাখা বন্ধ করুন" %}</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" x-show="toast" x-cloak x-transition.opacity role="status" x-text="toast"></div>
+</div>
+{% endblock %}

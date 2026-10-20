@@ -153,7 +153,7 @@ function dashboard(perms) {
       // ① শেষ ৭/৩০ দিনের বিক্রি–কেনা–খরচ (line)
       const col = dark
         ? { sales: '#60a5fa', purchases: '#c4a1ff', expenses: '#fb923c' }
-        : { sales: '#2563eb', purchases: '#7c3aed', expenses: '#c2410c' };
+        : { sales: '#059669', purchases: '#7c3aed', expenses: '#c2410c' };
       const line = (label, data, color, fill) => ({
         label, data, borderColor: color, backgroundColor: color + '22', fill,
         cubicInterpolationMode: 'monotone', borderWidth: 2, pointRadius: t.days > 7 ? 0 : 3, pointHoverRadius: 5,
@@ -192,7 +192,7 @@ function dashboard(perms) {
       const heads = t.expense_by_head || [];
       const palette = dark
         ? ['#60a5fa', '#c4a1ff', '#fb923c', '#4ade80', '#fbbf24', '#22d3ee']
-        : ['#2563eb', '#7c3aed', '#c2410c', '#16a34a', '#d97706', '#0891b2'];
+        : ['#059669', '#7c3aed', '#c2410c', '#16a34a', '#d97706', '#0891b2'];
       const total = heads.reduce((s, h) => s + n(h.total), 0);
       _draw('chart-expense', {
         type: 'doughnut',

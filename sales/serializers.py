@@ -97,11 +97,11 @@ class SaleItemSerializer(serializers.ModelSerializer):
             'sale_mode_id', 'sale_mode_name',
             'quantity', 'sale_quantity', 'base_quantity',
             'unit_price', 'price_type', 'flat_price',
-            'discount', 'discount_type', 'subtotal'
+            'discount', 'discount_type', 'subtotal', 'warranty_months'
         ]
         read_only_fields = [
             'id', 'product_name', 'product_sku', 'sale_mode_name',
-            'base_quantity', 'price_type', 'subtotal'
+            'base_quantity', 'price_type', 'subtotal', 'warranty_months'
         ]
 
     def validate_discount_type(self, value):

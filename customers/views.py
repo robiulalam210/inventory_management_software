@@ -50,33 +50,36 @@ class CustomerViewSet(viewsets.ModelViewSet):
         
         # Only apply expensive annotations for list/detail actions
         if self.action in ['list', 'retrieve', 'summary', 'special_summary']:
+            from django.db.models import OuterRef, Subquery, ExpressionWrapper
+            from django.db.models.functions import Coalesce
+            from .models import CustomerDue
+            D0 = Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
+            money = DecimalField(max_digits=12, decimal_places=2)
+            # বিক্রি-ছাড়া বাকি (বাকি খাতা) — প্রতি customer এর খোলা অংশ, আলাদা subquery তে (sale join এর সাথে গুণ না হয়)
+            manual_sub = (CustomerDue.objects.filter(customer=OuterRef('pk'))
+                          .values('customer')
+                          .annotate(s=Sum(ExpressionWrapper(F('amount') - F('paid_amount'), output_field=money)))
+                          .values('s')[:1])
             queryset = queryset.annotate(
                 sales_count=Count('sale', distinct=True),
                 total_paid_amount=Sum('sale__paid_amount'),
                 total_grand_total=Sum('sale__grand_total'),
-                basic_due_amount=Case(
-                    When(
-                        total_grand_total__isnull=True,
-                        then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
-                    ),
-                    default=F('total_grand_total') - F('total_paid_amount'),
-                    output_field=DecimalField(max_digits=12, decimal_places=2)
-                ),
+                manual_open=Coalesce(Subquery(manual_sub, output_field=money), D0),
+            ).annotate(
+                basic_due_amount=ExpressionWrapper(
+                    Coalesce(F('total_grand_total'), D0) - Coalesce(F('total_paid_amount'), D0) + F('manual_open'),
+                    output_field=money),
+            ).annotate(
                 net_due_amount=Case(
-                    When(
-                        advance_balance__gte=F('total_grand_total') - F('total_paid_amount'),
-                        then=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
-                    ),
-                    default=F('total_grand_total') - F('total_paid_amount') - F('advance_balance'),
-                    output_field=DecimalField(max_digits=12, decimal_places=2)
+                    When(advance_balance__gte=F('basic_due_amount'), then=D0),
+                    default=F('basic_due_amount') - F('advance_balance'),
+                    output_field=money,
                 ),
                 remaining_advance=Case(
-                    When(
-                        advance_balance__gt=F('total_grand_total') - F('total_paid_amount'),
-                        then=F('advance_balance') - (F('total_grand_total') - F('total_paid_amount'))
-                    ),
-                    default=Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
-                )
+                    When(advance_balance__gt=F('basic_due_amount'), then=F('advance_balance') - F('basic_due_amount')),
+                    default=D0,
+                    output_field=money,
+                ),
             )
         
         return queryset
@@ -133,11 +136,17 @@ class CustomerViewSet(viewsets.ModelViewSet):
             from django.db.models import OuterRef, Subquery
             from django.db.models.functions import Coalesce
             from sales.models import Sale
+            from django.db.models import ExpressionWrapper
+            from .models import CustomerDue
+            money = DecimalField(max_digits=12, decimal_places=2)
             due_sub = (Sale.objects.filter(customer=OuterRef('pk'))
                        .values('customer').annotate(s=Sum('due_amount')).values('s')[:1])
-            zero = Value(0, output_field=DecimalField(max_digits=12, decimal_places=2))
+            # বাকি খাতার বিক্রি-ছাড়া বাকিও "বাকি" — না ধরলে শুধু পুরনো বাকি থাকা কাস্টমার "Due" তালিকায় আসত না
+            man_sub = (CustomerDue.objects.filter(customer=OuterRef('pk')).values('customer')
+                       .annotate(s=Sum(ExpressionWrapper(F('amount') - F('paid_amount'), output_field=money))).values('s')[:1])
+            zero = Value(0, output_field=money)
             queryset = queryset.annotate(
-                _sales_due=Coalesce(Subquery(due_sub, output_field=DecimalField(max_digits=12, decimal_places=2)), zero))
+                _sales_due=Coalesce(Subquery(due_sub, output_field=money), zero) + Coalesce(Subquery(man_sub, output_field=money), zero))
             amount_type = amount_type.lower()
             if amount_type == 'advance':
                 queryset = queryset.filter(advance_balance__gt=0)

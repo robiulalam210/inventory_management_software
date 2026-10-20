@@ -66,9 +66,18 @@ class BaseReportView(APIView):
         return data
     
     def handle_exception(self, exc):
-        """Standard exception handling"""
-        logger.error(f"Report error: {str(exc)}", exc_info=True)
+        """
+        লগইন / অনুমতির ভুল আসল status এ ফেরত যায় (401 / 403) — অ্যাপ 401 পেলে token নবায়ন করে।
+        আগে সব কিছু 400 হত, ফলে মেয়াদ শেষ token এ রিপোর্ট খুললে অ্যাপ নিজে ঠিক হত না।
+        শুধু অপ্রত্যাশিত ভুল error log এ যায়।
+        """
+        from rest_framework import exceptions as drf_exc
         from reports.utils import custom_response
+        if isinstance(exc, (drf_exc.NotAuthenticated, drf_exc.AuthenticationFailed)):
+            return super().handle_exception(exc)
+        if isinstance(exc, drf_exc.APIException):
+            return custom_response(False, str(exc.detail) if isinstance(exc.detail, str) else str(exc), None, exc.status_code)
+        logger.error(f"Report error: {str(exc)}", exc_info=True)
         return custom_response(False, str(exc), None, 400)
     
 
@@ -87,7 +96,14 @@ class BaseCompanyViewSet(viewsets.ModelViewSet):
             
         # Check if user has a company
         if hasattr(user, 'company') and user.company:
-            return queryset.filter(company=user.company)
+            queryset = queryset.filter(company=user.company)
+            # শাখা (core/branches.py): যে model এ শাখা আছে (বিক্রি, ক্রয়) সেটা বাছা শাখা অনুযায়ী ছাঁকা
+            # (মালিক বাছলে শুধু তালিকা ছাঁকা হয় — অন্য শাখার ইনভয়েস লিংক থেকে খুললে যেন খোলে; শাখায় বসানো স্টাফের সব কিছুই ছাঁকা)
+            if any(f.name == 'branch' for f in queryset.model._meta.get_fields()):
+                from core.branches import branch_state, filter_qs
+                if getattr(self, 'action', None) == 'list' or branch_state(self.request).get('locked'):
+                    queryset = filter_qs(queryset, 'branch', self.request)
+            return queryset
         else:
             return queryset.none()
 

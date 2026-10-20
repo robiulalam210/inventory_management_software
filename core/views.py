@@ -1,3 +1,4 @@
+from django.http import Http404
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -63,10 +64,30 @@ class CustomLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
+        # ওয়েব লগইনের একই নিয়ম: একই IP + নাম থেকে বারবার ভুল পাসওয়ার্ড → ১৫ মিনিট বন্ধ
+        from web import auth as web_auth
+        ident = str(request.data.get('username') or request.data.get('email') or '').strip().lower()
+        wait = web_auth.locked_minutes(request, ident) if ident else 0
+        if wait:
+            return Response(
+                {'success': False, 'code': 'login_locked',
+                 'message': f'Too many failed attempts. Please try again in {wait} minute{"s" if wait != 1 else ""}.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         serializer = UserLoginSerializer(data=request.data)
 
         if serializer.is_valid():
             user = serializer.validated_data['user']
+            if ident:
+                web_auth.clear_failures(request, ident)
+
+            # কোম্পানি বন্ধ (suspended) থাকলে অ্যাপেও ঢুকতে দেওয়া হয় না — super admin বাদে (web এর নিয়মই)
+            _co = getattr(user, 'company', None)
+            if _co is not None and not _co.is_active and not (user.is_superuser or user.role == 'SUPER_ADMIN'):
+                return Response(
+                    {'success': False, 'code': 'company_suspended',
+                     'message': 'Your company account is suspended. Please contact support.'},
+                    status=status.HTTP_403_FORBIDDEN)
 
             # JWT tokens
             token_serializer = CustomTokenObtainPairSerializer()
@@ -109,6 +130,8 @@ class CustomLoginView(APIView):
 
             return Response(response_data, status=status.HTTP_200_OK)
 
+        if ident:
+            web_auth.register_failure(request, ident)
         return Response(
             {
                 "success": False,
@@ -284,10 +307,13 @@ class UserViewSet(viewsets.ModelViewSet):
         data, errors = team.validate_person(request.data, actor)
         if errors:
             return custom_response(False, "Please fix the highlighted fields.", errors, status.HTTP_400_BAD_REQUEST)
-        if User.objects.filter(company=company, is_active=True).count() >= company.max_users:
+        from core.packages import plan_for
+        _plan = plan_for(company)
+        cap = company.max_users if _plan.legacy else _plan.limit('max_users')   # প্যাকেজ থাকলে প্যাকেজের সীমা
+        if cap and User.objects.filter(company=company, is_active=True).count() >= cap:
             return custom_response(
                 False,
-                f"Your plan allows {company.max_users} active users. Turn someone off first, or ask to raise the limit.",
+                f"Your plan allows {cap} active users. Turn someone off first, or upgrade your package.",
                 None, status.HTTP_400_BAD_REQUEST)
         password = data.pop('password')
         u = User(company=company, is_active=True, **data)
@@ -305,7 +331,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return custom_response(False, "You can't change this person.", None, status.HTTP_403_FORBIDDEN)
         # company, is_superuser, is_staff, permission_source এখান থেকে বদলায় না — শুধু নিচের ঘরগুলো
         allowed = {k: v for k, v in request.data.items()
-                   if k in ('first_name', 'last_name', 'phone', 'username', 'email', 'role', 'password', 'is_active')}
+                   if k in ('first_name', 'last_name', 'phone', 'username', 'email', 'role', 'password', 'is_active', 'branch')}
         data, errors = team.validate_person(allowed, actor, instance=instance)
         if errors:
             return custom_response(False, "Please fix the highlighted fields.", errors, status.HTTP_400_BAD_REQUEST)
@@ -358,9 +384,14 @@ class UserViewSet(viewsets.ModelViewSet):
         qs = self.get_queryset().order_by('-is_active', 'first_name', 'username')
         rows = [T.person_row(u, actor) for u in qs]
         company = actor.company
+        limit = None
+        if company:
+            from core.packages import plan_for
+            _plan = plan_for(company)   # প্যাকেজ থাকলে প্যাকেজের ইউজার-সীমা (0 = আনলিমিটেড → None)
+            limit = company.max_users if _plan.legacy else (_plan.limit('max_users') or None)
         return custom_response(True, f"{len(rows)} people", {
             'results': rows,
-            'limit': company.max_users if company else None,
+            'limit': limit,
             'active': sum(1 for r in rows if r['is_active']),
             'assignable': [r for r in T.ASSIGNABLE if T.can_assign(actor, r)],
             'can_manage_permissions': T.is_admin(actor),
@@ -1377,7 +1408,7 @@ def user_dashboard_stats(request):
                 'total_products': Product.objects.filter(company=company, is_active=True).count(),
                 'total_customers': Customer.objects.filter(company=company, is_active=True).count(),
                 'total_suppliers': Supplier.objects.filter(company=company, is_active=True).count(),
-                'pending_purchases': Purchase.objects.filter(company=company, status='pending').count(),
+                'pending_purchases': Purchase.objects.filter(company=company, payment_status__in=['pending', 'partial']).count(),
                 'due_sales': Sale.objects.filter(company=company, due_amount__gt=0).aggregate(total_due=Sum('due_amount'))['total_due'] or 0,
             }
             
@@ -1421,7 +1452,7 @@ def company_admin_signup(request):
     # (/app/platform/companies/), আর তার এডমিনকে login এর তথ্য দেয়।
     return redirect('web:login')
     if CompanyAdminSignupForm is None:
-        return render(request, 'error.html', {'error': 'Forms module not available'})
+        raise Http404('Not available')  # পুরনো HTML পাতা — ফর্ম নেই
     
     if request.method == 'POST':
         form = CompanyAdminSignupForm(request.POST)
@@ -1473,7 +1504,7 @@ def user_list(request):
 @user_passes_test(lambda u: u.role == User.Role.ADMIN)
 def create_user(request):
     if UserForm is None:
-        return render(request, 'error.html', {'error': 'Forms module not available'})
+        raise Http404('Not available')  # পুরনো HTML পাতা — ফর্ম নেই
     
     if request.method == 'POST':
         form = UserForm(request.POST)
@@ -1491,7 +1522,7 @@ def create_user(request):
 
 def user_management(request):
     if UserCreationForm is None:
-        return render(request, 'error.html', {'error': 'Forms module not available'})
+        raise Http404('Not available')  # পুরনো HTML পাতা — ফর্ম নেই
     
     users = User.objects.all()
     form = UserCreationForm()

@@ -186,6 +186,7 @@ def home_view(request):
                 'sales': can('sales'),
                 'purchases': can('purchases'),
                 'expense': can('expense'),
+                'customers': can('customers'),
             },
         })
 
@@ -562,8 +563,19 @@ def _team_page(request, title, start):
             },
             'is_admin': is_admin(u),
             'me': u.id,
+            # শাখা: ২+ শাখা থাকলেই স্টাফকে শাখায় বসানোর ঘর দেখায় (core/branches.py)
+            'branches': _branch_choices(u),
         },
     })
+
+
+def _branch_choices(u):
+    from core.branches import active_count
+    company = getattr(u, 'company', None)
+    if company is None or active_count(company) < 2:
+        return []
+    from branch_warehouse.models import Branch
+    return [{'id': b.id, 'name': b.name, 'is_main': b.is_main} for b in Branch.objects.filter(company=company, is_active=True)]
 
 
 @web_login_required
@@ -947,6 +959,60 @@ def due_reminders_view(request):
     return render(request, 'web/customers/due_reminders.html', {'page_title': 'Due Reminders'})
 
 
+@web_login_required
+@never_cache
+def khata_view(request):
+    """
+    বাকি খাতা — TallyKhata / Khatabook ধরনের সহজ খাতা:
+      • উপরে "মোট পাবো" (সবার বাকি একসাথে), আজ কত আদায় হলো
+      • কাস্টমারের তালিকা — কার কাছে কত পাবো / কে অগ্রিম দিয়েছে
+      • একজনকে খুললে: লেনদেনের খাতা (চলমান বাকি সহ), এক চাপে "টাকা পেলাম", "বাকিতে বিক্রি", WhatsApp/SMS তাগাদা
+
+    নতুন কোনো হিসাব-নিয়ম নেই — সব কাজ পুরনো API দিয়েই:
+      বাকির তালিকা   /api/reports/customer-due-reminders/   (Due Reminders পেজের একই হিসাব)
+      খাতা           /api/reports/customer-ledger/           (Customer Ledger রিপোর্টের একই হিসাব)
+      টাকা পেলাম     POST /api/money-receipts/               (Money Receipt এর একই পথ → Transaction → Account)
+    তাই এখানে যা দেখায়, Customers / Reports / Money Receipt পেজেও ঠিক তাই দেখাবে।
+    """
+    u = request.user
+    if not has_perm(u, 'customers', 'view'):
+        return forbidden(request, 'Baki Khata')
+    company = getattr(u, 'company', None)
+    init = {
+        'me': {'id': u.id, 'name': u.get_full_name() or u.username},
+        'shop': {'name': getattr(company, 'name', '') or '', 'phone': getattr(company, 'phone', '') or ''},
+        'perms': {
+            'collect': has_perm(u, 'money_receipt', 'create'),
+            'receipts': has_perm(u, 'money_receipt', 'view'),
+            'sell': has_perm(u, 'sales', 'create'),
+            'create': has_perm(u, 'customers', 'create'),
+            'ledger': has_perm(u, 'reports', 'view'),
+            'sales': has_perm(u, 'sales', 'view'),
+            'due_create': has_perm(u, 'customers', 'create'),
+            'due_delete': has_perm(u, 'customers', 'delete'),
+        },
+        'urls': {
+            'sale': reverse('web:sale_new'),
+            'receipts': reverse('web:receipts'),
+            'customers': reverse('web:customers'),
+        },
+        'open': request.GET.get('c') or None,
+    }
+    return render(request, 'web/customers/khata.html', {'page_title': 'Baki Khata', 'khata_init': init})
+
+
+@web_login_required
+@never_cache
+def warranty_view(request):
+    """
+    Warranty Check — কাস্টমার পণ্য নিয়ে এলে ইনভয়েস নং / ফোন / পণ্যের নাম দিয়ে খুঁজে দেখা ওয়ারেন্টি আছে কিনা,
+    কবে শেষ। API: /api/reports/warranty/ (reports/warranty_views.py)
+    """
+    if not has_perm(request.user, 'sales', 'view'):
+        return forbidden(request, 'Warranty Check')
+    return render(request, 'web/sales/warranty.html', {'page_title': 'Warranty Check'})
+
+
 REPORT_TITLES = {
     'sales': 'Sales Report', 'purchases': 'Purchase Report', 'profit-loss': 'Profit / Loss',
     'top-products': 'Top Selling Products', 'low-stock': 'Low Stock', 'stock': 'Stock Report',
@@ -985,9 +1051,11 @@ def register_view(request):
     ctx['values'] = {k: (post.get(k) or '').strip() for k in
                      ('company_name', 'phone', 'address', 'first_name', 'last_name', 'username', 'email')}
 
-    # spam: লুকানো ঘর ভরা থাকলে (bot) চুপচাপ ফিরিয়ে দিই
-    if post.get('website_url'):
-        return redirect('web:login')
+    # spam: লুকানো ঘর ভরা থাকলে (bot)। ঘরের নাম এমন রাখা যাতে browser এর autofill ভরে না দেয়,
+    # আর ভরা থাকলেও চুপচাপ ফেরত না দিয়ে পরিষ্কার জানাই — নইলে আসল মানুষ বুঝতেই পারে না কী হলো।
+    if post.get('hp_ref'):
+        ctx['error'] = 'Could not complete the sign-up. Please reload the page and try again.'
+        return render(request, 'web/auth/register.html', ctx, status=400)
 
     key = f'web-register:{_client_ip(request)}'
     attempts = cache.get(key, 0)
@@ -1018,6 +1086,8 @@ def register_view(request):
     cdata['is_active'] = True
     with transaction.atomic():
         company = Company(**cdata)
+        from core.packages import start_trial
+        start_trial(company)              # ফ্রি ট্রায়াল প্যাকেজ (সব মডিউল, অল্প সীমা) + মেয়াদ
         company.save()
         admin = _create_admin(company, adata, None)
         _seed(company, admin)
@@ -1053,3 +1123,135 @@ def exit_company_view(request):
     from core.middleware import PLATFORM_VIEW_SESSION_KEY
     request.session.pop(PLATFORM_VIEW_SESSION_KEY, None)
     return redirect('web:platform_companies')
+
+
+@web_login_required
+@never_cache
+def package_view(request):
+    """
+    আমার প্যাকেজ — দোকানের মালিক নিজে দেখেন: কোন প্যাকেজ, কবে শেষ, কতটা ব্যবহার হলো (সীমার বার),
+    কোন মডিউল আছে / নেই, আর অন্য প্যাকেজের তুলনা + WhatsApp এ আপগ্রেডের অনুরোধ।
+    টাকা নেওয়া হয় হাতে (bKash/নগদ) — Super Admin তারপর Companies পেজ থেকে মেয়াদ/প্যাকেজ বদলান।
+    """
+    from urllib.parse import quote
+    from core.models import Package, PlatformSetting
+    from core.packages import FEATURES, LIMITS, plan_for, usage
+
+    company = getattr(request.user, 'company', None)
+    if company is None:
+        return redirect('web:home')
+    plan = plan_for(company)
+    ps = PlatformSetting.get()
+    used = usage(company)
+    from .templatetags.web_tags import current_lang
+    bn = current_lang(request) == 'bn'
+    limits = []
+    for k, (en, b) in LIMITS.items():
+        if k == 'max_branches':
+            continue
+        lim = plan.limit(k)
+        u = used.get(k, 0)
+        limits.append({'key': k, 'label': b if bn else en, 'used': u, 'max': lim,
+                       'pct': min(100, round(u * 100 / lim)) if lim else 0,
+                       'near': bool(lim) and u >= lim * 0.8, 'full': bool(lim) and u >= lim})
+    features = [{'key': k, 'label': (v[1] if bn else v[0]), 'on': plan.has(k)} for k, v in FEATURES.items()]
+    wa = ''.join(ch for ch in (ps.sales_whatsapp or '') if ch.isdigit())
+    if wa.startswith('0'):
+        wa = '88' + wa
+
+    def wa_link(pkg_name=None, term=''):
+        if not wa:
+            return ''
+        text = f'আসসালামু আলাইকুম। আমার দোকান: {company.name}। ' + (
+            f'আমি "{pkg_name}" প্যাকেজ{term} নিতে চাই।' if pkg_name else 'আমি প্যাকেজ নবায়ন করতে চাই।')
+        return f'https://wa.me/{wa}?text={quote(text)}'
+
+    packages = []
+    for p in Package.objects.filter(is_active=True, is_public=True).order_by('sort', 'id'):
+        fs = set(p.features or [])
+        name = (p.name_bn or p.name) if bn else p.name
+        packages.append({
+            'code': p.code, 'name': name, 'desc': p.description,
+            'price_month': p.price_month, 'price_year': p.price_year, 'is_trial': p.is_trial, 'trial_days': p.trial_days,
+            'current': plan.package is not None and plan.package.pk == p.pk,
+            # বিক্রির সীমা: মোট-এ সীমা থাকলে (যেমন ট্রায়াল) সেটাই দেখাই, নইলে মাসিক
+            'limits': [((LIMITS[k][1] if bn else LIMITS[k][0]), getattr(p, k))
+                       for k in ('max_users', 'max_products', 'max_customers',
+                                 'max_sales_total' if p.max_sales_total else 'max_sales_month', 'max_branches')],
+            'features': [(v[1] if bn else v[0]) for k, v in FEATURES.items() if k in fs and not v[2]],
+            'wa': '' if p.is_trial else wa_link(name, ' (মাসিক)'),
+            'wa_year': '' if p.is_trial else wa_link(name, ' (বাৎসরিক)'),
+        })
+        # বাৎসরিক অফার: পাশে "মাসিক দামে ১২ মাস" কেটে দেখাই — আসল তুলনা, বানানো দাম নয়
+        pm, py = float(p.price_month or 0), float(p.price_year or 0)
+        full = pm * 12
+        if pm and py and py < full:
+            packages[-1].update({'year_full': full, 'year_save': full - py,
+                                 'year_pct': round((full - py) * 100 / full),
+                                 'months_free': round((full - py) / pm),
+                                 'year_per_month': round(py / 12)})
+    # কার্ডে লম্বা তালিকা না দিয়ে: ট্রায়াল → "সব মডিউল"; বাকিগুলো → "<আগের প্যাকেজ> এর সব, সাথে:" + শুধু নতুনগুলো
+    n_extra = sum(1 for v in FEATURES.values() if not v[2])
+    prev_full = None
+    for p in packages:
+        full = list(p['features'])
+        p['all'] = len(full) >= n_extra
+        p['plus_of'] = None
+        if not p['is_trial']:
+            if prev_full is not None:
+                p['plus_of'] = prev_full[0]
+                p['features'] = [f for f in full if f not in prev_full[1]]
+            prev_full = (p['name'], full)
+    locked = request.GET.get('f')
+    pkg_name = ''
+    if plan.package is not None:
+        pkg_name = (plan.package.name_bn or plan.package.name) if bn else plan.package.name
+    return render(request, 'web/package.html', {
+        'page_title': 'My package',
+        'plan': plan, 'pkg_name': pkg_name,
+        'limits': limits, 'features': features, 'packages': packages,
+        'renew_wa': wa_link(), 'sales_phone': ps.sales_phone, 'payment_note': ps.payment_note,
+        'locked_label': (FEATURES[locked][1] if bn else FEATURES[locked][0]) if locked in FEATURES else '',
+        'grace_days': ps.grace_days,
+    })
+
+
+@web_login_required
+@never_cache
+def branches_view(request):
+    """
+    শাখা — একাধিক দোকান/জায়গা থাকলে। ১টা শাখা থাকলে সফটওয়্যারের কোথাও শাখা দেখায় না; এখান থেকে
+    দ্বিতীয় শাখা যোগ করলে তবেই ওপরে শাখা বাছাই, স্টাফকে শাখায় বসানো আর রিপোর্টে শাখা আসে।
+    API: /api/branches/ (branch_warehouse/views.py) · নিয়ম: core/branches.py · সীমা: প্যাকেজের max_branches
+    """
+    user = request.user
+    if not (user.is_superuser or getattr(user, 'role', '') in ('ADMIN', 'SUPER_ADMIN')) or not getattr(user, 'company', None):
+        return forbidden(request, 'Branches')
+    from core.packages import plan_for
+    plan = plan_for(user.company)
+    return render(request, 'web/admin/branches.html', {
+        'page_title': 'Branches',
+        'br_init': {'limit': 0 if plan.legacy else plan.limit('max_branches'),
+                    'package_url': reverse('web:package'), 'staff_url': reverse('web:staff')},
+    })
+
+
+@web_login_required
+@never_cache
+def stock_transfers_view(request):
+    """
+    শাখায় মাল পাঠানো — এক শাখা থেকে কমে আরেক শাখায় যোগ, মোট স্টক একই থাকে।
+    API: /api/branches/transfers/, /api/branches/stock/ (branch_warehouse/views.py)
+    শুধু ২+ শাখা চালু থাকলে (অন্যদের মেনুতেই আসে না)।
+    """
+    user = request.user
+    company = getattr(user, 'company', None)
+    if company is None or not (has_perm(user, 'products', 'edit') or getattr(user, 'role', '') in ('ADMIN', 'SUPER_ADMIN')):
+        return forbidden(request, 'Send stock')
+    from core.branches import active_count
+    if active_count(company) < 2:
+        return redirect('web:branches')
+    return render(request, 'web/admin/stock_transfers.html', {
+        'page_title': 'Send stock',
+        'st_init': {'own_branch': getattr(user, 'branch_id', None), 'current': getattr(request, 'dk_branch', {}) and request.dk_branch.get('id')},
+    })

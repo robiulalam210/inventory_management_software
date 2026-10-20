@@ -90,8 +90,10 @@
                   <span class="sub txt-ok" x-show="r.discount_applied" x-text="'Sale ' + taka(r.final_price)"></span>
                 </td>
                 <td class="num" data-k="Due">
-                  <b :class="stockCls(r)" x-text="num(r.stock_qty) + ' ' + unitOf(r)"></b>
-                  <span class="sub" x-show="Number(r.stock_qty) > 0 && Number(r.stock_qty) <= Number(r.alert_quantity)" x-text="'Alert at ' + num(r.alert_quantity)"></span>
+                  <b :class="stockCls(r)" x-text="num(qty(r)) + ' ' + unitOf(r)"></b>
+                  <span class="sub" x-show="!branchLine(r) && qty(r) > 0 && qty(r) <= Number(r.alert_quantity)" x-text="'Alert at ' + num(r.alert_quantity)"></span>
+                  <span class="sub br-line" x-show="branchLine(r)" x-text="branchLine(r)"></span>
+                  <span class="sub" x-show="bs.enabled && curBranch" x-text="'All branches ' + num(r.stock_qty)"></span>
                 </td>
                 <td class="c" data-k="Status"><span class="pill" :class="badge(r).cls" x-text="badge(r).label"></span></td>
               </tr>
@@ -149,6 +151,7 @@
                 <p><span>Category</span><b x-text="(sel.category_info && sel.category_info.name) || '—'"></b></p>
                 <p><span>Unit</span><b x-text="(sel.unit_info && sel.unit_info.name) || '—'"></b></p>
                 <p x-show="sel.brand_info"><span>Brand</span><b x-text="sel.brand_info && sel.brand_info.name"></b></p>
+                <p x-show="Number(sel.warranty_months) > 0"><span>Warranty</span><b x-text="sel.warranty_months + (Number(sel.warranty_months) === 1 ? ' month' : ' months')"></b></p>
               </div>
             </div>
 
@@ -159,8 +162,20 @@
               <div><span>Profit / unit</span><b :class="margin(sel).amount < 0 ? 'txt-due' : 'txt-ok'" x-text="taka(margin(sel).amount)"></b>
                 <small x-text="margin(sel).pct + '% margin'"></small></div>
               <div class="is-due" :class="{ 'is-zero': stockState(sel) === 'in', 'is-warn': stockState(sel) === 'low' }">
-                <span>In stock</span><b x-text="num(sel.stock_qty) + ' ' + unitOf(sel)"></b><small x-text="'Alert at ' + num(sel.alert_quantity)"></small></div>
+                <span>In stock</span><b x-text="num(qty(sel)) + ' ' + unitOf(sel)"></b><small x-text="'Alert at ' + num(sel.alert_quantity)"></small></div>
             </div>
+
+            {# শাখা অনুযায়ী স্টক — শুধু ২+ শাখার দোকানে #}
+            <template x-if="branchRows(sel).length">
+              <div class="pd-branches">
+                <div class="pd-branches-head"><b>{% tr "Stock by branch" "শাখা অনুযায়ী স্টক" %}</b>
+                  <a href="{% url 'web:stock_transfers' %}" class="link-btn">{% tr "Send stock" "মাল পাঠান" %} →</a></div>
+                <template x-for="b in branchRows(sel)" :key="b.id">
+                  <div class="pd-branch-row"><span x-text="b.name"></span>
+                    <b :class="b.qty <= 0 ? 'txt-due' : (b.qty <= Number(sel.alert_quantity) ? 'txt-warn' : '')" x-text="num(b.qty) + ' ' + unitOf(sel)"></b></div>
+                </template>
+              </div>
+            </template>
 
             <div class="pd-note" x-show="sel.discount_applied">
               {% icon "sparkle" 16 %}<span x-text="'Discount on: ' + (sel.discount_type === 'percentage' ? Number(sel.discount_value) + '% off' : taka(sel.discount_value) + ' off') + '. It is applied automatically in Sale and POS.'"></span>
@@ -239,6 +254,11 @@
         <div class="fld">
           <label class="fld-label" for="pf-alert">Alert me when stock reaches</label>
           <input id="pf-alert" class="in" type="text" inputmode="numeric" x-model="form.alert_quantity" @input="form.alert_quantity = form.alert_quantity.replace(/[^0-9]/g, '')" placeholder="5">
+        </div>
+        <div class="fld">
+          <label class="fld-label" for="pf-warranty">Warranty (months)</label>
+          <input id="pf-warranty" class="in" type="text" inputmode="numeric" x-model="form.warranty_months" @input="form.warranty_months = form.warranty_months.replace(/[^0-9]/g, '').slice(0, 3)" placeholder="0">
+          <p class="fld-hint">Leave empty if there is no warranty. Each sale keeps the warranty it was sold with.</p>
         </div>
       </div>
 

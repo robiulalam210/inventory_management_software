@@ -19,11 +19,16 @@ MENU = [
     {'title': 'Dashboard', 'icon': 'dashboard', 'items': [
         {'title': 'My Dashboard', 'url': 'web:home', 'perm': ('dashboard', 'view'), 'slug': 'dashboard'},
     ]},
+    # দোকান খাতা — বাকির খাতা (TallyKhata ধরনের): কার কাছে কত পাবো, টাকা পেলাম, বাকিতে বিক্রি, তাগাদা
+    {'title': 'Baki Khata', 'icon': 'book', 'feature': True, 'items': [
+        {'title': 'Baki Khata', 'url': 'web:khata', 'perm': ('customers', 'view'), 'slug': 'khata'},
+    ]},
     {'title': 'Sales', 'icon': 'cart', 'items': [
         {'title': 'Sale', 'url': 'web:sale_new', 'perm': ('sales', 'create'), 'slug': 'sale'},
         {'title': 'POS Sale', 'url': 'web:pos', 'perm': ('sales', 'create'), 'slug': 'pos-sale'},
         {'title': 'Short Sale', 'url': 'web:short_sale', 'perm': ('sales', 'create'), 'slug': 'short-sale'},
         {'title': 'Sale List', 'url': 'web:sales', 'perm': SALES_VIEW, 'slug': 'sale-list'},
+        {'title': 'Warranty Check', 'url': 'web:warranty', 'perm': SALES_VIEW, 'slug': 'warranty'},
     ]},
     {'title': 'Online Shop', 'icon': 'cart', 'items': [
         {'title': 'Online Orders', 'url': 'web:shop_orders', 'perm': ('sales', 'view'), 'slug': 'online-orders'},
@@ -76,6 +81,8 @@ MENU = [
     ]},
     {'title': 'Administration', 'icon': 'settings', 'items': [
         {'title': 'Staff', 'url': 'web:staff', 'perm': ('users', 'view'), 'slug': 'staff'},
+        {'title': 'Branches', 'url': 'web:branches', 'roles': ('SUPER_ADMIN', 'ADMIN'), 'slug': 'branches'},
+        {'title': 'Send stock', 'url': 'web:stock_transfers', 'perm': ('products', 'edit'), 'slug': 'stock-transfers'},
         {'title': 'Source', 'url': 'web:sources', 'perm': ('administration', 'view'), 'slug': 'sources'},
         {'title': 'Unit', 'url': 'web:units', 'perm': ('administration', 'view'), 'slug': 'units'},
         {'title': 'Brand', 'url': 'web:brands', 'perm': ('administration', 'view'), 'slug': 'brands'},
@@ -128,6 +135,44 @@ def build_menu(user, current_path=''):
     # তার নিজের কোনো দোকান নেই — unit/category/product ইত্যাদি বানানোর জায়গা নেই। শুধু কোম্পানি চালানো ও সব কোম্পানির Audit দেখা।
     platform_slugs = {'platform-companies', 'audit-log'}
 
+    # প্যাকেজে নেই এমন মডিউল menu তে থাকে, কিন্তু 🔒 সহ — ক্লিক করলে "আমার প্যাকেজ" পেজ (কী পাওয়া যায় দেখতে পারে)
+    plan = None
+    if getattr(user, 'company_id', None):
+        try:
+            from core.packages import plan_for
+            plan = plan_for(user.company)
+            if plan.legacy:
+                plan = None
+        except Exception:  # noqa: BLE001
+            plan = None
+    from core.package_gate import feature_for_web
+
+    # "শাখা" মেনু শুধু তাদের জন্য যারা শাখা নিয়ে কাজ করবে: প্যাকেজে ২+ শাখার অনুমতি আছে, বা আগে থেকেই শাখা আছে।
+    # সাধারণ এক-দোকানের মালিক এটা দেখেনই না।
+    show_branches = False
+    company = getattr(user, 'company', None)
+    if company is not None:
+        try:
+            from branch_warehouse.models import Branch
+            if Branch.objects.filter(company=company).exists():
+                show_branches = True
+            elif plan is None:     # পুরনো (প্যাকেজ ছাড়া) কোম্পানি — কোম্পানির নিজের শাখা-সীমা
+                show_branches = (company.max_branches or 0) > 1
+            else:
+                lim = plan.limit('max_branches')
+                show_branches = lim == 0 or lim > 1
+        except Exception:  # noqa: BLE001
+            show_branches = False
+
+    # "মাল পাঠানো" শুধু যখন সত্যিই ২+ শাখা চালু (শাখা-স্টক চলছে)
+    show_transfers = False
+    if company is not None and show_branches:
+        try:
+            from core.branches import active_count
+            show_transfers = active_count(company) >= 2
+        except Exception:  # noqa: BLE001
+            show_transfers = False
+
     sections = []
     for section in MENU:
         items = []
@@ -136,14 +181,24 @@ def build_menu(user, current_path=''):
                 continue
             if not _allowed(item, perms, role):
                 continue
+            if item.get('slug') == 'branches' and not show_branches:
+                continue
+            if item.get('slug') == 'stock-transfers' and not show_transfers:
+                continue
             if item['url']:
                 href, ready = reverse(item['url']), True
             else:
                 href, ready = reverse('web:soon', args=[item['slug']]), False
+            locked = False
+            if plan is not None and item['url']:
+                feat = feature_for_web(item['url'].split(':')[-1])
+                if feat and not plan.has(feat):
+                    locked, href = True, reverse('web:package') + '?f=' + feat
             items.append({
                 'title': item['title'],
                 'href': href,
                 'ready': ready,
+                'locked': locked,
                 'slug': item['slug'],
                 'active': current_path.rstrip('/') == href.rstrip('/'),
             })
@@ -154,6 +209,8 @@ def build_menu(user, current_path=''):
                 'title': section['title'],
                 'icon': section['icon'],
                 'items': items,
+                'feature': bool(section.get('feature')),
+                'locked': all(i['locked'] for i in items),
                 'open': any(i['active'] for i in items),
             })
     if not any(i['active'] for sec in sections for i in sec['items']):
@@ -162,7 +219,7 @@ def build_menu(user, current_path=''):
         for sec in sections:
             for i in sec['items']:
                 h = i['href'].rstrip('/') + '/'
-                if i['ready'] and h != reverse('web:home') and cur.startswith(h) and (not best or len(h) > len(best[1]['href'])):
+                if i['ready'] and not i.get('locked') and h != reverse('web:home') and cur.startswith(h) and (not best or len(h) > len(best[1]['href'])):
                     best = (sec, i)
         if best:
             best[1]['active'] = True

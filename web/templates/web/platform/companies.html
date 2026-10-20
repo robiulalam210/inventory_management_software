@@ -9,6 +9,29 @@
 <div x-data="platformCompanies(JSON.parse(document.getElementById('pf-plans').textContent))"
      @company-new.window="openNew()" @keydown.escape.window="escape()">
 
+  <section class="kpis" x-show="summary" x-cloak aria-label="All companies at a glance">
+    <article class="kpi" style="--c:var(--blue)">
+      <header><span class="kpi-ic">{% icon "building" 16 %}</span>Companies</header>
+      <div class="kpi-val" x-text="summary ? summary.companies : 0"></div>
+      <p x-text="summary ? ('+' + summary.new_7d + ' new this week') : ''"></p>
+    </article>
+    <article class="kpi" style="--c:var(--green)">
+      <header><span class="kpi-ic">{% icon "check" 16 %}</span>Working today</header>
+      <div class="kpi-val" x-text="summary ? summary.working_today : 0"></div>
+      <p x-text="summary ? (summary.never_used + ' not started yet') : ''"></p>
+    </article>
+    <article class="kpi" style="--c:var(--amber)">
+      <header><span class="kpi-ic">{% icon "alert" 16 %}</span>Idle (2+ weeks)</header>
+      <div class="kpi-val" x-text="summary ? summary.idle : 0"></div>
+      <p x-text="'Worth a call'"></p>
+    </article>
+    <article class="kpi" style="--c:var(--violet)">
+      <header><span class="kpi-ic">{% icon "cart" 16 %}</span>Sales today</header>
+      <div class="kpi-val" x-text="summary ? App.taka(summary.sales_today_total) : ''"></div>
+      <p x-text="summary ? (summary.sales_today_count + ' invoices · ' + summary.sales_7d_count + ' this week') : ''"></p>
+    </article>
+  </section>
+
   <section class="panel filters">
     <div class="f-row">
       <label class="f-search">
@@ -37,7 +60,7 @@
     <template x-if="!error">
       <div>
         <table class="dt pf-table" :class="{ 'is-loading': loading }">
-          <thead><tr><th>Company</th><th class="hide-md">Admin</th><th class="hide-md">Plan</th><th class="hide-md">Users</th><th>Subscription</th><th class="hide-md">Activity</th><th class="c">Status</th></tr></thead>
+          <thead><tr><th>Company</th><th class="hide-md">Admin</th><th class="hide-md">Package</th><th class="hide-md">Users</th><th>Subscription</th><th class="hide-md">Activity</th><th class="c">Status</th></tr></thead>
           <tbody>
             <template x-for="r in rows" :key="r.id">
               <tr tabindex="0" @click="open(r)" @keydown.enter="open(r)" :aria-label="'Open ' + r.name" :class="{ 'is-void': r.state === 'suspended' }">
@@ -49,8 +72,8 @@
                 </td>
                 <td class="hide-md" data-k="Admin"><template x-if="r.admin"><span><span x-text="r.admin.name"></span><span class="sub" x-text="r.admin.username"></span></span></template>
                   <span class="muted" x-show="!r.admin">No admin yet</span></td>
-                <td class="hide-md" data-k="Plan" x-text="planLabel(r.plan_type)"></td>
-                <td class="hide-md" data-k="Users"><span x-text="r.active_user_count + ' / ' + r.max_users"></span><span class="sub" x-text="r.product_count + ' products'"></span></td>
+                <td class="hide-md" data-k="Package"><span x-text="r.package_name"></span><span class="sub" x-show="r.package_state === 'readonly' || r.package_state === 'grace'" x-text="stateLabel(r.package_state)"></span></td>
+                <td class="hide-md" data-k="Users"><span x-text="r.active_user_count + ' / ' + (r.user_limit || '∞')"></span><span class="sub" x-text="r.product_count + ' products'"></span></td>
                 <td data-k="Subscription"><span x-text="date(r.expiry_date)"></span><span class="sub" :class="{ 'txt-due': r.days_left != null && r.days_left <= 7 }" x-text="left(r)"></span></td>
                 <td class="hide-md" data-k="Activity">
                   <span class="pill" :class="{ 'st-paid': r.activity === 'busy', 'st-low': r.activity === 'quiet', 'st-pending': r.activity === 'idle', 'st-off': r.activity === 'new' }"
@@ -114,7 +137,8 @@
             <section class="pf-card">
               <div class="pf-card-h"><h3>Subscription</h3><span class="pf-code" title="Company code" x-text="sel.company_code"></span></div>
               <div class="pf-sub">
-                <div><span>Plan</span><b x-text="planLabel(sel.plan_type)"></b></div>
+                <div><span>Package</span><b><span x-text="sel.package_name"></span> <span class="pill sm st-low" x-show="sel.custom_features || (sel.custom_limits && Object.keys(sel.custom_limits).length) || sel.custom_price != null">Custom</span></b>
+                  <small><span x-text="stateLabel(sel.package_state)"></span><template x-if="sel.custom_price != null"><span> · ৳<span x-text="Number(sel.custom_price)"></span> / <span>month</span></span></template></small></div>
                 <div><span>Started</span><b x-text="date(sel.start_date)"></b></div>
                 <div><span>Ends</span><b x-text="date(sel.expiry_date)"></b><small :class="{ 'txt-due': sel.days_left != null && sel.days_left <= 7 }" x-text="left(sel)"></small></div>
               </div>
@@ -125,11 +149,11 @@
                 <button type="button" class="chip" @click="extend(12)" :disabled="busy">1 year</button>
               </div>
               <div class="pf-limits">
-                <div><span>Users</span><b x-text="sel.active_user_count + ' of ' + sel.max_users"></b>
-                  <i><em :style="'width:' + Math.min(100, sel.active_user_count / Math.max(1, sel.max_users) * 100) + '%'"></em></i></div>
-                <div><span>Products</span><b x-text="sel.product_count + ' of ' + sel.max_products"></b>
-                  <i><em :style="'width:' + Math.min(100, sel.product_count / Math.max(1, sel.max_products) * 100) + '%'"></em></i></div>
-                <div><span>Branches</span><b x-text="'Up to ' + sel.max_branches"></b></div>
+                <div><span>Users</span><b x-text="sel.active_user_count + ' of ' + (sel.user_limit || '∞')"></b>
+                  <i><em :style="'width:' + Math.min(100, (sel.user_limit ? sel.active_user_count / sel.user_limit * 100 : 0)) + '%'"></em></i></div>
+                <div><span>Products</span><b x-text="sel.product_count + ' of ' + (sel.product_limit || '∞')"></b>
+                  <i><em :style="'width:' + Math.min(100, (sel.product_limit ? sel.product_count / sel.product_limit * 100 : 0)) + '%'"></em></i></div>
+                <div><span>Branches</span><b x-text="sel.branch_limit ? 'Up to ' + sel.branch_limit : 'Unlimited'"></b></div>
               </div>
             </section>
 
@@ -223,12 +247,17 @@
           <div class="fld"><label class="fld-label" for="pc-web">Website</label><input id="pc-web" class="in" type="text" maxlength="200" x-model="c.website" placeholder="example.com"></div>
         </div>
 
-        <h4 class="pf-sec">Plan & subscription</h4>
+        <h4 class="pf-sec">Package & subscription</h4>
         <div class="fld">
-          <div class="seg seg-fill" role="radiogroup" aria-label="Plan">
-            <template x-for="p in plans" :key="p.value">
-              <button type="button" role="radio" :aria-checked="(c.plan_type === p.value).toString()" :class="{ 'is-on': c.plan_type === p.value }" @click="c.plan_type = p.value" x-text="p.label"></button>
+          <div class="pkg-pick" role="radiogroup" aria-label="Package">
+            <template x-for="p in packages" :key="p.code">
+              <button type="button" role="radio" class="pkg-opt" :aria-checked="String(c.package === p.code)" :class="{ 'is-on': c.package === p.code }" @click="pickPackage(p.code)">
+                <b x-text="p.name"></b><small x-text="p.is_trial ? p.trial_days + ' days free' : '৳' + p.price_month + ' / month'"></small>
+              </button>
             </template>
+            <button type="button" role="radio" class="pkg-opt is-legacy" :aria-checked="String(!c.package)" :class="{ 'is-on': !c.package }" @click="c.package = ''">
+              <b>Legacy</b><small>No limits (old setup)</small>
+            </button>
           </div>
         </div>
         <div class="fld" :class="{ 'has-error': fe.company.expiry_date }">
@@ -240,16 +269,51 @@
             <button type="button" class="chip" @click="setExpiry(12)">1 year</button>
           </div>
           <p class="fld-err" x-show="fe.company.expiry_date" x-text="fe.company.expiry_date"></p>
-          <p class="fld-hint" x-show="!fe.company.expiry_date">After this date nobody from the company can sign in until you extend it.</p>
+          <p class="fld-hint" x-show="!fe.company.expiry_date && c.package">After this date they get a short grace period, then the shop becomes view-only until you extend it. Nothing is deleted.</p>
+          <p class="fld-hint" x-show="!fe.company.expiry_date && !c.package">After this date nobody from the company can sign in until you extend it.</p>
         </div>
-        <div class="pf-lims">
-          <div class="fld" :class="{ 'has-error': fe.company.max_users }"><label class="fld-label" for="pc-mu">Max users</label>
-            <input id="pc-mu" class="in" type="number" min="1" x-model="c.max_users" @input="fe.company.max_users = ''"><p class="fld-err" x-show="fe.company.max_users" x-text="fe.company.max_users"></p></div>
-          <div class="fld" :class="{ 'has-error': fe.company.max_products }"><label class="fld-label" for="pc-mp">Max products</label>
-            <input id="pc-mp" class="in" type="number" min="1" x-model="c.max_products" @input="fe.company.max_products = ''"><p class="fld-err" x-show="fe.company.max_products" x-text="fe.company.max_products"></p></div>
-          <div class="fld" :class="{ 'has-error': fe.company.max_branches }"><label class="fld-label" for="pc-mb">Max branches</label>
-            <input id="pc-mb" class="in" type="number" min="1" x-model="c.max_branches" @input="fe.company.max_branches = ''"><p class="fld-err" x-show="fe.company.max_branches" x-text="fe.company.max_branches"></p></div>
-        </div>
+
+        <template x-if="c.package">
+          <div class="pkg-custom">
+            <label class="switch">
+              <input type="checkbox" :checked="c.custom_on" @change="toggleCustom()">
+              <span class="switch-ui" aria-hidden="true"></span>
+              <span><b>Choose modules for this shop</b><small>For a shop that pays less and needs fewer modules. Sales, Baki Khata and Products are always on.</small></span>
+            </label>
+            <div class="pkg-feats" x-show="c.custom_on" x-cloak>
+              <template x-for="f in featureList" :key="f.key">
+                <label class="pkg-feat" :class="{ 'is-core': f.core }">
+                  <input type="checkbox" :checked="f.core || hasFeat(f.key)" :disabled="f.core" @change="toggleFeat(f)">
+                  <span x-text="f.label"></span>
+                </label>
+              </template>
+            </div>
+            <p class="fld-label" style="margin-top:14px">Limits for this shop <small class="fld-hint" style="display:inline">— leave empty to use the package, 0 = unlimited</small></p>
+            <div class="pf-lims pkg-lims">
+              <template x-for="l in limitList" :key="l.key">
+                <div class="fld"><label class="fld-label" x-text="l.label"></label>
+                  <input class="in" type="number" min="0" :placeholder="pkgLimit(l.key)" :value="c.custom_limits[l.key] ?? ''" @input="c.custom_limits[l.key] = $event.target.value"></div>
+              </template>
+            </div>
+            <div class="fld-row">
+              <div class="fld" :class="{ 'has-error': fe.company.custom_price }"><label class="fld-label" for="pc-price">Price for this shop (৳ / month)</label>
+                <input id="pc-price" class="in" type="number" min="0" x-model="c.custom_price" :placeholder="pkgOf(c.package) ? String(pkgOf(c.package).price_month) : ''">
+                <p class="fld-err" x-show="fe.company.custom_price" x-text="fe.company.custom_price"></p></div>
+              <div class="fld"><label class="fld-label" for="pc-note">Note</label>
+                <input id="pc-note" class="in" type="text" maxlength="255" x-model="c.package_note" placeholder="e.g. Paid by bKash, ref 4821"></div>
+            </div>
+          </div>
+        </template>
+        <template x-if="!c.package">
+          <div class="pf-lims">
+            <div class="fld" :class="{ 'has-error': fe.company.max_users }"><label class="fld-label" for="pc-mu">Max users</label>
+              <input id="pc-mu" class="in" type="number" min="1" x-model="c.max_users" @input="fe.company.max_users = ''"><p class="fld-err" x-show="fe.company.max_users" x-text="fe.company.max_users"></p></div>
+            <div class="fld" :class="{ 'has-error': fe.company.max_products }"><label class="fld-label" for="pc-mp">Max products</label>
+              <input id="pc-mp" class="in" type="number" min="1" x-model="c.max_products" @input="fe.company.max_products = ''"><p class="fld-err" x-show="fe.company.max_products" x-text="fe.company.max_products"></p></div>
+            <div class="fld" :class="{ 'has-error': fe.company.max_branches }"><label class="fld-label" for="pc-mb">Max branches</label>
+              <input id="pc-mb" class="in" type="number" min="1" x-model="c.max_branches" @input="fe.company.max_branches = ''"><p class="fld-err" x-show="fe.company.max_branches" x-text="fe.company.max_branches"></p></div>
+          </div>
+        </template>
       </div>
 
       {# step 2: admin #}

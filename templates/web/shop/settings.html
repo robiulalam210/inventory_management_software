@@ -1,0 +1,105 @@
+{% extends "web/base.html" %}
+{% load web_tags %}
+{# শপ সেটিংস — shop/staff_views.settings_view · লেবেল/সাহায্য-লেখা ইংরেজি, bn.tsv থেকে বাংলা হয় #}
+{% block content %}
+<form method="post" enctype="multipart/form-data" novalidate class="ss">
+  {% csrf_token %}
+
+  <section class="panel ss-top">
+    <div>
+      <h3>{% tr "Your shop page" "আপনার শপ পেজ" %}</h3>
+      <p>{% tr "Customers see this at your home page" "কাস্টমার এটা আপনার হোম পেজে দেখবেন" %}</p>
+      <a class="ss-url" href="{{ shop_url }}" target="_blank" rel="noopener">{{ shop_url }}</a>
+    </div>
+    <div class="ss-top-act">
+      <a class="btn btn-ghost" href="{{ shop_url }}" target="_blank" rel="noopener">{% icon "globe" 16 %}<span>{% tr "Open shop" "শপ খুলুন" %}</span></a>
+      <a class="btn btn-ghost" href="{% url 'web:shop_orders' %}">{% tr "Online orders" "অনলাইন অর্ডার" %}</a>
+    </div>
+  </section>
+
+  {% if form.non_field_errors %}<p class="notice notice-error">{{ form.non_field_errors }}</p>{% endif %}
+
+  {% for title, hint, fields in groups %}
+  <section class="panel ss-group">
+    <div class="ss-head"><h3>{{ title }}</h3><span>{{ hint }}</span></div>
+    <div class="ss-grid">
+      {% for f in fields %}
+      {% if f.field.widget.input_type == "checkbox" %}
+        <label class="ss-switch ss-wide" for="{{ f.id_for_label }}">
+          <span><b>{{ f.label }}</b>{% if f.help_text %}<small>{{ f.help_text }}</small>{% endif %}</span>
+          {{ f }}
+        </label>
+      {% else %}
+      <div class="ss-field{% if f.name in 'about_text hero_subtitle announcement address domain hero_image' %} ss-wide{% endif %}">
+        <label class="ss-label" for="{{ f.id_for_label }}">{{ f.label }}</label>
+        {% if f.name == "hero_image" and current_hero %}
+          <img class="ss-hero" src="{{ current_hero }}" alt="">
+        {% endif %}
+        {% if f.name == "brand_color" %}
+          <div class="ss-color">{{ f }}<code x-data x-text="$el.previousElementSibling.value" @input.window="$el.textContent = $el.previousElementSibling.value"></code></div>
+        {% elif f.field.widget.input_type == "file" %}
+          <div class="ss-file">{{ f }}</div>
+        {% else %}
+          {{ f }}
+        {% endif %}
+        {% if f.help_text %}<small class="ss-help">{{ f.help_text }}</small>{% endif %}
+        {% for e in f.errors %}<small class="ss-err">{{ e }}</small>{% endfor %}
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <div class="ss-save">
+    <button class="btn btn-primary" type="submit">{% tr "Save settings" "সেটিংস সেভ করুন" %}</button>
+  </div>
+</form>
+
+<style>
+  .ss { display: grid; gap: 16px; max-width: 920px; }
+  .ss-top { padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .ss-top h3 { margin: 0; font-size: 16px; }
+  .ss-top p { margin: 2px 0 6px; color: var(--muted); font-size: 13.5px; }
+  .ss-url { font-size: 13px; color: var(--blue); word-break: break-all; }
+  .ss-top-act { display: flex; gap: 8px; flex-wrap: wrap; }
+  .ss-group { padding: 18px 20px 20px; }
+  .ss-head { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .ss-head h3 { margin: 0; font-size: 15.5px; }
+  .ss-head span { font-size: 13px; color: var(--muted); }
+  .ss-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+  .ss-wide { grid-column: 1 / -1; }
+  .ss-field { display: grid; gap: 6px; align-content: start; min-width: 0; }
+  .ss-label { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .ss-field input:not([type=checkbox]):not([type=color]):not([type=file]), .ss-field select, .ss-field textarea {
+    width: 100%; min-height: 42px; padding: 0 12px; font: 400 14.5px var(--font); color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-sm); }
+  .ss-field textarea { padding: 10px 12px; min-height: 96px; resize: vertical; line-height: 1.45; }
+  .ss-field input:focus, .ss-field select:focus, .ss-field textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-wash, rgba(5,150,105,.12)); }
+  .ss-help { font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .ss-err { font-size: 12.5px; color: var(--red); }
+  .ss-color { display: flex; align-items: center; gap: 10px; }
+  .ss-color input[type=color] { width: 52px; height: 42px; padding: 3px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface); cursor: pointer; }
+  .ss-color code { font-size: 13px; color: var(--muted); }
+  .ss-file { padding: 10px 12px; border: 1px dashed var(--line-2); border-radius: var(--r-sm); font-size: 13.5px; overflow: hidden; }
+  .ss-file input[type=file] { max-width: 100%; font: inherit; }
+  .ss-hero { display: block; max-width: 260px; width: 100%; max-height: 130px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+  .ss-switch { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--canvas); cursor: pointer; }
+  .ss-switch b { display: block; font-size: 14px; }
+  .ss-switch small { display: block; font-size: 12px; color: var(--muted); }
+  /* চেকবক্স → সুইচ */
+  .ss-switch input[type=checkbox] { appearance: none; -webkit-appearance: none; flex: none; width: 44px; height: 26px; border-radius: 99px; background: var(--line-2); position: relative; cursor: pointer; transition: background .15s; margin: 0; }
+  .ss-switch input[type=checkbox]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+  .ss-switch input[type=checkbox]:checked { background: var(--blue); }
+  .ss-switch input[type=checkbox]:checked::after { transform: translateX(18px); }
+  .ss-save { position: sticky; bottom: 0; z-index: 5; display: flex; justify-content: flex-end; padding: 12px 0 18px; background: linear-gradient(to top, var(--canvas) 70%, transparent); }
+  @media (max-width: 640px) {
+    .ss-grid { grid-template-columns: 1fr; }
+    .ss-top, .ss-group { padding: 16px; }
+    .ss-top-act, .ss-top-act .btn { width: 100%; }
+    .ss-top-act .btn { flex: 1; justify-content: center; }
+    .ss-save .btn { width: 100%; justify-content: center; height: 48px; }
+    .ss-save { padding-right: 56px; } /* ডান কোণের "গাইড" বোতামের জায়গা */
+  }
+</style>
+{% endblock %}

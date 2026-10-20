@@ -5,10 +5,11 @@ from .views import (
     company_admin_signup, company_admin_login, dashboard, user_list, create_user, home, user_management
 )
 from rest_framework_simplejwt.views import TokenRefreshView
+from .signup_api import RegisterCompanyAPIView
 from money_receipts.views import MoneyReceiptCreateAPIView, MoneyReceiptDetailAPIView, MoneyReceiptSummaryAPIView
 from .platform_views import (
     PlatformCompanyListView, PlatformCompanyDetailView, PlatformCompanyAdminView,
-    PlatformUserPasswordView, PlatformUserToggleView,
+    PlatformUserPasswordView, PlatformUserToggleView, PlatformPackageListView,
 )
 from supplier_payment.view import SupplierPaymentListCreateAPIView, SupplierPaymentDetailAPIView, SupplierPaymentCancelAPIView, SupplierPaymentSummaryAPIView
 # from purchases.views import PurchaseViewSet, PurchaseItemViewSet,PurchaseAllListViewSet
@@ -18,6 +19,7 @@ from suppliers.views import SupplierViewSet,SupplierNonPaginationViewSet
 from sales.views import SaleViewSet, SaleItemViewSet,SaleAllListViewSet,get_due_sales  # Import get_due_sales here
 from sales.views import SaleViewSet, SaleItemViewSet    
 from customers.views import CustomerViewSet,CustomerNonPaginationViewSet
+from customers.due_views import CustomerDueListCreateView, CustomerDueDetailView
 from products.views import ProductViewSet, CategoryViewSet, UnitViewSet, BrandViewSet, GroupViewSet, SourceViewSet, SaleModeViewSet, ProductSaleModeViewSet ,PriceTierViewSet
 from returns.views import SalesReturnViewSet, PurchaseReturnViewSet, BadStockViewSet
 from accounts.views import AccountViewSet
@@ -78,6 +80,8 @@ router.register(r'transactions', TransactionViewSet, basename='transaction')
 
 
 
+from .package_api import MyPackageView  # অ্যাপের "আমার প্যাকেজ" (GET /api/package/)
+
 urlpatterns = [
     # API routes
     path('', include(router.urls)),
@@ -86,6 +90,7 @@ urlpatterns = [
     
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/login/', CustomLoginView.as_view(), name='custom_login'),
+    path('auth/register-company/', RegisterCompanyAPIView.as_view(), name='register-company'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # FIX: আগে 'api/auth/change-password/' ছিল → আসল URL হয়ে যেত /api/api/auth/change-password/
     path('auth/change-password/', ChangePasswordAPIView.as_view(), name='change-password'),
@@ -103,6 +108,7 @@ urlpatterns = [
     path('money-receipts/', MoneyReceiptCreateAPIView.as_view(), name='money_receipt_create'),
     # Super Admin — কোম্পানি খোলা, এডমিন বানানো, মেয়াদ/প্ল্যান
     path('platform/companies/', PlatformCompanyListView.as_view(), name='platform-companies'),
+    path('platform/packages/', PlatformPackageListView.as_view(), name='platform-packages'),
     path('platform/companies/<int:pk>/', PlatformCompanyDetailView.as_view(), name='platform-company'),
     path('platform/companies/<int:pk>/admins/', PlatformCompanyAdminView.as_view(), name='platform-company-admins'),
     path('platform/companies/<int:pk>/users/<int:uid>/password/', PlatformUserPasswordView.as_view(), name='platform-user-password'),
@@ -115,6 +121,10 @@ urlpatterns = [
     path('supplier-payments/<int:pk>/cancel/', SupplierPaymentCancelAPIView.as_view(), name='supplier-payment-cancel'),
 
     path('reports/', include('reports.urls')),
+    path('', include('stockops.urls')),  # Stock Adjustment / Stocktake / Day Close
+    path('', include('branch_warehouse.urls')),  # শাখা (core/branches.py)
+    path('package/', MyPackageView.as_view(), name='my-package'),  # অ্যাপের "আমার প্যাকেজ"
+    path('messages/', include('customers.messaging_urls')),  # নির্ধারিত মেসেজ (WhatsApp)
     path('sync/', include('offline_sync.urls')),  # offline sync + audit
 
     path('payroll/', include('payroll.urls')),
@@ -123,16 +133,14 @@ urlpatterns = [
     
     # FIXED: Use the imported function directly, not via views.
     path('due/', get_due_sales, name='due-sales'),  # This creates /api/due/
+    # বাকি খাতা — বিক্রি ছাড়া বাকি (বাকি দিলাম / পুরনো বাকি)
+    path('customer-dues/', CustomerDueListCreateView.as_view(), name='customer-dues'),
+    path('customer-dues/<int:pk>/', CustomerDueDetailView.as_view(), name='customer-due-detail'),
     path('purchase-due/', get_due_purchases, name='get_due_purchases'),
      path('purchases-invoice/supplier/<int:supplier_id>/', 
          PurchaseAllListViewSet.as_view({'get': 'supplier_invoices'}), 
          name='supplier-invoices'),
     # Custom API endpoints for stock filtering
-    path('api/products/search/', ProductViewSet.as_view({'get': 'search'}), name='product-search'),
-    path('api/products/stock-info/', ProductViewSet.as_view({'get': 'stock_info'}), name='product-stock-info'),
-    path('api/products/low-stock/', ProductViewSet.as_view({'get': 'low_stock'}), name='product-low-stock'),
-    path('api/products/advanced-search/', ProductViewSet.as_view({'get': 'advanced_search'}), name='product-advanced-search'),
-    path('api/products/filters/', ProductViewSet.as_view({'get': 'filters'}), name='product-filters'),
     
 
     # Admin UI

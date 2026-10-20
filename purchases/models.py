@@ -1,4 +1,5 @@
 from django.db import models
+from branch_warehouse.stock import branch_of
 from django.db.models import Sum, F, Q
 from django.conf import settings
 from django.utils import timezone
@@ -28,6 +29,8 @@ class Purchase(models.Model):
     ]
     
     company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
+    # শাখা (core/branches.py) — ফাঁকা = প্রধান শাখা
+    branch = models.ForeignKey('branch_warehouse.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     supplier = models.ForeignKey('suppliers.Supplier', on_delete=models.CASCADE)
     
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchases_created')
@@ -445,6 +448,7 @@ class Purchase(models.Model):
         
         return None
 
+    @branch_of(lambda self: self.branch_id)  # শাখার স্টক: এই এন্ট্রির শাখায় (branch_warehouse/stock.py)
     def cancel_purchase(self, reason=None):
         """
         Purchase বাতিল — stock আর পরিশোধ দুটোই উল্টে দেয়, একসাথে (atomic)।
@@ -489,6 +493,12 @@ class Purchase(models.Model):
                     created_by=self.updated_by or self.created_by,
                     status='completed'
                 )
+
+            try:
+                from purchases.batches import void_for_purchase
+                void_for_purchase(self)
+            except Exception:
+                logger.exception("Batch void failed for purchase %s", self.pk)
 
             self.payment_status = 'cancelled'
             self.is_active = False
@@ -738,6 +748,7 @@ class PurchaseItem(models.Model):
             logger.error(f"ERROR: Error calculating subtotal: {str(e)}")
             return Decimal('0.00')
 
+    @branch_of(lambda self: self.purchase.branch_id)  # শাখার স্টক: এই এন্ট্রির শাখায় (branch_warehouse/stock.py)
     def save(self, *args, **kwargs):
         """Custom save with stock management"""
         is_new = self.pk is None
@@ -764,6 +775,13 @@ class PurchaseItem(models.Model):
                     product.stock_qty += stock_change
                 
                 product.save()
+
+                # ব্যাচ / মেয়াদ রেকর্ড (ব্যর্থ হলে ক্রয় আটকাবে না)
+                try:
+                    from purchases.batches import sync_for_purchase_item
+                    sync_for_purchase_item(self)
+                except Exception:
+                    logger.exception("Batch sync failed for purchase item %s", self.pk)
                 
                 if not hasattr(self.purchase, '_updating_totals'):
                     self.purchase.update_totals()
@@ -772,6 +790,7 @@ class PurchaseItem(models.Model):
             logger.error(f"ERROR: Error in PurchaseItem.save: {str(e)}")
             raise
 
+    @branch_of(lambda self: self.purchase.branch_id)  # শাখার স্টক: এই এন্ট্রির শাখায় (branch_warehouse/stock.py)
     def delete(self, *args, **kwargs):
         """Custom delete with stock management"""
         purchase = self.purchase
@@ -780,6 +799,12 @@ class PurchaseItem(models.Model):
         try:
             product.stock_qty -= self.qty
             product.save()
+
+            try:
+                from purchases.batches import remove_for_purchase_item
+                remove_for_purchase_item(self)
+            except Exception:
+                logger.exception("Batch removal failed for purchase item %s", self.pk)
             
             super().delete(*args, **kwargs)
             
@@ -803,3 +828,29 @@ class PurchaseItem(models.Model):
             'batch_no': self.batch_no,
             'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
         }
+
+
+class ProductBatch(models.Model):
+    """ক্রয়ের প্রতিটি আইটেম থেকে একটা ব্যাচ — মেয়াদ (expiry) ও বাকি স্টক ট্র্যাক করতে।
+    বিক্রির সময় FEFO (যার মেয়াদ আগে শেষ হবে সে আগে) নিয়মে এখান থেকে কমে।"""
+    company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True, related_name='product_batches')
+    product = models.ForeignKey('products.Product', on_delete=models.CASCADE, related_name='batches')
+    purchase_item = models.OneToOneField(
+        'purchases.PurchaseItem', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='batch')
+    batch_no = models.CharField(max_length=50, blank=True, null=True)
+    expiry_date = models.DateField(blank=True, null=True)
+    qty_received = models.DecimalField(max_digits=12, decimal_places=3, default=Decimal('0'))
+    qty_remaining = models.DecimalField(max_digits=12, decimal_places=3, default=Decimal('0'))
+    received_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['expiry_date', 'received_at', 'id']
+        indexes = [
+            models.Index(fields=['product', 'expiry_date'], name='purchases_p_product_1b7e3a_idx'),
+            models.Index(fields=['product', 'qty_remaining'], name='purchases_p_product_6c2f0d_idx'),
+            models.Index(fields=['company', 'expiry_date'], name='purchases_p_company_9d41ac_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.product_id} / {self.batch_no or 'no-batch'} ({self.qty_remaining})"

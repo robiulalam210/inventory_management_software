@@ -58,7 +58,62 @@ _P = {
     'pencil': '<path d="M14.5 5.5l4 4M4 20l1-4.5L15.5 5a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19z"/>',
     'ruler': '<rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6.5 8v3M10 8v4M13.5 8v3M17 8v4"/>',
     'eye-dim': '<path d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4.5 9.5 6a17 17 0 0 1-2.6 3.2M6.6 7.6A16.6 16.6 0 0 0 2.5 12c1 1.5 4.5 6 9.5 6a9 9 0 0 0 4.2-1"/>',
+    # দোকান খাতা — খোলা খাতা
+    'book': '<path d="M12 6.5C10.2 5 7.6 4.5 3.5 4.5v14c4.1 0 6.7.5 8.5 2 1.8-1.5 4.4-2 8.5-2v-14c-4.1 0-6.7.5-8.5 2z"/><path d="M12 6.5v14"/>',
+    'message': '<path d="M20.5 12a8.5 8.5 0 0 1-12.4 7.5L3.5 20.5l1.1-4.4A8.5 8.5 0 1 1 20.5 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/>',
+    'arrow-down': '<path d="M12 4.5v15M5.5 13l6.5 6.5 6.5-6.5"/>',
+    'arrow-up': '<path d="M12 19.5v-15M5.5 11 12 4.5 18.5 11"/>',
+    'cash-in': '<rect x="2.5" y="6.5" width="19" height="11" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
+    'user-plus': '<circle cx="9.5" cy="8" r="3.5"/><path d="M3 19.5c.7-3.4 3.3-5.5 6.5-5.5s5.8 2.1 6.5 5.5"/><path d="M19 8v6M16 11h6"/>',
 }
+
+
+LANGS = ('bn', 'en')
+
+
+def current_lang(request):
+    """cookie "dk-lang" (bn/en) — না থাকলে settings.WEB_DEFAULT_LANG (ডিফল্ট বাংলা)"""
+    from django.conf import settings
+    v = request.COOKIES.get('dk-lang') if request is not None else None
+    if v in LANGS:
+        return v
+    d = getattr(settings, 'WEB_DEFAULT_LANG', 'bn')
+    return d if d in LANGS else 'bn'
+
+
+@register.simple_tag(takes_context=True)
+def lang(context):
+    """{% lang %} → "bn" বা "en"   ·   {% lang as L %} {% if L == 'bn' %}…"""
+    return current_lang(context.get('request'))
+
+
+@register.simple_tag(takes_context=True)
+def tr(context, en, bn):
+    """দুই ভাষার লেখা একসাথে: {% tr "Total due" "মোট বাকি" %} — চালু ভাষারটা দেখায়"""
+    return bn if current_lang(context.get('request')) == 'bn' else en
+
+
+@register.simple_tag(takes_context=True)
+def brand(context, key='name'):
+    """
+    {% brand %} → বাংলায় "দোকান খাতা", English এ "Dokan Khata"   {% brand 'en' %} → সবসময় "Dokan Khata"
+    {% brand 'tagline' %} → চালু ভাষায় ট্যাগলাইন
+    নাম বদলাতে settings.py তে WEB_BRAND_NAME / WEB_BRAND_NAME_EN / WEB_BRAND_TAGLINE / WEB_BRAND_TAGLINE_EN দিন।
+    """
+    from django.conf import settings
+    bn = current_lang(context.get('request')) == 'bn'
+    name_bn = getattr(settings, 'WEB_BRAND_NAME', 'দোকান খাতা')
+    name_en = getattr(settings, 'WEB_BRAND_NAME_EN', 'Dokan Khata')
+    tag_bn = getattr(settings, 'WEB_BRAND_TAGLINE', 'বেচাকেনা, স্টক আর বাকির হিসাব — এক খাতায়')
+    tag_en = getattr(settings, 'WEB_BRAND_TAGLINE_EN', 'Sales, stock and dues — in one khata')
+    values = {
+        'name': name_bn if bn else name_en,
+        'bn': name_bn,
+        'en': name_en,
+        'other': name_en if bn else name_bn,
+        'tagline': tag_bn if bn else tag_en,
+    }
+    return values.get(key, values['name'])
 
 
 @register.simple_tag

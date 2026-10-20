@@ -123,6 +123,19 @@ def validate_person(data, actor, instance=None):
                 err['password'] = ' '.join(e.messages)
     if 'is_active' in data and not new:
         out['is_active'] = bool(data.get('is_active'))
+    # শাখা (core/branches.py): শুধু Admin বসাতে পারেন; ফাঁকা = সব শাখা
+    if 'branch' in data and is_admin(actor):
+        v = data.get('branch')
+        if v in (None, '', 'all', 0, '0'):
+            out['branch_id'] = None
+        else:
+            from branch_warehouse.models import Branch
+            company = getattr(instance, 'company', None) or getattr(actor, 'company', None)
+            b = Branch.objects.filter(company=company, pk=v, is_active=True).first() if str(v).isdigit() else None
+            if b is None:
+                err['branch'] = 'Pick a branch.'
+            else:
+                out['branch_id'] = b.id
     return out, err
 
 
@@ -139,8 +152,12 @@ def check_change(actor, instance, out):
     if (demoting or disabling) and company and active_admins(company, exclude=instance) == 0:
         return f'{instance.username} is the only active admin. Make someone else admin first.'
     if out.get('is_active') and not instance.is_active and company:
-        if User.objects.filter(company=company, is_active=True).count() >= company.max_users:
-            return f'Your plan allows {company.max_users} active users. Turn someone off first, or ask to raise the limit.'
+        # প্যাকেজ থাকলে প্যাকেজের ইউজার-সীমা (core/packages.py), না থাকলে কোম্পানির পুরনো max_users
+        from core.packages import plan_for
+        plan = plan_for(company)
+        cap = company.max_users if plan.legacy else plan.limit('max_users')
+        if cap and User.objects.filter(company=company, is_active=True).count() >= cap:
+            return f'Your plan allows {cap} active users. Turn someone off first, or upgrade your package.'
     return None
 
 
@@ -152,6 +169,7 @@ def person_row(u, actor=None):
         'first_name': u.first_name, 'last_name': u.last_name,
         'name': (u.get_full_name() or '').strip() or u.username,
         'role': u.role, 'is_active': u.is_active, 'permission_source': u.permission_source,
+        'branch': u.branch_id, 'branch_name': u.branch.name if u.branch_id else '',
         'last_login': u.last_login.isoformat() if u.last_login else None,
         'date_joined': u.date_joined.isoformat() if u.date_joined else None,
         'permissions': perms,

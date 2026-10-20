@@ -1,0 +1,84 @@
+{% extends "web/base.html" %}
+{% load static web_tags %}
+{# Warranty Check — লেখা ইংরেজিতে, বাংলা মোডে i18n.js অনুবাদ করে (web/i18n/bn.tsv) #}
+{% block content %}
+<div x-data="warrantyCheck()" class="wr">
+  <section class="panel filters">
+    <div class="f-row">
+      <label class="f-search">
+        {% icon "search" 18 %}
+        <input type="search" x-model="q" @input.debounce.350ms="load()" placeholder="Search invoice no., customer phone or name, or product" aria-label="Search warranty">
+      </label>
+    </div>
+    <div class="f-row">
+      <div class="chips" role="radiogroup" aria-label="Show">
+        <template x-for="c in tabs" :key="c.key">
+          <button type="button" class="chip" role="radio" :aria-checked="String(status === c.key)" :class="{ 'is-on': status === c.key }"
+                  @click="status = c.key; load()"><span x-text="c.label"></span> <span class="chip-n" x-text="c.key === 'all' ? '' : '(' + (counts[c.key] || 0) + ')'"></span></button>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <template x-if="error">
+      <div class="empty"><div class="tile" style="background:var(--red-wash);color:var(--red)">{% icon "alert" 26 %}</div>
+        <h2>Couldn't load the warranty list</h2><p x-text="error"></p><button class="btn btn-ghost" @click="load()">Try again</button></div>
+    </template>
+    <template x-if="!error">
+      <div>
+        <table class="dt" :class="{ 'is-loading': loading }">
+          <thead><tr><th>Product</th><th>Invoice</th><th class="hide-md">Customer</th><th class="hide-md">Sold on</th><th>Warranty until</th><th class="c">Status</th></tr></thead>
+          <tbody>
+            <template x-for="r in rows" :key="r.invoice_no + r.product_id + r.sale_date">
+              <tr>
+                <td data-k="Product"><b x-text="r.product_name"></b><span class="sub" x-text="r.sku"></span></td>
+                <td data-k="Invoice"><a :href="'{% url 'web:sales' %}?period=all&open=' + r.sale_id" x-text="r.invoice_no"></a></td>
+                <td class="hide-md" data-k="Customer"><span x-text="r.customer_name"></span><span class="sub" x-text="r.customer_phone"></span></td>
+                <td class="hide-md" data-k="Sold on" x-text="fmt(r.sale_date)"></td>
+                <td data-k="Warranty until"><b x-text="fmt(r.warranty_until)"></b><span class="sub" x-text="monthsText(r.warranty_months)"></span></td>
+                <td class="c" data-k="Status"><span class="pill" :class="cls(r)" x-text="label(r)"></span></td>
+              </tr>
+            </template>
+            <template x-for="i in (loading && !rows.length ? 5 : 0)" :key="'sk' + i"><tr class="sk-row"><td colspan="6"><span class="sk-line"></span></td></tr></template>
+          </tbody>
+        </table>
+        <template x-if="!loading && !rows.length">
+          <div class="empty">
+            <div class="tile">{% icon "shield" 26 %}</div>
+            <h2 x-text="q ? 'No warranty found' : 'No products with warranty sold yet'"></h2>
+            <p x-text="q ? 'Check the invoice number or phone, or clear the search.' : 'Set the warranty in months on a product (Products → Edit). Sales after that will show up here.'"></p>
+          </div>
+        </template>
+      </div>
+    </template>
+  </section>
+</div>
+<script>
+  window.warrantyCheck = function () {
+    const n = (v) => Number(v || 0);
+    return {
+      q: new URLSearchParams(location.search).get('q') || '', status: 'all', rows: [], counts: {}, loading: true, error: '', _r: 0,
+      tabs: [{ key: 'all', label: 'All' }, { key: 'active', label: 'Under warranty' }, { key: 'expiring', label: 'Ending soon' }, { key: 'expired', label: 'Expired' }],
+      init() { this.load(); },
+      async load() {
+        const id = ++this._r; this.loading = true; this.error = '';
+        try {
+          const r = await App.api('/api/reports/warranty/', { query: { q: this.q.trim(), status: this.status } });
+          if (id !== this._r) return;
+          this.rows = (r.data && r.data.rows) || []; this.counts = (r.data && r.data.counts) || {};
+        } catch (e) { if (id === this._r) { this.error = e.message; this.rows = []; } }
+        if (id === this._r) this.loading = false;
+      },
+      fmt(s) { const d = new Date(s + 'T00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }); },
+      monthsText(m) { return n(m) === 1 ? '1 month' : n(m) + ' months'; },
+      label(r) {
+        if (r.status === 'expired') return 'Expired';
+        if (r.days_left === 0) return 'Ends today';
+        return r.days_left === 1 ? '1 day left' : r.days_left + ' days left';
+      },
+      cls(r) { return r.status === 'expired' ? 'st-overdue' : (r.status === 'expiring' ? 'st-low' : 'st-paid'); },
+    };
+  };
+</script>
+{% endblock %}

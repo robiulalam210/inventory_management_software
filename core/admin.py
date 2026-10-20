@@ -745,3 +745,43 @@ class CustomAdminSite(admin.AdminSite):
 
 # Override the default admin site
 admin.site.__class__ = CustomAdminSite
+
+# ───────────── প্যাকেজ (core/packages.py) — Super Admin কোড ছাড়াই দাম, সীমা, মডিউল বদলান ─────────────
+from django import forms as _forms
+from .models import Package, PlatformSetting
+from .packages import FEATURES as _FEATURES
+
+
+class PackageAdminForm(_forms.ModelForm):
+    features = _forms.MultipleChoiceField(
+        choices=[(k, f'{v[1]} — {v[0]}') for k, v in _FEATURES.items()],
+        widget=_forms.CheckboxSelectMultiple, required=False,
+        help_text='বিক্রি, বাকি খাতা আর পণ্য সবসময় খোলা থাকে।')
+
+    class Meta:
+        model = Package
+        fields = '__all__'
+
+
+@admin.register(Package)
+class PackageAdmin(admin.ModelAdmin):
+    form = PackageAdminForm
+    list_display = ('name', 'name_bn', 'price_month', 'price_year', 'max_users', 'max_products', 'max_customers',
+                    'max_sales_month', 'max_branches', 'is_trial', 'is_active', 'sort')
+    list_editable = ('price_month', 'price_year', 'max_users', 'max_products', 'max_customers', 'max_sales_month',
+                     'max_branches', 'is_active', 'sort')
+    fieldsets = (
+        (None, {'fields': ('code', 'name', 'name_bn', 'description', 'sort', 'is_active', 'is_public')}),
+        ('দাম', {'fields': ('price_month', 'price_year')}),
+        ('ট্রায়াল', {'fields': ('is_trial', 'trial_days')}),
+        ('সীমা (0 = আনলিমিটেড)', {'fields': ('max_users', 'max_products', 'max_customers', 'max_sales_month', 'max_sales_total', 'max_branches')}),
+        ('মডিউল', {'fields': ('features',)}),
+    )
+
+
+@admin.register(PlatformSetting)
+class PlatformSettingAdmin(admin.ModelAdmin):
+    list_display = ('__str__', 'sales_whatsapp', 'sales_phone', 'grace_days', 'warn_days')
+
+    def has_add_permission(self, request):
+        return not PlatformSetting.objects.exists()

@@ -20,3 +20,31 @@ urlpatterns = [
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+else:
+    # cPanel এ আলাদা media সার্ভার নেই — পণ্যের ছবি / লোগো Django নিজেই দেয় (শুধু media ফোল্ডারের ভেতর থেকে)।
+    # static (CSS/JS) দেয় whitenoise।
+    from django.urls import re_path
+    from django.views.static import serve as _serve
+    urlpatterns += [re_path(r'^media/(?P<path>.*)$', _serve, {'document_root': settings.MEDIA_ROOT})]
+
+
+# ভুল ঠিকানা / সার্ভার-error: অ্যাপ (/api/) পায় JSON, ব্রাউজার পায় সুন্দর পাতা (web/templates/404.html, 500.html)
+from django.http import JsonResponse  # noqa: E402
+from django.views import defaults as _defaults  # noqa: E402
+
+
+def _api(request):
+    return request.path.startswith('/api/')
+
+
+def handler404(request, exception=None):
+    if _api(request):
+        return JsonResponse({'status': False, 'success': False, 'message': 'Not found.'}, status=404)
+    return _defaults.page_not_found(request, exception)
+
+
+def handler500(request):
+    if _api(request):
+        return JsonResponse({'status': False, 'success': False,
+                             'message': 'Server error. Please try again shortly.'}, status=500)
+    return _defaults.server_error(request)

@@ -56,7 +56,7 @@
                     <span><b><span x-text="u.name"></span><span class="tm-you" x-show="u.is_me">You</span></b><span class="sub" x-text="u.username"></span></span>
                   </span>
                 </td>
-                <td data-k="Role"><span class="pill" :class="'tm-r-' + u.role.toLowerCase()" x-text="roleLabel(u.role)"></span></td>
+                <td data-k="Role"><span class="pill" :class="'tm-r-' + u.role.toLowerCase()" x-text="roleLabel(u.role)"></span><span class="sub tm-branch" x-show="u.branch_name" x-text="u.branch_name"></span></td>
                 <td class="hide-md" data-k="Access">
                   <span class="tm-reach"><i><em :style="'width:' + (reach(u).n / modules.length * 100) + '%'"></em></i><span x-text="reach(u).text"></span></span>
                   <span class="sub" x-text="sourceLabel(u)"></span>
@@ -113,6 +113,7 @@
               <div><dt>Phone</dt><dd x-text="sel.phone || '—'"></dd></div>
               <div><dt>Email</dt><dd x-text="sel.email || '—'"></dd></div>
               <div><dt>Last active</dt><dd x-text="ago(sel.last_login)"></dd></div>
+              <div x-show="(init0.branches || []).length"><dt>{% tr "Branch" "শাখা" %}</dt><dd x-text="sel.branch_name || L_all"></dd></div>
               <div><dt>Added</dt><dd x-text="date(sel.date_joined)"></dd></div>
             </dl>
             <template x-if="sel.can_edit && init0.perms.edit && !sel.is_me">
@@ -218,6 +219,14 @@
           </div>
           <p class="fld-err" x-show="fe.role" x-text="fe.role"></p>
           <p class="fld-hint warn" x-show="form.id && form.role !== form.was" x-cloak>Changing the role resets what they can do to that role's standard access.</p>
+        </div>
+        <div class="fld" x-show="(init0.branches || []).length && init0.is_admin && !form.me && form.role !== 'ADMIN'" x-cloak>
+          <label class="fld-label" for="tm-branch">{% tr "Works in branch" "কোন শাখায় কাজ করেন" %}</label>
+          <select id="tm-branch" class="in" x-model="form.branch">
+            <option value="">{% tr "All branches (owner / manager)" "সব শাখা (মালিক / ম্যানেজার)" %}</option>
+            <template x-for="b in (init0.branches || [])" :key="b.id"><option :value="String(b.id)" x-text="b.name" :selected="form.branch === String(b.id)"></option></template>
+          </select>
+          <p class="fld-hint">{% tr "Their sales go to this branch, and they see only this branch." "তাঁর বিক্রি এই শাখায় যাবে, আর তিনি শুধু এই শাখার হিসাব দেখবেন।" %}</p>
         </div>
         <div class="fld-row">
           <div class="fld" :class="{ 'has-error': fe.username }"><label class="fld-label" for="tm-user">Username <i>*</i></label>

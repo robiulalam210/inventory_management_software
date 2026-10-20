@@ -495,7 +495,7 @@ def _audit_base_qs(request):
         return None
     qs = ChangeLog.objects.all()
     if _is_super(user):
-        company_id = request.query_params.get("company_id")
+        company_id = request.query_params.get("company_id") or request.META.get("HTTP_X_VIEW_COMPANY")
         if company_id:
             qs = qs.filter(company_id=company_id)
     else:

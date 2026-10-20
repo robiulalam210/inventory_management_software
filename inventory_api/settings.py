@@ -8,15 +8,17 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = BASE_DIR / 'templates'
 
-print(f"BASE_DIR is set to: {BASE_DIR}")
-print(f"TEMPLATES_DIR is set to: {TEMPLATES_DIR}")
 
 # -----------------------------
 # SECURITY
 # -----------------------------
-SECRET_KEY = "django-insecure-meherinmart-xyz-2024-secret-key-change-this-in-production"
-DEBUG = True  # Set False in production
+# সার্ভারে .env / cPanel environment থেকে নেওয়া হয়; না থাকলে আগের মান
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', "django-insecure-meherinmart-xyz-2024-secret-key-change-this-in-production")
+# DJANGO_DEBUG=0 দিলে production (https বাধ্যতামূলক, নিরাপদ cookie)। না দিলে আগের মতো True
+DEBUG = os.environ.get('DJANGO_DEBUG', '1') not in ('0', 'false', 'False')
 ALLOWED_HOSTS = [
+    'dokankhata.meherinmart.com',
+    'www.dokankhata.meherinmart.com',
     'inventoryapp.meherinmart.xyz',
     'www.inventoryapp.meherinmart.xyz',
     'localhost',
@@ -67,6 +69,7 @@ INSTALLED_APPS = [
     'account_transfer',
     'shop',
     'payroll',  # Payroll app
+    'stockops',  # Stock Adjustment / Stocktake / Day Close
     'core.apps.CoreConfig',
     'offline_sync.apps.OfflineSyncConfig',
     'web.apps.WebConfig',  # web software (/app/) — admin panel নয়
@@ -118,38 +121,18 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # একসাথে অনেক request এলে "database is locked" এ worker আটকে যেত।
+        # timeout: লক খুললে ৩০ সেকেন্ড পর্যন্ত অপেক্ষা; WAL: পড়া আর লেখা একে অপরকে আটকায় না।
+        'OPTIONS': {
+            'timeout': 30,
+            'init_command': 'PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;',
+            'transaction_mode': 'IMMEDIATE',
+        },
     }
 }
 
-# If you use MySQL in production, enable utf8mb4 for emojis:
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#          'NAME': 'meherinm_meherinmart_db',
-#         'USER': 'meherinm_robi',
-#         'PASSWORD': 'meherinmart@123',
-#         'HOST': 'localhost',
-#         'PORT': '3306',
-#         'OPTIONS': {
-#             'charset': 'utf8mb4',
-#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-#         },
-#     }
-# }
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#          'NAME': 'meherinm_meherinmart_db',
-#         'USER': 'meherinm_robi2',
-#         'PASSWORD': 'meherinmart@123',
-#         'HOST': 'localhost',
-#         'PORT': '3306',
-#         'OPTIONS': {
-#             'charset': 'utf8mb4',
-#             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-#         },
-#     }
-# }
+# MySQL চাইলে: ENGINE 'django.db.backends.mysql' + NAME/USER/PASSWORD — পাসওয়ার্ড কোডে নয়,
+# environment variable থেকে নিন (os.environ['DB_PASSWORD'])।
 
 # -----------------------------
 # AUTH
@@ -214,9 +197,14 @@ MEDIA_ROOT = BASE_DIR / 'media'
 os.makedirs(STATICFILES_DIRS[0], exist_ok=True)
 os.makedirs(MEDIA_ROOT, exist_ok=True)
 
-# Only use Whitenoise in production
-if not DEBUG:
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Django 5 এ STATICFILES_STORAGE আর কাজ করে না — STORAGES দিতে হয়।
+# production: whitenoise ফাইলগুলো gzip/brotli করে আর নামে hash যোগ করে, তাই ব্রাউজার লম্বা সময় cache রাখে,
+# আর নতুন আপডেট দিলে সাথে সাথে নতুন ফাইল নেয়।
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage' if DEBUG
+                    else 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
 
 # -----------------------------
 # CORS
@@ -225,6 +213,7 @@ if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
     CORS_ALLOWED_ORIGINS = [
+        "https://dokankhata.meherinmart.com",
         "https://inventoryapp.meherinmart.xyz",
         "https://www.inventoryapp.meherinmart.xyz",
     ]
@@ -237,13 +226,26 @@ SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
 SECURE_PROXY_SSL_HEADER = None
 
+# https পাতার ফর্ম (লগইন, রেজিস্টার) — এটা না থাকলে "CSRF verification failed" (403) আসে
+CSRF_TRUSTED_ORIGINS = [
+    'https://dokankhata.meherinmart.com',
+    'https://www.dokankhata.meherinmart.com',
+    'https://inventoryapp.meherinmart.xyz',
+] + [o for o in os.environ.get('DJANGO_EXTRA_ORIGINS', '').split(',') if o.strip()]  # অন্য domain লাগলে: কমা দিয়ে
+# একই domain গুলো ALLOWED_HOSTS এও (https://x.com → x.com)
+ALLOWED_HOSTS += [o.strip().split('://')[-1].split('/')[0].split(':')[0]
+                  for o in os.environ.get('DJANGO_EXTRA_ORIGINS', '').split(',') if o.strip()]
+
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-    SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
+    # ব্রাউজারকে বলা: এই সাইট সবসময় https এ খুলবে (৩০ দিন মনে রাখবে)। subdomain গুলোতে চাপানো হয় না।
+    SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30
+    SECURE_REFERRER_POLICY = 'same-origin'
+    X_FRAME_OPTIONS = 'DENY'
 
 # -----------------------------
 # DEFAULT AUTO FIELD
@@ -252,3 +254,54 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 from corsheaders.defaults import default_headers
 CORS_ALLOW_HEADERS = list(default_headers) + ["x-device-id", "x-client-source", "x-idempotency-key"]
+
+# -----------------------------
+# CACHE — লগইন-লক আর রেট-লিমিট এর হিসাব
+# cPanel একসাথে কয়েকটা process চালায়; memory cache হলে প্রতিটার হিসাব আলাদা হত আর লক কাজ করত না।
+# তাই ফাইলে রাখা হয় — সব process একই হিসাব দেখে।
+# -----------------------------
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+        'LOCATION': str(BASE_DIR / 'tmp' / 'cache'),
+        'TIMEOUT': 60 * 60,
+        'OPTIONS': {'MAX_ENTRIES': 5000},
+    }
+}
+
+# -----------------------------
+# LOGGING — সার্ভারে কোনো error হলে logs/error.log এ লেখা থাকে (তারিখ, পাতা, পুরো traceback)
+# প্রতিদিন নতুন ফাইল, ১৪ দিনের পুরনো নিজে মুছে যায়।
+# -----------------------------
+LOG_DIR = BASE_DIR / 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'plain': {'format': '[{asctime}] {levelname} {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': str(LOG_DIR / 'error.log'),
+            'when': 'midnight',
+            'backupCount': 14,
+            'encoding': 'utf-8',
+            'formatter': 'plain',
+        },
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
+    },
+    'loggers': {
+        'django': {'handlers': ['console', 'error_file'], 'level': 'WARNING'},
+        'django.request': {'handlers': ['error_file'], 'level': 'ERROR', 'propagate': False},
+    },
+}
+
+# ফাইল আপলোডের সীমা (ছবি / লোগো) — ১০ MB এর বেশি অনুরোধ নেওয়া হয় না
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+
+# HSTS subdomain/preload ইচ্ছা করে বন্ধ — meherinmart.com এর অন্য subdomain গুলো সবসময় https এ নাও থাকতে পারে
+SILENCED_SYSTEM_CHECKS = ['security.W005', 'security.W021']

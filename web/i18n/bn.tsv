@@ -1,0 +1,1870 @@
+# দোকান খাতা — English → বাংলা। ফরম্যাট ও নিয়ম: web/i18n/build.py
+"*" already exists (inactive — turn it back on instead).	"$1" আগে থেকেই আছে (বন্ধ করা — নতুন না বানিয়ে আবার চালু করুন)।
+"*" already exists (inactive — activate it instead).	"$1" আগে থেকেই আছে (বন্ধ করা — নতুন না বানিয়ে চালু করুন)।
+"*" already exists under this head.	"$1" এই খাতে আগে থেকেই আছে।
+"*" already exists.	"$1" আগে থেকেই আছে।
+"*" already uses this short name.	"$1" এই ছোট নামটা আগেই ব্যবহার করছে।
+* off	$1 ছাড়
+* moves from * to * now.	$1 এখনই $2 থেকে $3 তে যাবে।
+* added.	$1 যোগ হয়েছে।
+*'s slip for * will be removed. You can prepare it again later.	$2 মাসের জন্য $1 এর বেতন-স্লিপ মুছে যাবে। পরে আবার তৈরি করা যাবে।
+* — sign-in details	$1 — লগইনের তথ্য
+* items	$1টি আইটেম
+* item	$1টি আইটেম
+* slip(s) prepared for *.	$2 মাসের $1টি বেতন-স্লিপ তৈরি হয়েছে।
+* days ago	$1 দিন আগে
+* day ago	$1 দিন আগে
+* days left	$1 দিন বাকি
+* day left	$1 দিন বাকি
+* added as *.	$1 যোগ হয়েছে ($2)।
+* h ago	$1 ঘণ্টা আগে
+* is active again.	$1 আবার চালু হয়েছে।
+* is turned off. Past entries keep it.	$1 বন্ধ করা হয়েছে। আগের এন্ট্রিতে থেকে যাবে।
+* is hidden from sale screens.	$1 বিক্রির স্ক্রিন থেকে লুকানো হয়েছে।
+* goes back to * and *'s slip becomes unpaid again. Any advance cut from it is owed again.	$1 আবার $2 তে ফেরত যাবে, আর $3 এর স্লিপ আবার অপরিশোধিত হবে। এখান থেকে কাটা অগ্রিম আবার পাওনা হবে।
+* cancelled. Balances have been reversed.	$1 বাতিল হয়েছে। ব্যালেন্স আগের অবস্থায় ফিরেছে।
+* min ago	$1 মিনিট আগে
+* added. Set its price on each product that sells this way.	$1 যোগ হয়েছে। যে পণ্য এভাবে বিক্রি হয়, তার দাম সেট করুন।
+* of * areas	$2টির মধ্যে $1টি অংশ
+* is out of stock	$1 এর স্টক শেষ
+* is out of stock.	$1 এর স্টক শেষ।
+* saved — * paid from *.	$1 সেভ হয়েছে — $3 থেকে $2 দেওয়া হয়েছে।
+* saved — * added to *.	$1 সেভ হয়েছে — $3 তে $2 যোগ হয়েছে।
+* saved.	$1 সেভ হয়েছে।
+* only has *.	$1 এ আছে মাত্র $2।
+* deleted.	$1 মুছে ফেলা হয়েছে।
+* cancelled. Stock and payment were reversed.	$1 বাতিল হয়েছে। স্টক ও পেমেন্ট আগের অবস্থায় ফিরেছে।
+* cancelled. Money and invoices were reversed.	$1 বাতিল হয়েছে। টাকা ও ইনভয়েস আগের অবস্থায় ফিরেছে।
+* is hidden from new products.	$1 নতুন পণ্যে আর দেখাবে না।
+* can sign in again with their current password.	$1 এখন আগের পাসওয়ার্ড দিয়েই আবার লগইন করতে পারবেন।
+* can't sign in any more. Everything they recorded stays, with their name on it.	$1 আর লগইন করতে পারবেন না। তাঁর করা সব এন্ট্রি তাঁর নামসহ থেকে যাবে।
+* won't be able to sign in. Everything they recorded stays.	$1 আর লগইন করতে পারবেন না। তাঁর করা সব এন্ট্রি থেকে যাবে।
+Start – today	শুরু – আজ
+% Percent	% শতাংশ
+% margin	% মার্জিন
+% off	% ছাড়
+(inactive — activate it instead)	(বন্ধ করা — চালু করে নিন)
+(inactive — turn it back on instead)	(বন্ধ করা — আবার চালু করে নিন)
+(optional)	(ঐচ্ছিক)
+). Their old password stops working.	)। আগের পাসওয়ার্ড আর কাজ করবে না।
+, and the	, আর
+, and the invoices it paid become due again. The voucher stays in the list, marked cancelled.	, আর যেসব ইনভয়েস এটা দিয়ে শোধ হয়েছিল সেগুলো আবার বাকি হবে। ভাউচারটা "বাতিল" চিহ্ন নিয়ে তালিকায় থেকে যাবে।
+, but its recorded transactions add up to	, কিন্তু রেকর্ড করা লেনদেন যোগ করলে হয়
+, device	, ডিভাইস
+, eggs by the	, ডিম
+, expenses	, খরচ
+, head or amount	, খাত বা টাকা
+, other income	, অন্য আয়
+, out of stock	, স্টক শেষ
+, purchases	, ক্রয়
+, so it can't be removed. It will be	, তাই মোছা যাবে না। এটা হবে
+, status	, অবস্থা
+-day free trial	দিনের ফ্রি ট্রায়াল
+1 Bag	১ বস্তা
+1 Dozen	১ ডজন
+1 Gram	১ গ্রাম
+1 month	১ মাস
+1 year	১ বছর
+15+ days	১৫+ দিন
+30 days	৩০ দিন
+30+ days	৩০+ দিন
+6 months	৬ মাস
+60+ days	৬০+ দিন
+7 days	৭ দিন
+7+ days	৭+ দিন
+A discount cannot be more than 100%.	ছাড় ১০০% এর বেশি হতে পারে না।
+A new transfer moves * back from * to *. The original stays on record.	একটা নতুন ট্রান্সফার $1 আবার $2 থেকে $3 তে ফেরত নেবে। আগেরটা রেকর্ডে থেকে যাবে।
+A phone number helps you find them quickly at the counter.	ফোন নম্বর থাকলে কাউন্টারে দ্রুত খুঁজে পাবেন।
+A phone number or an email is needed so you can reach them.	যোগাযোগের জন্য ফোন নম্বর বা ইমেইল লাগবে।
+A sale mode is always built on a unit — Dozen on Pieces, Gram on Kilogram. Set up your units, then come back.	সেল মোড সবসময় একটা ইউনিটের ওপর তৈরি হয় — যেমন পিসের ওপর ডজন, কেজির ওপর গ্রাম। আগে ইউনিট সেট করে তারপর আসুন।
+A sale mode with this name already exists.	এই নামে একটা সেল মোড আগেই আছে।
+A strong one is filled in. Share it with them; they can change it later.	একটা শক্ত পাসওয়ার্ড বসানো আছে। তাঁকে জানিয়ে দিন; পরে তিনি বদলাতে পারবেন।
+A unit is how you count or measure what you sell — pieces, kilograms, litres. Every product needs one, so you can't add products until at least one unit exists.	ইউনিট মানে আপনি কীভাবে গোনেন বা মাপেন — পিস, কেজি, লিটার। প্রতিটা পণ্যের একটা ইউনিট লাগে, তাই অন্তত একটা ইউনিট না থাকলে পণ্য যোগ করা যাবে না।
+A walk-in customer must pay the full *. Choose a saved customer to give credit.	সাধারণ (walk-in) কাস্টমারকে পুরো $1 দিতে হবে। বাকি দিতে চাইলে সেভ করা কাস্টমার বাছুন।
+About	সম্পর্কে
+Accept	গ্রহণ করুন
+Access	অনুমতি
+Access reset to the role defaults.	অনুমতি রোলের ডিফল্টে ফিরিয়ে দেওয়া হয়েছে।
+Account	একাউন্ট
+Account balance	একাউন্ট ব্যালেন্স
+Account number	একাউন্ট নম্বর
+Account statement	একাউন্ট স্টেটমেন্ট
+Account updated.	একাউন্ট আপডেট হয়েছে।
+Accounts	একাউন্ট
+Action	কাজ
+Actions	কাজ
+Activate	চালু করুন
+Active	চালু
+Active * days ago	$1 দিন আগে সক্রিয় ছিলেন
+Active * day ago	$1 দিন আগে সক্রিয় ছিলেন
+Active * h ago	$1 ঘণ্টা আগে সক্রিয় ছিলেন
+Active * min ago	$1 মিনিট আগে সক্রিয় ছিলেন
+Active customers	সক্রিয় কাস্টমার
+Active just now	এইমাত্র সক্রিয়
+Active products	চালু পণ্য
+Active suppliers	সক্রিয় সাপ্লায়ার
+Activity	কার্যকলাপ
+Add	যোগ করুন
+Add a phone number or an email.	ফোন নম্বর বা ইমেইল দিন।
+Add a photo	ছবি দিন
+Add a product first	আগে একটা পণ্য যোগ করুন
+Add a short code.	একটা ছোট কোড দিন।
+Add account	একাউন্ট যোগ করুন
+Add admin	অ্যাডমিন যোগ করুন
+Add another after this	এরপর আরেকটা যোগ করব
+Add at least one product.	অন্তত একটা পণ্য যোগ করুন।
+Add common units	সাধারণ ইউনিটগুলো যোগ করুন
+Add customer	কাস্টমার যোগ করুন
+Add head	খাত যোগ করুন
+Add person	লোক যোগ করুন
+Add product	পণ্য যোগ করুন
+Add products first, then sell them here.	আগে পণ্য যোগ করুন, তারপর এখানে বিক্রি করুন।
+Add sale mode	সেল মোড যোগ করুন
+Add size	সাইজ যোগ করুন
+Add sub head	উপ-খাত যোগ করুন
+Add supplier	সাপ্লায়ার যোগ করুন
+Add the items you sell. They show up in Sale, POS and Purchase straight away.	যা বিক্রি করেন তা যোগ করুন। সাথে সাথে বিক্রি, POS আর ক্রয়ে দেখাবে।
+Add the people and companies you buy stock from.	যাদের কাছ থেকে মাল কেনেন তাদের যোগ করুন।
+Add the people who work in your shop. Each gets their own sign-in, and you choose what they can do.	দোকানে যারা কাজ করেন তাদের যোগ করুন। প্রত্যেকে আলাদা লগইন পাবেন, আর কে কী করতে পারবেন তা আপনি ঠিক করবেন।
+Add unit	ইউনিট যোগ করুন
+Add units first	আগে ইউনিট যোগ করুন
+Add your cash box, bank accounts and mobile wallets (bKash, Nagad). Every sale, purchase and expense moves money in or out of one of them.	ক্যাশ বাক্স, ব্যাংক একাউন্ট আর মোবাইল ওয়ালেট (বিকাশ, নগদ) যোগ করুন। প্রতিটা বিক্রি, ক্রয় আর খরচে এগুলোর কোনো একটায় টাকা ঢোকে বা বের হয়।
+Added	যোগ হয়েছে
+Adding and changing people	লোক যোগ ও বদল
+Adding…	যোগ হচ্ছে…
+Additions	যোগ
+Address	ঠিকানা
+Address: *	ঠিকানা: $1
+Adds common units (Pieces, Kilogram, Litre…) and a Cash account, so they can add products and sell on day one.	সাধারণ ইউনিট (পিস, কেজি, লিটার…) আর একটা ক্যাশ একাউন্ট যোগ করে, যাতে প্রথম দিন থেকেই পণ্য যোগ ও বিক্রি করা যায়।
+Adjustment	সমন্বয়
+Admin	অ্যাডমিন
+Admins add their own staff and set what each person can do from inside the software.	অ্যাডমিন নিজেই সফটওয়্যারের ভেতর থেকে স্টাফ যোগ করেন এবং কে কী করতে পারবেন ঠিক করেন।
+Admins can do everything	অ্যাডমিন সব করতে পারেন
+Adv	অগ্রিম
+Advance	অগ্রিম
+Advance balance	অগ্রিম ব্যালেন্স
+Advance cancelled.	অগ্রিম বাতিল হয়েছে।
+Advance given	অগ্রিম দেওয়া
+Advance held	অগ্রিম জমা
+Advance recorded.	অগ্রিম রেকর্ড হয়েছে।
+Advance recovered	অগ্রিম আদায়
+Advance still owed	অগ্রিম এখনো পাওনা
+Advance still owed is only *.	অগ্রিম পাওনা আছে মাত্র $1।
+Advance still owed:	অগ্রিম এখনো পাওনা:
+Advance to cut	যত অগ্রিম কাটবে
+Advance with suppliers	সাপ্লায়ারের কাছে অগ্রিম
+Advance with them	তাদের কাছে অগ্রিম
+Advance you hold	আপনার কাছে অগ্রিম জমা
+Advances given	দেওয়া অগ্রিম
+After	পরে
+Alert at	সতর্কতা যখন
+Alert me when stock reaches	স্টক এত হলে জানাবে
+All	সব
+All accounts	সব একাউন্ট
+All balance	সব ব্যালেন্স
+All categories	সব ক্যাটাগরি
+All changes saved	সব পরিবর্তন সেভ হয়েছে
+All companies	সব কোম্পানি
+All companies at a glance	এক নজরে সব কোম্পানি
+All customers	সব কাস্টমার
+All daily work and reports. Can see staff but not change them.	রোজকার সব কাজ আর রিপোর্ট। স্টাফ দেখতে পারেন, বদলাতে পারেন না।
+All dues	সব বাকি
+All methods	সব মাধ্যম
+All payments	সব পেমেন্ট
+All purchase returns	সব ক্রয় ফেরত
+All purchases	সব ক্রয়
+All receipts	সব রসিদ
+All record types	সব ধরনের রেকর্ড
+All records	সব রেকর্ড
+All sales	সব বিক্রি
+All sales returns	সব বিক্রি ফেরত
+All sellers	সব বিক্রেতা
+All suppliers	সব সাপ্লায়ার
+All time	সব সময়
+All time, up to	সব সময়, পর্যন্ত
+Already added	আগেই যোগ করা
+Already have an account?	আগে থেকেই একাউন্ট আছে?
+Already owes	আগের বাকি
+Also added:	আরও যোগ হয়েছে:
+Amount	টাকা
+Amount and details	টাকা ও বিবরণ
+Amount and payment	টাকা ও পেমেন্ট
+Amount of base unit	মূল ইউনিটের পরিমাণ
+Amount of this mode	এই মোডের পরিমাণ
+Amount to pay	যত টাকা দিতে হবে
+Another customer already has this phone number.	এই ফোন নম্বরে অন্য একজন কাস্টমার আছেন।
+Another person with full control of	পুরো নিয়ন্ত্রণসহ আরেকজন
+Another sale mode already uses this code.	অন্য একটা সেল মোড এই কোড ব্যবহার করছে।
+Another shop on this software already uses this name.	এই সফটওয়্যারে অন্য একটা দোকান এই নাম ব্যবহার করছে।
+Any age	যেকোনো বয়স
+Any app	যেকোনো অ্যাপ
+Any method	যেকোনো মাধ্যম
+Any status	যেকোনো অবস্থা
+Any type	যেকোনো ধরন
+Anyone	যে কেউ
+Anyone collected	যে কেউ আদায় করেছে
+Anything to remember about this payment	এই পেমেন্ট নিয়ে মনে রাখার মতো কিছু
+Appearance	চেহারা
+Applied automatically when you add it in Sale or POS.	বিক্রি বা POS এ যোগ করলে নিজে থেকেই বসবে।
+Applied to	যেখানে বসেছে
+Apply the payment to	পেমেন্ট বসবে
+Approve	অনুমোদন
+Approve return *?	ফেরত $1 অনুমোদন করবেন?
+Approve right away (skip the pending step)	এখনই অনুমোদন (অপেক্ষার ধাপ বাদ)
+Approved	অনুমোদিত
+Approved by	অনুমোদন করেছেন
+Approving puts the returned stock back and records the refund to the customer. Check the quantities first.	অনুমোদন করলে ফেরত মাল স্টকে ফিরবে আর কাস্টমারকে টাকা ফেরত রেকর্ড হবে। আগে পরিমাণ মিলিয়ে নিন।
+Approving takes the returned stock out and records the refund coming from the supplier. Check the quantities first.	অনুমোদন করলে ফেরত মাল স্টক থেকে বের হবে আর সাপ্লায়ারের কাছ থেকে টাকা ফেরত রেকর্ড হবে। আগে পরিমাণ মিলিয়ে নিন।
+Area	এলাকা
+As of	পর্যন্ত
+Ask your admin to add units.	ইউনিট যোগ করতে অ্যাডমিনকে বলুন।
+Ask your shop admin to give your account permission for this module.	এই অংশের অনুমতি দিতে দোকানের অ্যাডমিনকে বলুন।
+At least 1.	অন্তত ১।
+At least 8 characters	অন্তত ৮ অক্ষর
+Audit entry	অডিট এন্ট্রি
+Authorised signature	অনুমোদিত স্বাক্ষর
+Auto	অটো
+Available:	আছে:
+Avg cost	গড় খরচ
+Back	পেছনে
+Back to dashboard	ড্যাশবোর্ডে ফিরুন
+Bad quantity on this page	এই পাতায় নষ্ট মালের পরিমাণ
+Bad stock details	নষ্ট মালের বিবরণ
+Bag	বস্তা
+Balance	ব্যালেন্স
+Balance after:	এরপর ব্যালেন্স:
+Balance due	বাকি ব্যালেন্স
+Balances change when the transfer is executed.	ট্রান্সফার সম্পন্ন হলে ব্যালেন্স বদলাবে।
+Bank	ব্যাংক
+Bank name	ব্যাংকের নাম
+Barcode labels	বারকোড লেবেল
+Basic	বেসিক
+Basic salary	মূল বেতন
+Before	আগে
+Best sellers	সবচেয়ে বেশি বিক্রি
+Best sellers by quantity sold in the period.	এই সময়ে সবচেয়ে বেশি বিক্রি হওয়া পণ্য (পরিমাণ অনুযায়ী)।
+Biscuits, noodles, sachets	বিস্কুট, নুডলস, স্যাশে
+Bonus	বোনাস
+Both steps stay visible on the account statement.	দুটো ধাপই একাউন্ট স্টেটমেন্টে দেখা যাবে।
+Bottle	বোতল
+Bought	কিনেছে
+Bought so far	এ পর্যন্ত কিনেছে
+Bought:	কিনেছে:
+Box	বক্স
+Branch	শাখা
+Branches	শাখা
+Brand	ব্র্যান্ড
+Brand name	ব্র্যান্ডের নাম
+Bulk pricing	পাইকারি দাম
+Buy more	আরও কিনুন
+By	করেছেন
+By weight / count	ওজন / গুনতি অনুযায়ী
+Came from	এসেছে
+Can be sold and bought.	বিক্রি ও কেনা দুটোই করা যায়।
+Can look at everything, change nothing.	সব দেখতে পারেন, কিছু বদলাতে পারেন না।
+Cancel	বাতিল
+Cancel *?	$1 বাতিল করবেন?
+Cancel advance	অগ্রিম বাতিল
+Cancel payment	পেমেন্ট বাতিল
+Cancel purchase	ক্রয় বাতিল
+Cancel receipt	রসিদ বাতিল
+Cancel this advance?	এই অগ্রিম বাতিল করবেন?
+Cancel this payment	এই পেমেন্ট বাতিল করুন
+Cancel this payment?	এই পেমেন্ট বাতিল করবেন?
+Cancel this purchase	এই ক্রয় বাতিল করুন
+Cancel this receipt	এই রসিদ বাতিল করুন
+Cancel transfer	ট্রান্সফার বাতিল
+Cancelled	বাতিল
+Cancelled from web	ওয়েব থেকে বাতিল
+Cancelling…	বাতিল হচ্ছে…
+Cannot reach the server. Check your internet or network connection.	সার্ভারে পৌঁছানো যাচ্ছে না। ইন্টারনেট সংযোগ দেখুন।
+Cannot transfer to the same account.	একই একাউন্টে ট্রান্সফার করা যায় না।
+Card	কার্ড
+Cart	কার্ট
+Carton	কার্টন
+Cash	ক্যাশ
+Cash received	ক্যাশ পেয়েছি
+Cash, bank, transfers, income	ক্যাশ, ব্যাংক, ট্রান্সফার, আয়
+Category	ক্যাটাগরি
+Category name	ক্যাটাগরির নাম
+Change	ফেরত
+Change password	পাসওয়ার্ড বদলান
+Change returned	ফেরত দেওয়া হয়েছে
+Changed	বদলেছে
+Changed today	আজ বদলেছে
+Changing the role resets what they can do to that role's standard access.	রোল বদলালে তাঁর অনুমতি ওই রোলের স্বাভাবিক অনুমতিতে ফিরে যাবে।
+Charge	চার্জ
+Charge type	চার্জের ধরন
+Chart range	চার্টের সময়
+Cheaper in bulk	বেশি নিলে কম দাম
+Cheque	চেক
+Cheque / transaction no.	চেক / লেনদেন নম্বর
+Cheque no.	চেক নম্বর
+Cheque no., reference or anything to remember	চেক নম্বর, রেফারেন্স বা মনে রাখার মতো কিছু
+Cheque or slip number	চেক বা স্লিপ নম্বর
+Choose a customer to begin	শুরু করতে কাস্টমার বাছুন
+Choose a customer to see their ledger.	খাতা দেখতে একজন কাস্টমার বাছুন।
+Choose a product.	একটা পণ্য বাছুন।
+Choose a staff member.	একজন স্টাফ বাছুন।
+Choose a supplier to begin	শুরু করতে সাপ্লায়ার বাছুন
+Choose a supplier to see their ledger.	খাতা দেখতে একজন সাপ্লায়ার বাছুন।
+Choose a username to log in with.	লগইনের জন্য একটা ইউজারনেম দিন।
+Choose a username to sign in with.	লগইনের জন্য একটা ইউজারনেম দিন।
+Choose account	একাউন্ট বাছুন
+Choose an invoice to begin	শুরু করতে ইনভয়েস বাছুন
+Choose an unpaid invoice	বাকি থাকা ইনভয়েস বাছুন
+Choose both accounts to begin	শুরু করতে দুটো একাউন্ট বাছুন
+Choose category	ক্যাটাগরি বাছুন
+Choose how it is counted (pcs, kg …).	কীভাবে গোনা হয় বাছুন (পিস, কেজি …)।
+Choose invoice	ইনভয়েস বাছুন
+Choose staff	স্টাফ বাছুন
+Choose the account for this refund.	এই ফেরত টাকার একাউন্ট বাছুন।
+Choose the account the advance is paid from.	কোন একাউন্ট থেকে অগ্রিম দেওয়া হচ্ছে বাছুন।
+Choose the account the money comes from.	কোন একাউন্ট থেকে টাকা আসছে বাছুন।
+Choose the account the money goes into.	টাকা কোন একাউন্টে জমা হবে বাছুন।
+Choose the account the money goes to.	টাকা কোন একাউন্টে যাবে বাছুন।
+Choose the account the money leaves.	কোন একাউন্ট থেকে টাকা বের হবে বাছুন।
+Choose the account the refund goes into.	ফেরত টাকা কোন একাউন্টে যাবে বাছুন।
+Choose the account the salary is paid from.	কোন একাউন্ট থেকে বেতন দেওয়া হবে বাছুন।
+Choose the customer, or switch to walk-in.	কাস্টমার বাছুন, অথবা walk-in এ যান।
+Choose the invoice being returned.	কোন ইনভয়েসের মাল ফেরত আসছে বাছুন।
+Choose the invoice this payment is for.	এই পেমেন্ট কোন ইনভয়েসের জন্য বাছুন।
+Choose the invoice you are paying.	কোন ইনভয়েসের টাকা দিচ্ছেন বাছুন।
+Choose the purchase invoice.	ক্রয়ের ইনভয়েস বাছুন।
+Choose the supplier you bought from.	কোন সাপ্লায়ার থেকে কিনেছেন বাছুন।
+Choose the supplier.	সাপ্লায়ার বাছুন।
+Choose who is paying.	কে টাকা দিচ্ছেন বাছুন।
+Choose who you are paying.	কাকে টাকা দিচ্ছেন বাছুন।
+Choose…	বাছুন…
+Clear	মুছুন
+Clears the oldest bills first. Extra is kept as advance.	আগে পুরনো বিল শোধ হয়। বাড়তি টাকা অগ্রিম হিসেবে থাকে।
+Clears the oldest invoices first. Anything extra is kept as advance.	আগে পুরনো ইনভয়েস শোধ হয়। বাড়তি টাকা অগ্রিম হিসেবে থাকে।
+Close	বন্ধ করুন
+Closing	শেষ
+Closing balance	শেষ ব্যালেন্স
+Cloth, wire, pipe	কাপড়, তার, পাইপ
+Collect due	বাকি আদায়
+Collect payment	টাকা নিন
+Collected	আদায় হয়েছে
+Collected by	আদায় করেছেন
+Collected so far	এ পর্যন্ত আদায়
+Collecting customer dues	কাস্টমারের বাকি আদায়
+Commission	কমিশন
+Companies	কোম্পানি
+Company	কোম্পানি
+Company / shop name	কোম্পানি / দোকানের নাম
+Company code	কোম্পানি কোড
+Company details saved.	কোম্পানির তথ্য সেভ হয়েছে।
+Company name	কোম্পানির নাম
+Complete	সম্পন্ন
+Complete sale	বিক্রি সম্পন্ন করুন
+Completed	সম্পন্ন
+Confirm order	অর্ডার নিশ্চিত করুন
+Confirm password	পাসওয়ার্ড আবার দিন
+Contact	যোগাযোগ
+Copied	কপি হয়েছে
+Copy	কপি
+Copy link	লিংক কপি
+Copy sign-in details	লগইনের তথ্য কপি
+Cost	খরচ
+Cost price	ক্রয়মূল্য
+Could not add	যোগ করা যায়নি
+Could not copy	কপি করা যায়নি
+Could not export:	এক্সপোর্ট করা যায়নি:
+Could not load accounts:	একাউন্ট লোড করা যায়নি:
+Could not load invoices:	ইনভয়েস লোড করা যায়নি:
+Could not load suppliers:	সাপ্লায়ার লোড করা যায়নি:
+Couldn't load	লোড করা যায়নি
+Couldn't load accounts	একাউন্ট লোড করা যায়নি
+Couldn't load advances	অগ্রিম লোড করা যায়নি
+Couldn't load bad stock	নষ্ট মাল লোড করা যায়নি
+Couldn't load companies	কোম্পানি লোড করা যায়নি
+Couldn't load customers	কাস্টমার লোড করা যায়নি
+Couldn't load heads	খাত লোড করা যায়নি
+Couldn't load payments	পেমেন্ট লোড করা যায়নি
+Couldn't load people	লোকজন লোড করা যায়নি
+Couldn't load products	পণ্য লোড করা যায়নি
+Couldn't load purchases	ক্রয় লোড করা যায়নি
+Couldn't load receipts	রসিদ লোড করা যায়নি
+Couldn't load salary slips	বেতন-স্লিপ লোড করা যায়নি
+Couldn't load sale modes	সেল মোড লোড করা যায়নি
+Couldn't load sales	বিক্রি লোড করা যায়নি
+Couldn't load suppliers	সাপ্লায়ার লোড করা যায়নি
+Couldn't load the audit log	অডিট লগ লোড করা যায়নি
+Couldn't load the dashboard	ড্যাশবোর্ড লোড করা যায়নি
+Couldn't load the due list	বাকির তালিকা লোড করা যায়নি
+Couldn't load the report	রিপোর্ট লোড করা যায়নি
+Couldn't load this report	এই রিপোর্ট লোড করা যায়নি
+Couldn't load transactions	লেনদেন লোড করা যায়নি
+Couldn't load transfers	ট্রান্সফার লোড করা যায়নি
+Couldn't load units	ইউনিট লোড করা যায়নি
+Couldn't load your company	আপনার কোম্পানি লোড করা যায়নি
+Create my company	আমার কোম্পানি তৈরি করুন
+Create my own	নিজে বানাব
+Create transfer	ট্রান্সফার তৈরি করুন
+Created	তৈরি
+Created by	তৈরি করেছেন
+Created today	আজ তৈরি
+Creating…	তৈরি হচ্ছে…
+Credit	জমা
+Current sale	চলতি বিক্রি
+Custom	নিজের মতো
+Customer	কাস্টমার
+Customer Due / Advance	কাস্টমারের বাকি / অগ্রিম
+Customer Ledger	কাস্টমার লেজার
+Customer signature	কাস্টমারের স্বাক্ষর
+Customer statement	কাস্টমার স্টেটমেন্ট
+Customer type	কাস্টমারের ধরন
+Customer updated.	কাস্টমার আপডেট হয়েছে।
+Customers	কাস্টমার
+Customers owe you	কাস্টমারের কাছে পাবো
+Customers owing	বাকি থাকা কাস্টমার
+Customers pay	কাস্টমার দেন
+Customers see this at your home page	কাস্টমার এটা আপনার হোম পেজে দেখবেন
+Customers who still owe you money. Tap	যেসব কাস্টমারের কাছে এখনো টাকা পাবেন। চাপুন
+Customised	নিজের মতো বদলানো
+Customised for	যার জন্য বদলানো
+Cut so far	এ পর্যন্ত কাটা
+Damaged	নষ্ট
+Damaged goods from sales returns will appear here.	বিক্রি ফেরতের নষ্ট মাল এখানে দেখাবে।
+Damaged quantity	নষ্টের পরিমাণ
+Dark	ডার্ক
+Dashboard	ড্যাশবোর্ড
+Date	তারিখ
+Deactivate	বন্ধ করুন
+Deactivate — hide from new products	বন্ধ করুন — নতুন পণ্যে দেখাবে না
+Debit	খরচ
+Deductions	কর্তন
+Deductions are more than the salary.	কর্তন বেতনের চেয়ে বেশি।
+Delete	মুছুন
+Delete account	একাউন্ট মুছুন
+Delete customer	কাস্টমার মুছুন
+Delete product	পণ্য মুছুন
+Delete return *?	ফেরত $1 মুছবেন?
+Delete slip	স্লিপ মুছুন
+Delete supplier	সাপ্লায়ার মুছুন
+Delete this slip?	এই স্লিপ মুছবেন?
+Deleted	মুছে ফেলা
+Deleted today	আজ মুছে ফেলা
+Deleted.	মুছে ফেলা হয়েছে।
+Deleting…	মুছে ফেলা হচ্ছে…
+Delivery	ডেলিভারি
+Delivery / carrying	ডেলিভারি / বহন
+Delivery charge	ডেলিভারি চার্জ
+Description	বিবরণ
+Designation	পদবি
+Designation / ID	পদবি / আইডি
+Desktop (offline)	ডেস্কটপ (অফলাইন)
+Desktop app	ডেস্কটপ অ্যাপ
+Details	বিস্তারিত
+Discard the permission changes you have not saved?	সেভ না করা অনুমতির পরিবর্তনগুলো বাদ দেবেন?
+Discount	ছাড়
+Discount and charges	ছাড় ও চার্জ
+Discount cannot be more than 100%.	ছাড় ১০০% এর বেশি হতে পারে না।
+Discount on	ছাড় যার ওপর
+Discount on:	ছাড় যার ওপর:
+Discount, VAT & charges	ছাড়, ভ্যাট ও চার্জ
+Dismiss	বন্ধ করুন
+Done	হয়েছে
+Done at (on the device)	করা হয়েছে (ডিভাইসে)
+Done by	করেছেন
+Done.	হয়েছে।
+Download CSV	CSV ডাউনলোড
+Dozen	ডজন
+Drinks, sauces	পানীয়, সস
+Due	বাকি
+Due from customer	কাস্টমারের কাছে বাকি
+Due to supplier	সাপ্লায়ারকে দিতে হবে
+Earlier advance	আগের অগ্রিম
+Earnings	আয়
+Edit	এডিট
+Edit account	একাউন্ট এডিট
+Edit customer	কাস্টমার এডিট
+Edit message	বার্তা এডিট
+Edit product	পণ্য এডিট
+Edit salary slip	বেতন-স্লিপ এডিট
+Edit supplier	সাপ্লায়ার এডিট
+Edit unit	ইউনিট এডিট
+Eggs, bananas — 12 at a time	ডিম, কলা — একসাথে ১২টা
+Email	ইমেইল
+Employee	কর্মচারী
+Ended	শেষ হয়েছে
+Ended * days ago	$1 দিন আগে শেষ হয়েছে
+Ended * day ago	$1 দিন আগে শেষ হয়েছে
+Ends	শেষ হবে
+Ends today	আজ শেষ
+Enter	লিখুন
+Enter a name.	নাম লিখুন।
+Enter a phone number to reach the shop.	দোকানে যোগাযোগের ফোন নম্বর দিন।
+Enter a valid email address.	সঠিক ইমেইল দিন।
+Enter a web address like example.com	example.com এর মতো ওয়েব ঠিকানা দিন
+Enter an amount greater than 0.	০ এর বেশি টাকা লিখুন।
+Enter an amount.	টাকার পরিমাণ লিখুন।
+Enter how much you are paying now.	এখন কত টাকা দিচ্ছেন লিখুন।
+Enter the advance amount.	অগ্রিমের পরিমাণ লিখুন।
+Enter the bank account number.	ব্যাংক একাউন্ট নম্বর লিখুন।
+Enter the company name.	কোম্পানির নাম লিখুন।
+Enter the customer name.	কাস্টমারের নাম লিখুন।
+Enter the discount.	ছাড় লিখুন।
+Enter the product name.	পণ্যের নাম লিখুন।
+Enter the selling price.	বিক্রয়মূল্য লিখুন।
+Enter the supplier name.	সাপ্লায়ারের নাম লিখুন।
+Enter the unit cost.	প্রতি ইউনিটের দাম লিখুন।
+Enter the wallet number.	ওয়ালেট নম্বর লিখুন।
+Enter their name.	নাম লিখুন।
+Entries	এন্ট্রি
+Every change anyone makes is recorded here. Pick a longer period to see earlier activity.	যে কেউ যা বদলান তা এখানে রেকর্ড হয়। আগের কাজ দেখতে বড় সময় বাছুন।
+Every change made for * is undone and they get the standard * access.	$1 এর জন্য করা সব পরিবর্তন বাতিল হবে, আর তিনি স্বাভাবিক $2 অনুমতি পাবেন।
+Every product is above its alert quantity.	সব পণ্যের স্টক সতর্ক-সীমার ওপরে আছে।
+Every purchase in the period, what was paid and what is still owed.	এই সময়ের সব ক্রয় — কত দেওয়া হয়েছে আর কত এখনো বাকি।
+Every sale in the period with what it cost and what is left to collect.	এই সময়ের সব বিক্রি — খরচ কত আর কত আদায় বাকি।
+Every sale, payment, expense and transfer leaves a line here.	প্রতিটা বিক্রি, পেমেন্ট, খরচ আর ট্রান্সফারের একটা লাইন এখানে থাকে।
+Every staff member already has a slip for this month.	এই মাসে সব স্টাফের স্লিপ আগেই তৈরি।
+Everyone	সবাই
+Everything	সব
+Everything this payment did is reversed: the money goes back to	এই পেমেন্টের সব কাজ উল্টে যাবে: টাকা ফেরত যাবে
+Everything this receipt did is reversed: the	এই রসিদের সব কাজ উল্টে যাবে:
+Everything, including staff, permissions and setup.	স্টাফ, অনুমতি আর সেটআপসহ সবকিছু।
+Exact	হুবহু
+Exact amount	ঠিক যত টাকা
+Execute	সম্পন্ন করুন
+Execute *?	$1 সম্পন্ন করবেন?
+Executed by	সম্পন্ন করেছেন
+Exit company	কোম্পানি থেকে বের হন
+Expense	খরচ
+Expense Report	খরচের রিপোর্ট
+Expense head	খরচের খাত
+Expense voucher	খরচের ভাউচার
+Expenses	খরচ
+Expenses by head	খাত অনুযায়ী খরচ
+Expenses by head:	খাত অনুযায়ী খরচ:
+Expired	মেয়াদ শেষ
+Expiring soon	শিগগির মেয়াদ শেষ
+Export	এক্সপোর্ট
+Exporting…	এক্সপোর্ট হচ্ছে…
+Extend by	মেয়াদ বাড়ান
+External	বাইরের
+Failed	ব্যর্থ
+Feet	ফুট
+Field	ঘর
+Fields	ঘর
+First admin	প্রথম অ্যাডমিন
+First name	নামের প্রথম অংশ
+Fix the highlighted products.	চিহ্নিত পণ্যগুলো ঠিক করুন।
+Fix the highlighted rows.	চিহ্নিত সারিগুলো ঠিক করুন।
+Fixed price	নির্দিষ্ট দাম
+For	জন্য
+For one invoice	একটা ইনভয়েসের জন্য
+For someone who left. Their sales and receipts keep their name.	যিনি চলে গেছেন তাঁর জন্য। তাঁর বিক্রি ও রসিদে নাম থেকে যাবে।
+Forgot it? Give them a new one. Their old password stops working.	ভুলে গেছেন? নতুন একটা দিন। আগেরটা আর কাজ করবে না।
+Forgot your password? Ask your shop admin to reset it from the Staff screen.	পাসওয়ার্ড ভুলে গেছেন? দোকানের অ্যাডমিনকে Staff পাতা থেকে রিসেট করতে বলুন।
+From	থেকে
+From account	যে একাউন্ট থেকে
+From any account	যেকোনো একাউন্ট থেকে
+From supplier advance	সাপ্লায়ারের অগ্রিম থেকে
+From your accounts	আপনার একাউন্ট থেকে
+Full	পুরো
+Full sale form	পুরো বিক্রির ফর্ম
+Fully paid	পুরো পরিশোধ
+Give advance	অগ্রিম দিন
+Give an advance	অগ্রিম দিন
+Give back	ফেরত দিন
+Give it a name, like Gram or Dozen.	একটা নাম দিন, যেমন গ্রাম বা ডজন।
+Give the * a name.	$1 এর একটা নাম দিন।
+Give the account a name.	একাউন্টের একটা নাম দিন।
+Give the unit a name, like Kilogram or Pieces.	ইউনিটের একটা নাম দিন, যেমন কেজি বা পিস।
+Give them these details. Next, check what they can do —	তাঁকে এই তথ্যগুলো দিন। এরপর দেখুন তিনি কী কী করতে পারবেন —
+Go back to * defaults?	$1 এর ডিফল্টে ফিরে যাবেন?
+Go to Units	ইউনিট পাতায় যান
+Go to current sale	চলতি বিক্রিতে যান
+Goods total	পণ্যের মোট
+Gram	গ্রাম
+Gross profit	মোট লাভ
+Half	অর্ধেক
+Has due	বাকি আছে
+Head	খাত
+Hidden everywhere	সব জায়গা থেকে লুকানো
+Hidden from Sale, POS and Purchase. History is kept.	বিক্রি, POS আর ক্রয় থেকে লুকানো। আগের হিসাব থাকবে।
+Hidden from new purchases and payments. History is kept.	নতুন ক্রয় ও পেমেন্ট থেকে লুকানো। আগের হিসাব থাকবে।
+Hidden from new sales. History is kept.	নতুন বিক্রি থেকে লুকানো। আগের হিসাব থাকবে।
+Hide message	বার্তা লুকান
+Hide password	পাসওয়ার্ড লুকান
+How big is one	একটা কত বড়
+How is it priced?	দাম কীভাবে ধরা হয়?
+How many	কতগুলো
+How much came in?	কত টাকা এলো?
+How much is in it today, before using this software.	এই সফটওয়্যার ব্যবহারের আগে আজ এতে কত আছে।
+How much was spent?	কত খরচ হলো?
+How you count or measure a product when you buy and sell it.	কেনা-বেচার সময় পণ্য কীভাবে গোনেন বা মাপেন।
+IP address	IP ঠিকানা
+Idle	নিষ্ক্রিয়
+Idle (2+ weeks)	নিষ্ক্রিয় (২+ সপ্তাহ)
+If any expense uses it, it is turned off instead of deleted.	কোনো খরচে ব্যবহার হয়ে থাকলে মোছার বদলে বন্ধ করা হবে।
+If any money has moved through this account, it is marked inactive instead, so your sales, purchases and expenses keep their history. Otherwise it is removed.	এই একাউন্টে কখনো টাকা লেনদেন হয়ে থাকলে মোছার বদলে বন্ধ করা হবে, যাতে বিক্রি, ক্রয় আর খরচের হিসাব ঠিক থাকে। না হলে মুছে যাবে।
+If this product was ever bought or sold, it is marked inactive instead, so old invoices stay correct. Otherwise it is removed completely.	এই পণ্য কখনো কেনা বা বিক্রি হয়ে থাকলে মোছার বদলে বন্ধ করা হবে, যাতে পুরনো ইনভয়েস ঠিক থাকে। না হলে পুরোপুরি মুছে যাবে।
+In	ঢুকেছে
+In stock	স্টকে আছে
+In the account	একাউন্টে আছে
+Inactive	বন্ধ
+Inactive ones stay on the products that already use them, but can't be picked for new products.	বন্ধগুলো আগের পণ্যে থেকে যাবে, কিন্তু নতুন পণ্যে বাছা যাবে না।
+Inactive units stay on the products that already use them, but can't be picked for new products.	বন্ধ ইউনিট আগের পণ্যে থেকে যাবে, কিন্তু নতুন পণ্যে বাছা যাবে না।
+Including supplier payments	সাপ্লায়ার পেমেন্টসহ
+Income head	আয়ের খাত
+Income receipt	আয়ের রসিদ
+Internal	ভেতরের
+Into account	যে একাউন্টে
+Invoice	ইনভয়েস
+Invoice balance now	ইনভয়েসে এখন বাকি
+Invoice due	ইনভয়েসের বাকি
+Invoice number	ইনভয়েস নম্বর
+Invoice payment	ইনভয়েস পেমেন্ট
+Invoice total	ইনভয়েসের মোট
+Invoices	ইনভয়েস
+Invoices and sale list	ইনভয়েস ও বিক্রির তালিকা
+It has entries or sub heads, so it will be	এতে এন্ট্রি বা উপ-খাত আছে, তাই এটা হবে
+It is pending. No money has moved yet. Execute it from the transfer list.	এটা অপেক্ষায় আছে। এখনো টাকা যায়নি। ট্রান্সফার তালিকা থেকে সম্পন্ন করুন।
+It's used by	ব্যবহার করছে
+Item	আইটেম
+Item discounts	আইটেমের ছাড়
+Item sold together as a set	সেট হিসেবে বিক্রি হওয়া আইটেম
+Items	আইটেম
+Items sold by the box	বক্স হিসেবে বিক্রি হওয়া আইটেম
+Its users can sign in again.	এর ইউজাররা আবার লগইন করতে পারবেন।
+Just now	এইমাত্র
+Just you so far	এখন পর্যন্ত শুধু আপনি
+Keep	রাখুন
+Keep it	রেখে দিন
+Keep me signed in for 7 days	৭ দিন লগইন রাখুন
+Kept as advance	অগ্রিম হিসেবে রাখা
+Kept as advance with supplier	সাপ্লায়ারের কাছে অগ্রিম হিসেবে রাখা
+Kept with the supplier for later	পরে কাজে লাগাতে সাপ্লায়ারের কাছে রাখা
+Kilogram	কেজি
+Kind	ধরন
+Last	শেষ
+Last 3 months	গত ৩ মাস
+Last 30 days	গত ৩০ দিন
+Last 7 days	গত ৭ দিন
+Last active	শেষ সক্রিয়
+Last cost	শেষ ক্রয়মূল্য
+Last month	গত মাস
+Last name	নামের শেষ অংশ
+Last:	শেষ:
+Last: today	শেষ: আজ
+Leave off to record the whole amount as due to the supplier.	বন্ধ রাখলে পুরো টাকা সাপ্লায়ারের বাকি হিসেবে থাকবে।
+Left as due	বাকি রইল
+Letters, numbers, dot, dash — no spaces	অক্ষর, সংখ্যা, ডট, ড্যাশ — ফাঁকা জায়গা নয়
+Level used	ব্যবহৃত স্তর
+Light	লাইট
+List price	তালিকার দাম
+Listed advances	তালিকার অগ্রিম
+Litre	লিটার
+Loading accounts…	একাউন্ট লোড হচ্ছে…
+Loading chart…	চার্ট লোড হচ্ছে…
+Loading invoices…	ইনভয়েস লোড হচ্ছে…
+Loading…	লোড হচ্ছে…
+Logo	লোগো
+Logo removed.	লোগো সরানো হয়েছে।
+Logo updated.	লোগো আপডেট হয়েছে।
+Low Stock	কম স্টক
+Low-stock items	কম স্টকের পণ্য
+Lowest stock	সবচেয়ে কম স্টক
+Lowest stock first	কম স্টক আগে
+Main menu	মূল মেনু
+Make another	আরেকটা তৈরি করুন
+Make another password	আরেকটা পাসওয়ার্ড তৈরি করুন
+Make inactive	বন্ধ করুন
+Manager	ম্যানেজার
+Margin	মার্জিন
+Mark completed	সম্পন্ন চিহ্নিত করুন
+Mark delivered	ডেলিভারি হয়েছে
+Mark inactive	বন্ধ করুন
+Mark regular or wholesale buyers so they stand out in lists.	নিয়মিত বা পাইকারি ক্রেতাদের চিহ্নিত করুন, যাতে তালিকায় আলাদা চোখে পড়ে।
+Mark return * as completed?	ফেরত $1 সম্পন্ন চিহ্নিত করবেন?
+Max branches	সর্বোচ্চ শাখা
+Max products	সর্বোচ্চ পণ্য
+Max users	সর্বোচ্চ ইউজার
+Message copied	বার্তা কপি হয়েছে
+Message — use	বার্তা — ব্যবহার করুন
+Method	মাধ্যম
+Metre	মিটার
+Millilitre	মিলিলিটার
+Mobile	মোবাইল
+Mobile (offline)	মোবাইল (অফলাইন)
+Mobile app	মোবাইল অ্যাপ
+Mobile banking	মোবাইল ব্যাংকিং
+Money flow	টাকার প্রবাহ
+Money in	টাকা এসেছে
+Money in (this page)	টাকা এসেছে (এই পাতা)
+Money leaves your account when you save.	সেভ করলেই একাউন্ট থেকে টাকা বের হবে।
+Money movements	টাকার লেনদেন
+Money out	টাকা গেছে
+Money out (this page)	টাকা গেছে (এই পাতা)
+Money receipt	মানি রিসিট
+Money receipts	মানি রিসিট
+Money you collect from customers will appear here.	কাস্টমারের কাছ থেকে নেওয়া টাকা এখানে দেখাবে।
+Money you give a staff member before payday is recorded here and cut from their next salary.	বেতনের আগে স্টাফকে দেওয়া টাকা এখানে রেকর্ড হয় এবং পরের বেতন থেকে কাটা হয়।
+Money you have right now	এই মুহূর্তে আপনার কাছে থাকা টাকা
+Money you move between accounts will appear here.	একাউন্টের মধ্যে টাকা সরালে এখানে দেখাবে।
+Money you pay to suppliers will appear here.	সাপ্লায়ারকে দেওয়া টাকা এখানে দেখাবে।
+Month	মাস
+Months	মাস
+Most bought	সবচেয়ে বেশি কেনা
+Most owed	সবচেয়ে বেশি বাকি
+Move money between accounts	একাউন্টের মধ্যে টাকা সরান
+Moving	সরানো হচ্ছে
+My profile	আমার প্রোফাইল
+Name	নাম
+Net	নিট
+Net balance	নিট ব্যালেন্স
+Net loss	নিট ক্ষতি
+Net profit	নিট লাভ
+Net salary	নিট বেতন
+Net salary paid	দেওয়া নিট বেতন
+Never signed in	কখনো লগইন করেননি
+New	নতুন
+New account	নতুন একাউন্ট
+New brand	নতুন ব্র্যান্ড
+New category	নতুন ক্যাটাগরি
+New company	নতুন কোম্পানি
+New customer	নতুন কাস্টমার
+New head	নতুন খাত
+New here?	নতুন?
+New orders from your online shop will appear here.	অনলাইন শপের নতুন অর্ডার এখানে দেখাবে।
+New password	নতুন পাসওয়ার্ড
+New payment	নতুন পেমেন্ট
+New product	নতুন পণ্য
+New purchase	নতুন ক্রয়
+New receipt	নতুন রসিদ
+New record	নতুন রেকর্ড
+New sale	নতুন বিক্রি
+New sale mode	নতুন সেল মোড
+New supplier	নতুন সাপ্লায়ার
+New transfer	নতুন ট্রান্সফার
+New unit	নতুন ইউনিট
+Newest	নতুন আগে
+Next month	পরের মাস
+Next page	পরের পাতা
+Next: first admin	এরপর: প্রথম অ্যাডমিন
+No	না
+No accounts yet	এখনো কোনো একাউন্ট নেই
+No active	কোনো চালু নেই
+No active accounts.	কোনো চালু একাউন্ট নেই।
+No active units.	কোনো চালু ইউনিট নেই।
+No activity today yet	আজ এখনো কোনো কাজ হয়নি
+No activity yet	এখনো কোনো কাজ হয়নি
+No admin yet	এখনো কোনো অ্যাডমিন নেই
+No advances	কোনো অগ্রিম নেই
+No bad stock matches these filters	এই ফিল্টারে কোনো নষ্ট মাল নেই
+No bad stock recorded	কোনো নষ্ট মাল রেকর্ড হয়নি
+No brand	ব্র্যান্ড নেই
+No companies yet	এখনো কোনো কোম্পানি নেই
+No cost yet	এখনো খরচ নেই
+No customers match	কোনো কাস্টমার মেলেনি
+No customers yet	এখনো কোনো কাস্টমার নেই
+No data for this period	এই সময়ের কোনো তথ্য নেই
+No end date	শেষ তারিখ নেই
+No expenses recorded in this period.	এই সময়ে কোনো খরচ রেকর্ড হয়নি।
+No expenses recorded.	কোনো খরচ রেকর্ড হয়নি।
+No field changes	কোনো ঘর বদলায়নি
+No field details were recorded for this entry.	এই এন্ট্রির কোনো ঘরের বিবরণ রেকর্ড হয়নি।
+No head	খাত নেই
+No heads yet	এখনো কোনো খাত নেই
+No inactive units.	কোনো বন্ধ ইউনিট নেই।
+No match	মেলেনি
+No modules yet	এখনো কোনো অংশ নেই
+No money moved in or out in this period.	এই সময়ে কোনো টাকা আসেনি বা যায়নি।
+No one can sign in yet. Add an admin.	এখনো কেউ লগইন করতে পারবেন না। একজন অ্যাডমিন যোগ করুন।
+No orders here	এখানে কোনো অর্ডার নেই
+No payments made yet.	এখনো কোনো পেমেন্ট দেওয়া হয়নি।
+No payments match these filters	এই ফিল্টারে কোনো পেমেন্ট নেই
+No payments received yet.	এখনো কোনো টাকা পাওয়া যায়নি।
+No product matches	কোনো পণ্য মেলেনি
+No product matches “	কোনো পণ্য মেলেনি “
+No product matches “*”	“$1” এর সাথে কোনো পণ্য মেলেনি
+No product uses this unit. It will be removed for good.	কোনো পণ্য এই ইউনিট ব্যবহার করছে না। এটা পুরোপুরি মুছে যাবে।
+No product with code *	$1 কোডে কোনো পণ্য নেই
+No products match	কোনো পণ্য মেলেনি
+No products yet	এখনো কোনো পণ্য নেই
+No purchases from this supplier yet.	এই সাপ্লায়ার থেকে এখনো কিছু কেনা হয়নি।
+No purchases match these filters	এই ফিল্টারে কোনো ক্রয় নেই
+No purchases this month yet	এই মাসে এখনো কোনো ক্রয় নেই
+No reason given	কারণ দেওয়া হয়নি
+No receipts match these filters	এই ফিল্টারে কোনো রসিদ নেই
+No receipts this month yet	এই মাসে এখনো কোনো রসিদ নেই
+No records match this period and these filters.	এই সময় ও ফিল্টারে কোনো রেকর্ড নেই।
+No salary slips for	কোনো বেতন-স্লিপ নেই
+No salary slips in this period	এই সময়ে কোনো বেতন-স্লিপ নেই
+No sale modes yet	এখনো কোনো সেল মোড নেই
+No sales in this period.	এই সময়ে কোনো বিক্রি নেই।
+No sales match these filters	এই ফিল্টারে কোনো বিক্রি নেই
+No sales or payments in this period.	এই সময়ে কোনো বিক্রি বা পেমেন্ট নেই।
+No sales this month yet	এই মাসে এখনো কোনো বিক্রি নেই
+No sales to this customer yet.	এই কাস্টমারের কাছে এখনো কিছু বিক্রি হয়নি।
+No sales, purchases or expenses in the last	শেষ এই সময়ে কোনো বিক্রি, ক্রয় বা খরচ নেই
+No sub heads	কোনো উপ-খাত নেই
+No supplier payments this month yet	এই মাসে এখনো কোনো সাপ্লায়ার পেমেন্ট নেই
+No suppliers match	কোনো সাপ্লায়ার মেলেনি
+No suppliers yet	এখনো কোনো সাপ্লায়ার নেই
+No transactions match these filters	এই ফিল্টারে কোনো লেনদেন নেই
+No transactions this month yet	এই মাসে এখনো কোনো লেনদেন নেই
+No transfers match these filters	এই ফিল্টারে কোনো ট্রান্সফার নেই
+No transfers yet	এখনো কোনো ট্রান্সফার নেই
+No unit matches “	কোনো ইউনিট মেলেনি “
+No sales returns match these filters	এই ফিল্টারে কোনো বিক্রি ফেরত নেই
+No purchase returns match these filters	এই ফিল্টারে কোনো ক্রয় ফেরত নেই
+No sales returns yet	এখনো কোনো বিক্রি ফেরত নেই
+No purchase returns yet	এখনো কোনো ক্রয় ফেরত নেই
+No.	নং
+Nobody from this company can sign in until you turn it back on. Their data stays safe.	আবার চালু না করা পর্যন্ত এই কোম্পানির কেউ লগইন করতে পারবেন না। তাদের ডাটা নিরাপদ থাকবে।
+Nobody from this company can sign in.	এই কোম্পানির কেউ লগইন করতে পারবেন না।
+Nobody matches	কেউ মেলেনি
+Nobody owes you right now	এই মুহূর্তে কারো কাছে বাকি নেই
+None	কিছু না
+Not enough balance. Available *.	যথেষ্ট ব্যালেন্স নেই। আছে $1।
+Not paid yet	এখনো দেওয়া হয়নি
+Not shown anywhere. Turn one on, or use the Off switch instead.	কোথাও দেখাবে না। একটা চালু করুন, অথবা Off সুইচ ব্যবহার করুন।
+Not used yet	এখনো ব্যবহার হয়নি
+Note	নোট
+Note:	নোট:
+Nothing	কিছু নেই
+Nothing active.	কিছু চালু নেই।
+Nothing is due to this supplier.	এই সাপ্লায়ারকে কিছু দিতে বাকি নেই।
+Nothing is inactive.	কিছু বন্ধ নেই।
+Nothing matches	কিছু মেলেনি
+Nothing matches these filters	এই ফিল্টারে কিছু মেলেনি
+Nothing matches “	কিছু মেলেনি “
+Nothing matches.	কিছু মেলেনি।
+Nothing needs restocking.	কোনো পণ্য নতুন করে কিনতে হবে না।
+Nothing recorded yet	এখনো কিছু রেকর্ড হয়নি
+Nothing recorded yet.	এখনো কিছু রেকর্ড হয়নি।
+Nothing to show	দেখানোর কিছু নেই
+Nothing to show here.	এখানে দেখানোর কিছু নেই।
+Nothing uses it yet. It will be removed for good.	এখনো কিছুতে ব্যবহার হয়নি। এটা পুরোপুরি মুছে যাবে।
+Now	এখন
+Number not recognised	নম্বর চেনা যায়নি
+Off	বন্ধ
+Oil, milk, liquids	তেল, দুধ, তরল
+Oldest due	সবচেয়ে পুরনো বাকি
+Oldest dues first	পুরনো বাকি আগে
+Oldest first	পুরনো আগে
+On credit	বাকিতে
+On your invoices	আপনার ইনভয়েসে
+One invoice	একটা ইনভয়েস
+One less	একটা কম
+One more	আরেকটা
+Online Shop	অনলাইন শপ
+Online orders	অনলাইন অর্ডার
+Online shop (e-commerce)	অনলাইন শপ (ই-কমার্স)
+Online shop only	শুধু অনলাইন শপ
+Only * * available.	মাত্র $1 $2 আছে।
+Only * * of * in stock	$3 এর স্টকে মাত্র $1 $2 আছে
+Only an admin can change what someone can do.	কে কী করতে পারবেন তা শুধু অ্যাডমিন বদলাতে পারেন।
+Only pending or rejected returns can be deleted. This cannot be undone.	শুধু অপেক্ষমাণ বা বাতিল ফেরত মোছা যায়। এটা আর ফেরানো যাবে না।
+Open	খুলুন
+Open a company for each shop that uses the software. You'll set up its admin at the same time, and they take it from there.	সফটওয়্যার ব্যবহারকারী প্রতিটা দোকানের জন্য একটা কোম্পানি খুলুন। একই সাথে তার অ্যাডমিন সেট করবেন, বাকিটা তিনিই চালাবেন।
+Open company	কোম্পানি খুলুন
+Open invoice	ইনভয়েস খুলুন
+Open menu	মেনু খুলুন
+Open payment	পেমেন্ট খুলুন
+Open purchase	ক্রয় খুলুন
+Open receipt	রসিদ খুলুন
+Open shop	শপ খুলুন
+Open transfer	ট্রান্সফার খুলুন
+Opened	খোলা হয়েছে
+Opening	শুরু
+Opening balance	শুরুর ব্যালেন্স
+Opening stock	শুরুর স্টক
+Optional	ঐচ্ছিক
+Order no, name or phone	অর্ডার নং, নাম বা ফোন
+Other	অন্যান্য
+Other addition	অন্যান্য যোগ
+Other deduction	অন্যান্য কর্তন
+Other income	অন্যান্য আয়
+Out	গেছে
+Out of stock	স্টক শেষ
+Out of stock.	স্টক শেষ।
+Overdue	মেয়াদোত্তীর্ণ
+Overdue for	মেয়াদ পেরিয়েছে
+Overview	সারসংক্ষেপ
+Owe	দিতে হবে
+Owe you	আপনি পাবেন
+Owes you	আপনি পাবেন
+POS sale	POS বিক্রি
+Pack-style mode: customers see it online; staff won't see it in the Sale form.	প্যাক ধরনের মোড: কাস্টমার অনলাইনে দেখবেন; স্টাফ বিক্রির ফর্মে দেখবেন না।
+Packet	প্যাকেট
+Pages	পাতা
+Paid	পরিশোধিত
+Paid from	যেখান থেকে দেওয়া
+Paid from account	যে একাউন্ট থেকে দেওয়া
+Paid in full	পুরো পরিশোধ
+Paid now	এখন দেওয়া
+Paid on	দেওয়ার তারিখ
+Paid so far	এ পর্যন্ত দেওয়া
+Paid supplier	সাপ্লায়ারকে দেওয়া
+Paid to	যাকে দেওয়া
+Paid to suppliers	সাপ্লায়ারদের দেওয়া
+Pair	জোড়া
+Partial	আংশিক
+Particular	বিবরণ
+Password	পাসওয়ার্ড
+Password changed	পাসওয়ার্ড বদলানো হয়েছে
+Password: *	পাসওয়ার্ড: $1
+Past sales keep the old size; only new sales use the new one.	আগের বিক্রিতে পুরনো সাইজ থাকবে; শুধু নতুন বিক্রিতে নতুনটা বসবে।
+Pay	দিন
+Pay a particular bill.	একটা নির্দিষ্ট বিল শোধ করুন।
+Pay ahead for a future delivery.	পরের ডেলিভারির জন্য আগাম দিন।
+Pay from account	যে একাউন্ট থেকে দেবেন
+Pay salary	বেতন দিন
+Pay salary —	বেতন দিন —
+Pay supplier	সাপ্লায়ারকে দিন
+Pay the supplier now	এখনই সাপ্লায়ারকে দিন
+Paying	দিচ্ছেন
+Paying now	এখন দিচ্ছেন
+Paying…	দেওয়া হচ্ছে…
+Payment	পেমেন্ট
+Payment cancelled.	পেমেন্ট বাতিল হয়েছে।
+Payment method	পেমেন্টের মাধ্যম
+Payment preview	পেমেন্টের প্রিভিউ
+Payment received	টাকা পাওয়া গেছে
+Payment status	পেমেন্টের অবস্থা
+Payment type	পেমেন্টের ধরন
+Payment voucher	পেমেন্ট ভাউচার
+Payment voucher (cancelled)	পেমেন্ট ভাউচার (বাতিল)
+Payments	পেমেন্ট
+Payroll Report	বেতনের রিপোর্ট
+Payslip	বেতন-স্লিপ
+Pending	অপেক্ষমাণ
+People	লোকজন
+People who can sign in	যারা লগইন করতে পারেন
+Per unit price	প্রতি ইউনিটের দাম
+Period	সময়
+Person	ব্যক্তি
+Person or company name	ব্যক্তি বা কোম্পানির নাম
+Phone	ফোন
+Phone number needs at least 10 digits.	ফোন নম্বরে অন্তত ১০টা সংখ্যা লাগবে।
+Phone · Email	ফোন · ইমেইল
+Photo	ছবি
+Pick a person to choose what they can see and do. Admins always have full access.	কে কী দেখতে ও করতে পারবেন ঠিক করতে একজনকে বাছুন। অ্যাডমিনের সবসময় পুরো অনুমতি থাকে।
+Pick an image (PNG, JPG or WebP).	একটা ছবি বাছুন (PNG, JPG বা WebP)।
+Pick at least one	অন্তত একটা বাছুন
+Pick the date the subscription ends.	সাবস্ক্রিপশন শেষের তারিখ বাছুন।
+Pick the date.	তারিখ বাছুন।
+Pick the invoice this money is for.	এই টাকা কোন ইনভয়েসের জন্য বাছুন।
+Pick the payment date.	পেমেন্টের তারিখ বাছুন।
+Pick the purchase date.	ক্রয়ের তারিখ বাছুন।
+Pick the transfer date.	ট্রান্সফারের তারিখ বাছুন।
+Pick the unit stock is counted in.	স্টক কোন ইউনিটে গোনা হয় বাছুন।
+Pick what the expense was for.	খরচটা কিসের জন্য বাছুন।
+Pick what the income was for.	আয়টা কিসের জন্য বাছুন।
+Pick where the money was paid from.	টাকা কোথা থেকে দেওয়া হয়েছে বাছুন।
+Pick where the money went in.	টাকা কোথায় জমা হয়েছে বাছুন।
+Pieces	পিস
+Plan	প্ল্যান
+Plan & subscription	প্ল্যান ও সাবস্ক্রিপশন
+Plan limit reached — turn someone off to add another.	প্ল্যানের সীমা শেষ — আরেকজন যোগ করতে কাউকে বন্ধ করুন।
+Please change the password after your first sign-in.	প্রথমবার লগইনের পর পাসওয়ার্ড বদলে নিন।
+Please wait…	অপেক্ষা করুন…
+Positive balance means the customer owes you. "Adv" means you hold their money in advance.	ধনাত্মক ব্যালেন্স মানে কাস্টমারের কাছে পাবেন। "অগ্রিম" মানে তাঁর টাকা আপনার কাছে আগাম জমা।
+Premium	প্রিমিয়াম
+Prepare	তৈরি করুন
+Prepare salary from the Salary Sheet first.	আগে বেতন-শিট থেকে বেতন তৈরি করুন।
+Prepared by	তৈরি করেছেন
+Preparing…	তৈরি হচ্ছে…
+Preview:	প্রিভিউ:
+Previous month	আগের মাস
+Previous page	আগের পাতা
+Price	দাম
+Price of	দাম
+Prices for each size are set on the product itself. Turning a mode off hides it from sale screens; past sales keep it.	প্রতিটা সাইজের দাম পণ্যেই সেট করা হয়। কোনো মোড বন্ধ করলে বিক্রির স্ক্রিন থেকে লুকাবে; আগের বিক্রিতে থাকবে।
+Print	প্রিন্ট
+Print barcode labels	বারকোড লেবেল প্রিন্ট
+Print list	তালিকা প্রিন্ট
+Printed at the top of every invoice, receipt and statement.	প্রতিটা ইনভয়েস, রসিদ আর স্টেটমেন্টের ওপরে ছাপা হয়।
+Printed on invoices and receipts	ইনভয়েস ও রসিদে ছাপা হয়
+Printed on the invoice	ইনভয়েসে ছাপা হয়
+Product	পণ্য
+Product #	পণ্য #
+Product name	পণ্যের নাম
+Product updated.	পণ্য আপডেট হয়েছে।
+Products	পণ্য
+Products & stock	পণ্য ও স্টক
+Products at or below the stock level you choose, so you can reorder before they run out.	আপনার বাছা স্টক-সীমায় বা তার নিচে থাকা পণ্য, যাতে শেষ হওয়ার আগেই আবার কিনতে পারেন।
+Profit	লাভ
+Profit / Loss	লাভ / ক্ষতি
+Profit / unit	লাভ / ইউনিট
+Purchase	ক্রয়
+Purchase Report	ক্রয়ের রিপোর্ট
+Purchase date	ক্রয়ের তারিখ
+Purchase invoice	ক্রয়ের ইনভয়েস
+Purchase invoice (cancelled)	ক্রয়ের ইনভয়েস (বাতিল)
+Purchase payment	ক্রয়ের পেমেন্ট
+Purchase refund	ক্রয়ের ফেরত টাকা
+Purchase returns (credit)	ক্রয় ফেরত (জমা)
+Purchase total	ক্রয়ের মোট
+Purchases	ক্রয়
+Purchases paid	ক্রয়ে দেওয়া
+Put this product on discount	এই পণ্যে ছাড় দিন
+Qty	পরিমাণ
+Quantity	পরিমাণ
+Quantity must be a whole number above 0.	পরিমাণ ০ এর বেশি পূর্ণসংখ্যা হতে হবে।
+Quantity must be above 0.	পরিমাণ ০ এর বেশি হতে হবে।
+Quantity of	পরিমাণ
+Quick access	দ্রুত যান
+Quick add	দ্রুত যোগ
+Quick sale	দ্রুত বিক্রি
+Quick transfer: move the money right now (otherwise it stays pending until you execute it)	দ্রুত ট্রান্সফার: এখনই টাকা সরান (না হলে সম্পন্ন না করা পর্যন্ত অপেক্ষায় থাকবে)
+Quiet	নিরব
+Reason	কারণ
+Receipt	রসিদ
+Receipt preview	রসিদের প্রিভিউ
+Receipt type	রসিদের ধরন
+Receipts	রসিদ
+Received	পেয়েছি
+Received by	গ্রহণ করেছেন
+Received by (supplier)	গ্রহণ করেছেন (সাপ্লায়ার)
+Received from	যার কাছ থেকে পেয়েছি
+Received from customer	কাস্টমারের কাছ থেকে পেয়েছি
+Received into	যেখানে জমা
+Received into account	যে একাউন্টে জমা
+Received with thanks from	ধন্যবাদের সাথে গ্রহণ করা হলো
+Receiving	গ্রহণ
+Recent activity	সাম্প্রতিক কাজ
+Recent payments	সাম্প্রতিক পেমেন্ট
+Recent purchases	সাম্প্রতিক ক্রয়
+Recent sales	সাম্প্রতিক বিক্রি
+Record	রেকর্ড করুন
+Record removed	রেকর্ড মুছে গেছে
+Recorded at	রেকর্ডের সময়
+Recorded by	রেকর্ড করেছেন
+Records	রেকর্ড
+Reference	রেফারেন্স
+Reference no.	রেফারেন্স নং
+Refresh	রিফ্রেশ
+Refund	ফেরত টাকা
+Refund details	ফেরত টাকার বিবরণ
+Refund from supplier	সাপ্লায়ারের ফেরত টাকা
+Refund received by	ফেরত টাকা গ্রহণ করেছেন
+Register your company	আপনার কোম্পানি রেজিস্টার করুন
+Register your company —	আপনার কোম্পানি রেজিস্টার করুন —
+Reject	বাতিল করুন
+Reject return *?	ফেরত $1 বাতিল করবেন?
+Rejected	বাতিল
+Remarks	মন্তব্য
+Reminded	তাগাদা দেওয়া হয়েছে
+Reminded today	আজ তাগাদা দেওয়া হয়েছে
+Reminded yesterday	গতকাল তাগাদা দেওয়া হয়েছে
+Reminded * days ago	$1 দিন আগে তাগাদা দেওয়া হয়েছে
+Remove	সরান
+Remove product	পণ্য সরান
+Rename	নাম বদলান
+Reports	রিপোর্ট
+Request failed (	অনুরোধ ব্যর্থ (
+Reset	রিসেট
+Reset access	অনুমতি রিসেট
+Reset filters	ফিল্টার রিসেট
+Restock soon	শিগগির কিনুন
+Return	ফেরত
+Return * approved.	ফেরত $1 অনুমোদিত হয়েছে।
+Return * rejected.	ফেরত $1 বাতিল হয়েছে।
+Return * completed.	ফেরত $1 সম্পন্ন হয়েছে।
+Return * deleted.	ফেরত $1 মুছে ফেলা হয়েছে।
+Return amount	ফেরতের টাকা
+Return charge	ফেরত চার্জ
+Return charge cannot be more than the goods total.	ফেরত চার্জ পণ্যের মোটের বেশি হতে পারে না।
+Return charge cannot be negative.	ফেরত চার্জ ঋণাত্মক হতে পারে না।
+Return date	ফেরতের তারিখ
+Return qty	ফেরতের পরিমাণ
+Return quantity	ফেরতের পরিমাণ
+Return refund	ফেরতের টাকা
+Return saved.	ফেরত সেভ হয়েছে।
+Return summary	ফেরতের সারসংক্ষেপ
+Returned to account	একাউন্টে ফেরত গেছে
+Returns	ফেরত
+Reversal of an earlier transfer	আগের একটা ট্রান্সফারের উল্টো
+Reversals only	শুধু উল্টো এন্ট্রি
+Reverse	উল্টান
+Reverse *?	$1 উল্টাবেন?
+Reversed	উল্টানো হয়েছে
+Rice, sugar, vegetables	চাল, চিনি, সবজি
+Role	রোল
+Role defaults	রোলের ডিফল্ট
+Running costs in the period by head and payment method.	এই সময়ের চলতি খরচ — খাত ও পেমেন্টের মাধ্যম অনুযায়ী।
+Running low	কমে আসছে
+Sacks of rice, flour, cement	চাল, আটা, সিমেন্টের বস্তা
+Salary for	বেতন
+Salary paid to *.	$1 কে বেতন দেওয়া হয়েছে।
+Sale	বিক্রি
+Sale date	বিক্রির তারিখ
+Sale mode	সেল মোড
+Sale saved	বিক্রি সেভ হয়েছে
+Sales	বিক্রি
+Sales Report	বিক্রির রিপোর্ট
+Sales collected and other income	বিক্রির আদায় ও অন্যান্য আয়
+Sales invoice	বিক্রির ইনভয়েস
+Sales less purchases gives gross profit; expenses and returns then give net profit.	বিক্রি থেকে ক্রয় বাদ দিলে মোট লাভ; তারপর খরচ ও ফেরত বাদ দিলে নিট লাভ।
+Sales returns	বিক্রি ফেরত
+Sales today	আজকের বিক্রি
+Sales you make in the app will appear here.	অ্যাপে যে বিক্রি করবেন তা এখানে দেখাবে।
+Sales, profit and money summary	বিক্রি, লাভ আর টাকার সারসংক্ষেপ
+Sales, purchases & expenses	বিক্রি, ক্রয় ও খরচ
+Save	সেভ করুন
+Save & add another	সেভ করে আরেকটা
+Save access	অনুমতি সেভ করুন
+Save changes	পরিবর্তন সেভ করুন
+Save payment	পেমেন্ট সেভ করুন
+Save purchase	ক্রয় সেভ করুন
+Save receipt	রসিদ সেভ করুন
+Save receipt,	রসিদ সেভ করুন,
+Save regular buyers here so you can sell on credit and track what they owe.	নিয়মিত ক্রেতাদের এখানে সেভ করুন, যাতে বাকিতে বিক্রি করে তাদের বাকির হিসাব রাখতে পারেন।
+Save sale	বিক্রি সেভ করুন
+Save sale,	বিক্রি সেভ করুন,
+Save settings	সেটিংস সেভ করুন
+Save slip	স্লিপ সেভ করুন
+Saved customer	সেভ করা কাস্টমার
+Saved for this customer's next purchase	এই কাস্টমারের পরের কেনাকাটার জন্য রাখা
+Saved.	সেভ হয়েছে।
+Saved. * sees the change next time a page loads.	সেভ হয়েছে। পরের বার পাতা খুললে $1 পরিবর্তনটা দেখবেন।
+Saved. New invoices and receipts use these details.	সেভ হয়েছে। নতুন ইনভয়েস ও রসিদে এই তথ্য বসবে।
+Saved. The account balance was adjusted.	সেভ হয়েছে। একাউন্ট ব্যালেন্স সমন্বয় করা হয়েছে।
+Saving…	সেভ হচ্ছে…
+Say how much one of these is.	এর একটা কতটুকু তা লিখুন।
+Search	খুঁজুন
+Search a product above to add it. Scanning a barcode adds it straight away.	যোগ করতে ওপরে পণ্য খুঁজুন। বারকোড স্ক্যান করলে সাথে সাথে যোগ হবে।
+Search audit log	অডিট লগে খুঁজুন
+Search bad stock	নষ্ট মাল খুঁজুন
+Search companies	কোম্পানি খুঁজুন
+Search company, code, phone, email or admin username	কোম্পানি, কোড, ফোন, ইমেইল বা অ্যাডমিনের ইউজারনেম দিয়ে খুঁজুন
+Search customer	কাস্টমার খুঁজুন
+Search customer by name or phone	নাম বা ফোন দিয়ে কাস্টমার খুঁজুন
+Search customers	কাস্টমার খুঁজুন
+Search heads	খাত খুঁজুন
+Search invoice no. or customer	ইনভয়েস নং বা কাস্টমার দিয়ে খুঁজুন
+Search invoice no., customer name or phone	ইনভয়েস নং, কাস্টমারের নাম বা ফোন দিয়ে খুঁজুন
+Search invoice no., supplier or note	ইনভয়েস নং, সাপ্লায়ার বা নোট দিয়ে খুঁজুন
+Search name or SKU, or scan a barcode	নাম বা SKU দিয়ে খুঁজুন, অথবা বারকোড স্ক্যান করুন
+Search name or phone	নাম বা ফোন দিয়ে খুঁজুন
+Search name or short name	নাম বা ছোট নাম দিয়ে খুঁজুন
+Search name, SKU, category or brand	নাম, SKU, ক্যাটাগরি বা ব্র্যান্ড দিয়ে খুঁজুন
+Search name, code or unit	নাম, কোড বা ইউনিট দিয়ে খুঁজুন
+Search name, phone, email or address	নাম, ফোন, ইমেইল বা ঠিকানা দিয়ে খুঁজুন
+Search name, phone, shop or what they supply	নাম, ফোন, দোকান বা কী সাপ্লাই দেন তা দিয়ে খুঁজুন
+Search name, username, phone or role	নাম, ইউজারনেম, ফোন বা রোল দিয়ে খুঁজুন
+Search note,	নোট দিয়ে খুঁজুন,
+Search orders	অর্ডার খুঁজুন
+Search payment no., supplier, phone, invoice or reference	পেমেন্ট নং, সাপ্লায়ার, ফোন, ইনভয়েস বা রেফারেন্স দিয়ে খুঁজুন
+Search payments	পেমেন্ট খুঁজুন
+Search people	লোক খুঁজুন
+Search product by name, or scan / type the SKU and press Enter	নাম দিয়ে পণ্য খুঁজুন, অথবা SKU স্ক্যান / টাইপ করে Enter চাপুন
+Search product, reason or reference	পণ্য, কারণ বা রেফারেন্স দিয়ে খুঁজুন
+Search products	পণ্য খুঁজুন
+Search purchases	ক্রয় খুঁজুন
+Search receipt no., customer, phone or invoice	রসিদ নং, কাস্টমার, ফোন বা ইনভয়েস দিয়ে খুঁজুন
+Search receipts	রসিদ খুঁজুন
+Search record name or user	রেকর্ডের নাম বা ইউজার দিয়ে খুঁজুন
+Search sale modes	সেল মোড খুঁজুন
+Search sales	বিক্রি খুঁজুন
+Search supplier by name or phone	নাম বা ফোন দিয়ে সাপ্লায়ার খুঁজুন
+Search suppliers	সাপ্লায়ার খুঁজুন
+Search transaction no., description or account	লেনদেন নং, বিবরণ বা একাউন্ট দিয়ে খুঁজুন
+Search transactions	লেনদেন খুঁজুন
+Search transfer no. or description	ট্রান্সফার নং বা বিবরণ দিয়ে খুঁজুন
+Search transfers	ট্রান্সফার খুঁজুন
+Search units	ইউনিট খুঁজুন
+Search…	খুঁজুন…
+Sees everything	সব দেখতে পান
+Select	বাছুন
+Select product	পণ্য বাছুন
+Sell the same product in different sizes	একই পণ্য বিভিন্ন সাইজে বিক্রি করুন
+Selling 1 * takes * * out of stock.	১ $1 বিক্রি করলে স্টক থেকে $2 $3 কমবে।
+Selling price	বিক্রয়মূল্য
+Selling price is lower than the cost. You would lose money on each sale.	বিক্রয়মূল্য ক্রয়মূল্যের চেয়ে কম। প্রতিটা বিক্রিতে লোকসান হবে।
+Sells, takes payments, adds customers. Cannot delete or see setup.	বিক্রি করেন, টাকা নেন, কাস্টমার যোগ করেন। মুছতে বা সেটআপ দেখতে পারেন না।
+Send reminder	তাগাদা পাঠান
+Send these sign-in details to	লগইনের এই তথ্য পাঠান
+Service	সার্ভিস
+Service charge	সার্ভিস চার্জ
+Set	সেট
+Set up your units first	আগে ইউনিট সেট করুন
+Set what they can do	কী করতে পারবেন ঠিক করুন
+Settings	সেটিংস
+Settled	মিটে গেছে
+Setup	সেটআপ
+Share this link with customers	এই লিংক কাস্টমারদের দিন
+Shoes, socks	জুতা, মোজা
+Shop + Web app	শপ + ওয়েব অ্যাপ
+Shop / business name	দোকান / ব্যবসার নাম
+Shop details	দোকানের তথ্য
+Shop expenses	দোকানের খরচ
+Shop name	দোকানের নাম
+Shop no., road, area, city	দোকান নং, রাস্তা, এলাকা, শহর
+Shop settings	শপ সেটিংস
+Short by	কম আছে
+Short code	ছোট কোড
+Short name	ছোট নাম
+Show	দেখান
+Show all companies	সব কোম্পানি দেখান
+Show all time	সব সময়ের দেখান
+Show inactive	বন্ধগুলো দেখান
+Show only	শুধু দেখান
+Show password	পাসওয়ার্ড দেখান
+Show passwords	পাসওয়ার্ড দেখান
+Show price	দাম দেখান
+Show turned off (	বন্ধগুলো দেখান (
+Showing	দেখাচ্ছে
+Showing *–* of *	$3 এর মধ্যে $1–$2 দেখাচ্ছে
+Shown next to quantities on invoices: 2.5	ইনভয়েসে পরিমাণের পাশে দেখায়: 2.5
+Shows up when you make a purchase or payment.	ক্রয় বা পেমেন্ট করার সময় দেখাবে।
+Shows up when you make a sale or take a payment.	বিক্রি বা টাকা নেওয়ার সময় দেখাবে।
+Sign in	লগইন
+Sign in at	লগইন করুন
+Sign in at: *	লগইন করুন: $1
+Sign in —	লগইন —
+Sign out	লগআউট
+Sign out?	লগআউট করবেন?
+Signed in as	লগইন করা আছে
+Signing in…	লগইন হচ্ছে…
+Since	থেকে
+Single items: a pen, a phone, a shirt	একক জিনিস: কলম, ফোন, শার্ট
+Slip deleted.	স্লিপ মুছে ফেলা হয়েছে।
+Slip updated.	স্লিপ আপডেট হয়েছে।
+Small bottles, medicine	ছোট বোতল, ওষুধ
+Sold	বিক্রি হয়েছে
+Sold by	বিক্রি যেভাবে
+Sold by for	যেভাবে বিক্রি, দাম
+Sold so far	এ পর্যন্ত বিক্রি
+Sold:	বিক্রি:
+Soon	শিগগির
+Sort	সাজান
+Special	বিশেষ
+Special customer	বিশেষ কাস্টমার
+Spent	খরচ হয়েছে
+Spent on	খরচ হয়েছে
+Spices, small loose items	মসলা, ছোট খোলা জিনিস
+Square works best. PNG, JPG or WebP, up to 5 MB.	বর্গাকার ছবি ভালো দেখায়। PNG, JPG বা WebP, সর্বোচ্চ ৫ MB।
+Staff	স্টাফ
+Staff who owe	যে স্টাফের কাছে পাওনা
+Standard	স্ট্যান্ডার্ড
+Start	শুরু
+Start a	শুরু করুন
+Start with the basics	মূল বিষয়গুলো দিয়ে শুরু করুন
+Started	শুরু হয়েছে
+Statement	স্টেটমেন্ট
+Status	অবস্থা
+Stay signed in	লগইন থাকুন
+Still owed	এখনো বাকি
+Still owed only	এখনো বাকি শুধু
+Still to pay	এখনো দিতে হবে
+Still to pay the supplier	সাপ্লায়ারকে এখনো দিতে হবে
+Stock	স্টক
+Stock Report	স্টক রিপোর্ট
+Stock added	স্টক যোগ হয়েছে
+Stock alerts	স্টক সতর্কতা
+Stock at or below	স্টক এর সমান বা কম
+Stock changes only through purchases, sales and returns, so the numbers always match your invoices.	স্টক শুধু ক্রয়, বিক্রি আর ফেরতে বদলায়, তাই সংখ্যা সবসময় ইনভয়েসের সাথে মেলে।
+Stock from	স্টক যেখান থেকে
+Stock goes down as soon as you save.	সেভ করলেই স্টক কমবে।
+Stock goes up as soon as you save.	সেভ করলেই স্টক বাড়বে।
+Stock in	স্টক এসেছে
+Stock is always counted in the product's own unit. A sale mode says how much one sale takes out — sell rice by the	স্টক সবসময় পণ্যের নিজের ইউনিটে গোনা হয়। সেল মোড বলে একবার বিক্রিতে কতটুকু কমে — যেমন চাল বিক্রি
+Stock is counted in	স্টক গোনা হয়
+Stock needs attention	স্টকে নজর দিন
+Stock value	স্টকের মূল্য
+Stock you buy from suppliers will appear here.	সাপ্লায়ার থেকে কেনা মাল এখানে দেখাবে।
+Stops everyone from this company signing in. Nothing is deleted.	এই কোম্পানির সবার লগইন বন্ধ করে। কিছুই মোছে না।
+Sub head	উপ-খাত
+Sub heads of	উপ-খাত
+Subscription	সাবস্ক্রিপশন
+Subscription ended	সাবস্ক্রিপশন শেষ
+Subscription ends	সাবস্ক্রিপশন শেষ হবে
+Subscription now ends on *.	সাবস্ক্রিপশন এখন $1 তারিখে শেষ হবে।
+Subtotal	উপমোট
+Super Admin view:	সুপার অ্যাডমিন হিসেবে দেখছেন:
+Super admin	সুপার অ্যাডমিন
+Supplier	সাপ্লায়ার
+Supplier Due / Advance	সাপ্লায়ারের বাকি / অগ্রিম
+Supplier Ledger	সাপ্লায়ার লেজার
+Supplier and date	সাপ্লায়ার ও তারিখ
+Supplier payment	সাপ্লায়ার পেমেন্ট
+Supplier updated.	সাপ্লায়ার আপডেট হয়েছে।
+Supplier's bill no., truck no., or anything to remember	সাপ্লায়ারের বিল নং, ট্রাক নং বা মনে রাখার মতো কিছু
+Suppliers	সাপ্লায়ার
+Supplies	যা সাপ্লাই দেন
+Suspend	স্থগিত করুন
+Suspend *?	$1 স্থগিত করবেন?
+Suspend company	কোম্পানি স্থগিত করুন
+Suspended	স্থগিত
+Suspended.	স্থগিত করা হয়েছে।
+Switch to	এতে যান
+Switch to POS	POS এ যান
+System	সিস্টেম
+System (automatic)	সিস্টেম (স্বয়ংক্রিয়)
+Taka	টাকা
+Taken from earlier advance	আগের অগ্রিম থেকে নেওয়া
+Tap a product or scan a barcode to start.	শুরু করতে পণ্যে চাপুন বা বারকোড স্ক্যান করুন।
+Thank you for shopping with us	আমাদের দোকান থেকে কেনার জন্য ধন্যবাদ
+The SKU (barcode) is created automatically.	SKU (বারকোড) নিজে থেকেই তৈরি হয়।
+The account shows	একাউন্টে দেখাচ্ছে
+The balance will change by	ব্যালেন্স এত বদলাবে
+The date cannot be in the future.	তারিখ ভবিষ্যতের হতে পারে না।
+The discount must be less than the price.	ছাড় দামের চেয়ে কম হতে হবে।
+The old amount is put back and the new one is recorded — both show on the account statement.	আগের টাকা ফেরত বসে আর নতুনটা রেকর্ড হয় — দুটোই একাউন্ট স্টেটমেন্টে দেখায়।
+The photo is too large. Use one under 3 MB.	ছবিটা অনেক বড়। ৩ MB এর কম ছবি দিন।
+The price per * drops as the quantity grows. Set the steps on each product.	পরিমাণ যত বাড়ে, প্রতি $1 এর দাম তত কমে। প্রতিটা পণ্যে ধাপগুলো সেট করুন।
+The stock this invoice added is taken back out	এই ইনভয়েসে যোগ হওয়া স্টক আবার বের হবে
+There is no active * account.	কোনো চালু $1 একাউন্ট নেই।
+There is no active * account. Add one in Accounts first.	কোনো চালু $1 একাউন্ট নেই। আগে Accounts এ একটা যোগ করুন।
+There is no active account for this payment method.	এই পেমেন্ট মাধ্যমের কোনো চালু একাউন্ট নেই।
+They can sign in again with their current password.	তিনি আগের পাসওয়ার্ড দিয়েই আবার লগইন করতে পারবেন।
+They can sign in with this too.	এটা দিয়েও লগইন করা যাবে।
+They get their own sign-in. Everything they record carries their name.	তিনি আলাদা লগইন পাবেন। তাঁর সব এন্ট্রিতে তাঁর নাম থাকবে।
+This account does not have enough balance.	এই একাউন্টে যথেষ্ট ব্যালেন্স নেই।
+This account has only *.	এই একাউন্টে আছে মাত্র $1।
+This account is short by	এই একাউন্টে কম আছে
+This customer has no sales or payments, so they will be removed completely.	এই কাস্টমারের কোনো বিক্রি বা পেমেন্ট নেই, তাই পুরোপুরি মুছে যাবে।
+This customer has no unpaid invoices.	এই কাস্টমারের কোনো বাকি ইনভয়েস নেই।
+This customer has sales history, so they will be marked inactive instead of deleted. Their invoices and receipts stay as they are.	এই কাস্টমারের বিক্রির ইতিহাস আছে, তাই মোছার বদলে বন্ধ করা হবে। ইনভয়েস ও রসিদ যেমন আছে তেমন থাকবে।
+This email does not look right.	ইমেইলটা ঠিক মনে হচ্ছে না।
+This invoice has only * due.	এই ইনভয়েসে বাকি মাত্র $1।
+This is saved as * *, which is about * * — close, but not exact.	এটা $1 $2 হিসেবে সেভ হবে, যা প্রায় $3 $4 — কাছাকাছি, কিন্তু হুবহু নয়।
+This is you. Change your own password from the menu at the top right.	এটা আপনি। নিজের পাসওয়ার্ড ওপরে ডানের মেনু থেকে বদলান।
+This month	এই মাস
+This payment was cancelled. The money went back to the account and the invoices it paid are due again.	এই পেমেন্ট বাতিল হয়েছে। টাকা একাউন্টে ফেরত গেছে, আর যেসব ইনভয়েস শোধ হয়েছিল সেগুলো আবার বাকি।
+This person runs	এই ব্যক্তি চালান
+This purchase was cancelled. Its stock was taken back out and any payment was returned to the account.	এই ক্রয় বাতিল হয়েছে। এর স্টক আবার বের করা হয়েছে আর দেওয়া টাকা একাউন্টে ফেরত গেছে।
+This screen already works in the desktop and mobile app. It will appear here soon, with the same data and the same permissions.	এই পাতা ডেস্কটপ ও মোবাইল অ্যাপে আগেই আছে। শিগগির এখানেও আসবে, একই ডাটা আর একই অনুমতি নিয়ে।
+This supplier has no purchases or payments, so they will be removed completely.	এই সাপ্লায়ারের কোনো ক্রয় বা পেমেন্ট নেই, তাই পুরোপুরি মুছে যাবে।
+This supplier has purchase history, so they will be marked inactive instead of deleted. Their invoices and payments stay as they are.	এই সাপ্লায়ারের ক্রয়ের ইতিহাস আছে, তাই মোছার বদলে বন্ধ করা হবে। ইনভয়েস ও পেমেন্ট যেমন আছে তেমন থাকবে।
+This transfer has not moved any money yet. Cancelling stops it for good.	এই ট্রান্সফারে এখনো টাকা যায়নি। বাতিল করলে চিরতরে বন্ধ হবে।
+This year	এই বছর
+Tick the ones your shop uses. You can rename, add or hide units any time.	আপনার দোকানে যেগুলো লাগে টিক দিন। যেকোনো সময় নাম বদলানো, যোগ বা লুকানো যাবে।
+To	পর্যন্ত
+To account	যে একাউন্টে
+To any account	যেকোনো একাউন্টে
+To change your plan, limits or end date, contact your software provider.	প্ল্যান, সীমা বা শেষ তারিখ বদলাতে সফটওয়্যার সরবরাহকারীর সাথে যোগাযোগ করুন।
+Today	আজ
+Too small to store. Pick a smaller base unit (e.g. Gram instead of Kilogram).	এত ছোট মান রাখা যায় না। ছোট মূল ইউনিট বাছুন (যেমন কেজির বদলে গ্রাম)।
+Too small to store. Pick a smaller base unit.	এত ছোট মান রাখা যায় না। ছোট মূল ইউনিট বাছুন।
+Top 10	সেরা ১০
+Top 100	সেরা ১০০
+Top 20	সেরা ২০
+Top 50	সেরা ৫০
+Top Selling Products	সবচেয়ে বেশি বিক্রি হওয়া পণ্য
+Total	মোট
+Total bought	মোট কেনা
+Total due	মোট বাকি
+Total earnings	মোট আয়
+Total paid	মোট দেওয়া
+Total sales	মোট বিক্রি
+Total spent	মোট খরচ
+Toward dues	বাকি শোধে
+Toward dues & advance	বাকি শোধ ও অগ্রিম
+Trade licence	ট্রেড লাইসেন্স
+Trade licence no.	ট্রেড লাইসেন্স নং
+Transaction	লেনদেন
+Transaction details	লেনদেনের বিবরণ
+Transactions	লেনদেন
+Transfer	ট্রান্সফার
+Transfer * completed.	ট্রান্সফার $1 সম্পন্ন হয়েছে।
+Transfer * cancelled.	ট্রান্সফার $1 বাতিল হয়েছে।
+Transfer * reversed.	ট্রান্সফার $1 উল্টানো হয়েছে।
+Transfer * executed.	ট্রান্সফার $1 সম্পন্ন হয়েছে।
+Transfer completed	ট্রান্সফার সম্পন্ন
+Transfer created	ট্রান্সফার তৈরি হয়েছে
+Transfer date	ট্রান্সফারের তারিখ
+Transfer in	ট্রান্সফার এসেছে
+Transfer list	ট্রান্সফারের তালিকা
+Transfer now	এখনই ট্রান্সফার
+Transfer out	ট্রান্সফার গেছে
+Transfer preview	ট্রান্সফারের প্রিভিউ
+Transfer saved.	ট্রান্সফার সেভ হয়েছে।
+Transfer type	ট্রান্সফারের ধরন
+Try a wider date range or clear the filters.	বড় তারিখের সীমা দিন বা ফিল্টার মুছুন।
+Try a wider date range or clear the search.	বড় তারিখের সীমা দিন বা খোঁজা মুছুন।
+Try again	আবার চেষ্টা করুন
+Try another name or clear the category.	অন্য নাম দিন বা ক্যাটাগরি মুছুন।
+Try another period, search or account.	অন্য সময়, খোঁজা বা একাউন্ট দিয়ে দেখুন।
+Try another search or clear the filters.	অন্যভাবে খুঁজুন বা ফিল্টার মুছুন।
+Try another search or filter.	অন্যভাবে খুঁজুন বা ফিল্টার বদলান।
+Try another search or status.	অন্যভাবে খুঁজুন বা অবস্থা বদলান।
+Turn * back on?	$1 আবার চালু করবেন?
+Turn off	বন্ধ করুন
+Turn off *?	$1 বন্ধ করবেন?
+Turn off sign-in	লগইন বন্ধ করুন
+Turn on	চালু করুন
+Turn sign-in back on	আবার লগইন চালু করুন
+Turned off	বন্ধ
+Turning off	বন্ধ হচ্ছে
+Type	ধরন
+Type it again	আবার লিখুন
+Undo	ফেরান
+Unit	ইউনিট
+Unit cost	ইউনিটের দাম
+Unit cost of	ইউনিটের দাম
+Unit updated.	ইউনিট আপডেট হয়েছে।
+Units in stock	স্টকে থাকা ইউনিট
+Units sold	বিক্রি হওয়া ইউনিট
+Units, categories, brands…	ইউনিট, ক্যাটাগরি, ব্র্যান্ড…
+Unknown	অজানা
+Unknown product	অজানা পণ্য
+Unknown supplier	অজানা সাপ্লায়ার
+Unpaid	বাকি
+Up to	পর্যন্ত
+Updated.	আপডেট হয়েছে।
+Upload logo	লোগো আপলোড
+Use 3+ letters, numbers, dot, dash or underscore — no spaces.	৩টার বেশি অক্ষর, সংখ্যা, ডট, ড্যাশ বা আন্ডারস্কোর দিন — ফাঁকা জায়গা নয়।
+Use an image under 5 MB.	৫ MB এর কম ছবি দিন।
+Use at least 8 characters.	অন্তত ৮ অক্ষর দিন।
+Use the advance you already gave	আগে দেওয়া অগ্রিম ব্যবহার করুন
+Use the picker above.	ওপরের বাছাই থেকে নিন।
+Use the same username or email and password as the app.	অ্যাপের একই ইউজারনেম বা ইমেইল আর পাসওয়ার্ড দিন।
+Use the standard message	সাধারণ বার্তা ব্যবহার করুন
+Use this mode only on products whose unit is	এই মোড শুধু সেই পণ্যে ব্যবহার করুন যার ইউনিট
+Used by	ব্যবহার করছে
+Username	ইউজারনেম
+Username or email	ইউজারনেম বা ইমেইল
+Username: *	ইউজারনেম: $1
+Users	ইউজার
+Using the standard	সাধারণটা ব্যবহার হচ্ছে
+VAT & charges	ভ্যাট ও চার্জ
+Value	মূল্য
+View	দেখুন
+View & print	দেখুন ও প্রিন্ট
+View & print invoice	ইনভয়েস দেখুন ও প্রিন্ট
+View all returns	সব ফেরত দেখুন
+View data	ডাটা দেখুন
+View list	তালিকা দেখুন
+View only	শুধু দেখা
+View orders	অর্ডার দেখুন
+View products	পণ্য দেখুন
+View transfers	ট্রান্সফার দেখুন
+Viewer	দর্শক
+Voucher	ভাউচার
+Walk-in customer	সাধারণ কাস্টমার (walk-in)
+Walk-in customers pay in full. To sell on credit, choose a saved customer.	সাধারণ (walk-in) কাস্টমার পুরো টাকা দেন। বাকিতে বিক্রি করতে সেভ করা কাস্টমার বাছুন।
+Wallet number	ওয়ালেট নম্বর
+Web app	ওয়েব অ্যাপ
+Web app only	শুধু ওয়েব অ্যাপ
+Web app — “Sold by” in Sale and POS	ওয়েব অ্যাপ — বিক্রি ও POS এ “বিক্রি যেভাবে”
+Website	ওয়েবসাইট
+What changed	কী বদলেছে
+What is on the shelf now and what it is worth at cost.	এখন তাকে কী আছে আর ক্রয়মূল্যে তার দাম কত।
+What is this transfer for?	এই ট্রান্সফার কিসের জন্য?
+What they can do	কী করতে পারবেন
+What they supply	কী সাপ্লাই দেন
+What you already have on the shelf today.	আজ তাকে যা আছে।
+When	কখন
+When a customer has a balance to pay, they will show up here.	কোনো কাস্টমারের বাকি থাকলে এখানে দেখাবে।
+Where expenses go	খরচ কোথায় যায়
+Where should it show?	কোথায় দেখাবে?
+Where the money comes from	টাকা কোথা থেকে আসে
+Where the money goes	টাকা কোথায় যায়
+Where you keep money: a cash box, a bank account or a mobile wallet.	যেখানে টাকা রাখেন: ক্যাশ বাক্স, ব্যাংক একাউন্ট বা মোবাইল ওয়ালেট।
+Which purchase is going back	কোন ক্রয়ের মাল ফেরত যাচ্ছে
+Which sale is coming back	কোন বিক্রির মাল ফেরত আসছে
+Which suppliers you still owe, and which you have paid ahead.	কোন সাপ্লায়ারকে এখনো দিতে হবে, আর কাকে আগাম দিয়েছেন।
+Who are you paying	কাকে দিচ্ছেন
+Who is buying	কে কিনছেন
+Who is paying	কে দিচ্ছেন
+Who owes you, and who has paid ahead.	কার কাছে পাবেন, আর কে আগাম দিয়েছেন।
+Wholesale cartons	পাইকারি কার্টন
+Why is the customer returning this?	কাস্টমার কেন ফেরত দিচ্ছেন?
+Why is this being returned to the supplier?	সাপ্লায়ারকে কেন ফেরত দেওয়া হচ্ছে?
+Wood, tiles, pipe	কাঠ, টাইলস, পাইপ
+Working today	আজ কাজ করছেন
+Working…	কাজ চলছে…
+Worth a call	একবার ফোন করুন
+Yes	হ্যাঁ
+You	আপনি
+You already owe this supplier	এই সাপ্লায়ারকে আগে থেকেই দিতে হবে
+You can see these details but not change them. Ask an admin.	এই তথ্য দেখতে পারবেন, বদলাতে পারবেন না। অ্যাডমিনকে বলুন।
+You cannot pay more than the invoice total.	ইনভয়েসের মোটের বেশি দেওয়া যায় না।
+You don't have access to	আপনার অনুমতি নেই
+You have unsaved changes	সেভ না করা পরিবর্তন আছে
+You only need these if you sell something in more than one size. Everything else sells in its own unit as it is.	কোনো পণ্য একাধিক সাইজে বিক্রি করলে তবেই এগুলো লাগবে। বাকি সব নিজের ইউনিটেই বিক্রি হয়।
+You owe	আপনাকে দিতে হবে
+You still owe	এখনো দিতে হবে
+You will need your password to sign in again on this browser.	এই ব্রাউজারে আবার লগইন করতে পাসওয়ার্ড লাগবে।
+Your account does not have permission for any module. Ask your shop admin to set your permissions.	আপনার একাউন্টে কোনো অংশের অনুমতি নেই। দোকানের অ্যাডমিনকে অনুমতি দিতে বলুন।
+Your account has no modules yet. Ask your admin to give you permissions.	আপনার একাউন্টে এখনো কোনো অংশ নেই। অ্যাডমিনকে অনুমতি দিতে বলুন।
+Your first name	আপনার নাম
+Your online shop	আপনার অনলাইন শপ
+Your password	আপনার পাসওয়ার্ড
+Your shop name	আপনার দোকানের নাম
+Your shop needs a name — it is printed on every invoice.	দোকানের একটা নাম লাগবে — প্রতিটা ইনভয়েসে ছাপা হয়।
+Your shop page	আপনার শপ পেজ
+Your subscription ends in	আপনার সাবস্ক্রিপশন শেষ হবে
+Your subscription ends today. Contact	আপনার সাবস্ক্রিপশন আজ শেষ। যোগাযোগ করুন
+Your subscription has expired. Contact	আপনার সাবস্ক্রিপশনের মেয়াদ শেষ। যোগাযোগ করুন
+a Cash account	একটা ক্যাশ একাউন্ট
+a day	এক দিন
+access is set for now.	অনুমতি আপাতত সেট করা আছে।
+access.	অনুমতি।
+account yet.	এখনো একাউন্ট নেই।
+active account	চালু একাউন্ট
+active accounts	চালু একাউন্ট
+added to	যোগ হয়েছে
+added.	যোগ হয়েছে।
+advance left after this	এরপর অগ্রিম থাকবে
+and paisa	এবং পয়সা
+as well.	ও।
+at cost price	ক্রয়মূল্যে
+bought from	যার কাছ থেকে কেনা
+can sign in	লগইন করতে পারেন
+cancelled not counted	বাতিলগুলো ধরা হয়নি
+customer has	জন কাস্টমারের
+customers have	জন কাস্টমারের
+days ago	দিন আগে
+days.	দিন।
+days. Sales	দিন। বিক্রি
+e.g. City Bank current	যেমন: সিটি ব্যাংক চলতি
+e.g. DZ	যেমন: DZ
+e.g. Dozen	যেমন: ডজন
+e.g. Electricity	যেমন: বিদ্যুৎ
+e.g. Electricity bill	যেমন: বিদ্যুৎ বিল
+e.g. Kilogram	যেমন: কেজি
+e.g. October bill, meter 2231	যেমন: অক্টোবরের বিল, মিটার 2231
+e.g. Paid to the wrong supplier	যেমন: ভুল সাপ্লায়ারকে দেওয়া
+e.g. Rahman Traders	যেমন: রহমান ট্রেডার্স
+e.g. Rent for the upstairs room	যেমন: ওপরের রুমের ভাড়া
+e.g. Rent received	যেমন: ভাড়া পেয়েছি
+e.g. Rice Miniket 1kg	যেমন: মিনিকেট চাল ১ কেজি
+e.g. Rice, oil, lentils	যেমন: চাল, তেল, ডাল
+e.g. Shop cash box	যেমন: দোকানের ক্যাশ বাক্স
+e.g. Utilities	যেমন: ইউটিলিটি
+e.g. Wrong supplier, entered twice	যেমন: ভুল সাপ্লায়ার, দুবার এন্ট্রি
+e.g. absence, fine	যেমন: অনুপস্থিতি, জরিমানা
+e.g. bKash merchant	যেমন: বিকাশ মার্চেন্ট
+e.g. kg	যেমন: kg
+e.g. robiul or robiul@shop.com	যেমন: robiul বা robiul@shop.com
+fields set	টি ঘর সেট
+from advance	অগ্রিম থেকে
+given to	যাকে দেওয়া
+goes back into	ফেরত যাবে
+goes back to the account.	একাউন্টে ফেরত যাবে।
+hides that whole area from their menu. Adding, editing or deleting needs View too.	তাঁর মেনু থেকে পুরো অংশটা লুকায়। যোগ, এডিট বা মুছতে View অনুমতিও লাগে।
+in the software, so there is nothing to choose here. Change their role to limit what they can do.	সফটওয়্যারে, তাই এখানে বাছার কিছু নেই। কাজ সীমিত করতে রোল বদলান।
+in the software: adds staff, products, accounts, and everything else.	সফটওয়্যারে: স্টাফ, পণ্য, একাউন্টসহ সব যোগ করেন।
+in this account.	এই একাউন্টে।
+in this period.	এই সময়ে।
+instead — past records keep its name.	— আগের রেকর্ডে নাম থাকবে।
+instead — product prices and past sales stay as they are.	— পণ্যের দাম ও আগের বিক্রি যেমন আছে থাকবে।
+instead — those products keep it, but new products can't pick it.	— ওই পণ্যগুলোতে থাকবে, কিন্তু নতুন পণ্যে বাছা যাবে না।
+invoices ·	টি ইনভয়েস ·
+is coming to the web	ওয়েবে আসছে
+is ready	তৈরি
+is taken back out of	থেকে আবার বের হবে
+leaves the account, and invoice payments or advance it created go back. This cannot be undone.	একাউন্ট থেকে বের হবে, আর এটা দিয়ে হওয়া ইনভয়েস পেমেন্ট বা অগ্রিম ফিরে যাবে। এটা আর ফেরানো যাবে না।
+left (alert at	বাকি (সতর্কতা
+marked completed	সম্পন্ন চিহ্নিত
+mobile banking	মোবাইল ব্যাংকিং
+money receipt	মানি রিসিট
+money to pay	টাকা দিতে হবে
+need restocking	নতুন করে কিনতে হবে
+new order	নতুন অর্ডার
+new this week	এই সপ্তাহে নতুন
+no usable phone number	ব্যবহারযোগ্য ফোন নম্বর নেই
+not saved	সেভ হয়নি
+not started yet	এখনো শুরু হয়নি
+of this payment comes from it, the rest from your account.	এই পেমেন্টের এতটুকু এখান থেকে, বাকিটা আপনার একাউন্ট থেকে।
+of your modules are in the menu	টি অংশ মেনুতে আছে
+one invoice	একটা ইনভয়েস
+or by the	অথবা
+out of stock	স্টক শেষ
+out of stock,	স্টক শেষ,
+paid from	যেখান থেকে দেওয়া
+paid goes back into	দেওয়া টাকা ফেরত যাবে
+paid to	যাকে দেওয়া
+pcs across	পিস, মোট
+pcs)	পিস)
+pcs, kg, litre…	পিস, কেজি, লিটার…
+people can sign in	জন লগইন করতে পারেন
+per unit (	প্রতি ইউনিট (
+product uses	টি পণ্য ব্যবহার করে
+product,	টি পণ্য,
+products use	টি পণ্য ব্যবহার করে
+products,	টি পণ্য,
+purchase cancellation	ক্রয় বাতিল
+received from	যার কাছ থেকে পাওয়া
+running low	কমে আসছে
+sale line	বিক্রির লাইন
+sale lines	বিক্রির লাইন
+sale mode	সেল মোড
+sale modes	সেল মোড
+sales this week	এই সপ্তাহের বিক্রি
+slips this month	এই মাসের স্লিপ
+so far	এ পর্যন্ত
+sold to	যার কাছে বিক্রি
+still due	এখনো বাকি
+sub head	উপ-খাত
+sub heads	উপ-খাত
+supplier is	জন সাপ্লায়ার
+supplier payment	সাপ্লায়ার পেমেন্ট
+suppliers are	জন সাপ্লায়ার
+the account	একাউন্ট
+this mode	এই মোড
+this month	এই মাস
+this unit — renaming changes it on all of them, old invoices included.	এই ইউনিট — নাম বদলালে পুরনো ইনভয়েসসহ সব জায়গায় বদলাবে।
+this week	এই সপ্তাহ
+this — renaming changes it on all of them.	এটা — নাম বদলালে সব জায়গায় বদলাবে।
+to open a ready-written message — you press send yourself.	চাপলে লেখা বার্তা খুলবে — পাঠানোর বোতাম আপনি নিজে চাপবেন।
+to pay	দিতে হবে
+to renew and keep your data safe.	মেয়াদ বাড়াতে ও ডাটা নিরাপদ রাখতে।
+to renew.	মেয়াদ বাড়াতে।
+toward dues	বাকি শোধে
+turned off	বন্ধ
+under this head	এই খাতের অধীনে
+unit added.	টি ইউনিট যোগ হয়েছে।
+units added.	টি ইউনিট যোগ হয়েছে।
+use this unit, so it can't be removed. It will be marked	এই ইউনিট ব্যবহার করে, তাই মোছা যাবে না। এটা চিহ্নিত হবে
+use this, so it can't be removed. It will be marked	এটা ব্যবহার করে, তাই মোছা যাবে না। এটা চিহ্নিত হবে
+waiting for money	টাকার অপেক্ষায়
+was changed without a transaction (set directly, or by an older version of the app). Check it against your real cash or bank statement.	লেনদেন ছাড়াই বদলানো হয়েছে (সরাসরি বা অ্যাপের পুরনো ভার্সন থেকে)। আসল ক্যাশ বা ব্যাংক স্টেটমেন্টের সাথে মিলিয়ে দেখুন।
+you@example.com	you@example.com
+· Inactive	· বন্ধ
+· Reversal	· উল্টো
+· Special	· বিশেষ
+· all time	· সব সময়
+· last	· শেষ
+— free for 30 days.	— ৩০ দিন ফ্রি।
+— inactive	— বন্ধ
+— out of stock	— স্টক শেষ
+— time to restock.	— নতুন করে কেনার সময়।
+— view-only, nothing can be changed.	— শুধু দেখা যাবে, কিছু বদলানো যাবে না।
+Contact Dokan Khata to renew and keep your data safe.	মেয়াদ বাড়াতে ও ডাটা নিরাপদ রাখতে দোকান খাতার সাথে যোগাযোগ করুন।
+Your subscription has expired. Contact Dokan Khata to renew and keep your data safe.	আপনার সাবস্ক্রিপশনের মেয়াদ শেষ। মেয়াদ বাড়াতে ও ডাটা নিরাপদ রাখতে দোকান খাতার সাথে যোগাযোগ করুন।
+Your subscription ends today. Contact Dokan Khata to renew.	আপনার সাবস্ক্রিপশন আজ শেষ। মেয়াদ বাড়াতে দোকান খাতার সাথে যোগাযোগ করুন।
+Your subscription ends in * days. Contact Dokan Khata to renew.	আপনার সাবস্ক্রিপশন $1 দিনে শেষ হবে। মেয়াদ বাড়াতে দোকান খাতার সাথে যোগাযোগ করুন।
+Your subscription ends in * day. Contact Dokan Khata to renew.	আপনার সাবস্ক্রিপশন $1 দিনে শেষ হবে। মেয়াদ বাড়াতে দোকান খাতার সাথে যোগাযোগ করুন।
+My Dashboard	আমার ড্যাশবোর্ড
+Platform	প্ল্যাটফর্ম
+Sale List	বিক্রির তালিকা
+POS Sale	POS বিক্রি
+Short Sale	শর্ট সেল
+Online Orders	অনলাইন অর্ডার
+Shop Settings	শপ সেটিংস
+Money Receipt	মানি রিসিট
+Create Money Receipt	মানি রিসিট তৈরি
+Money Receipt List	মানি রিসিটের তালিকা
+Create Purchase	ক্রয় তৈরি
+Purchase List	ক্রয়ের তালিকা
+Due Reminders	বাকির তাগাদা
+Supplier List	সাপ্লায়ারের তালিকা
+Supplier Payment	সাপ্লায়ার পেমেন্ট
+Expense List	খরচের তালিকা
+Expense Head	খরচের খাত
+Expense Sub Head	খরচের উপ-খাত
+Sales Return	বিক্রি ফেরত
+Bad Stock List	নষ্ট মালের তালিকা
+Purchase Return	ক্রয় ফেরত
+Administration	প্রশাসন
+Source	সোর্স
+Group	গ্রুপ
+Company Profile	কোম্পানি প্রোফাইল
+Income	আয়
+Income List	আয়ের তালিকা
+Income Head	আয়ের খাত
+Transfer Balance	ব্যালেন্স ট্রান্সফার
+Account Transfer	একাউন্ট ট্রান্সফার
+Transfer List	ট্রান্সফারের তালিকা
+Payroll	বেতন
+Salary Sheet	বেতন-শিট
+Advances	অগ্রিম
+Security	নিরাপত্তা
+Audit Log	অডিট লগ
+User Permissions	ইউজারের অনুমতি
+Sale Mode	সেল মোড
+Units	ইউনিট
+Brands	ব্র্যান্ড
+Categories	ক্যাটাগরি
+Groups	গ্রুপ
+Sources	সোর্স
+New Sale	নতুন বিক্রি
+POS	POS
+Good morning, *	শুভ সকাল, $1
+Good afternoon, *	শুভ অপরাহ্ন, $1
+Good evening, *	শুভ সন্ধ্যা, $1
+Low stock	কম স্টক
+Language	ভাষা
+Baki Khata	বাকি খাতা
+Sign-in paused	লগইন সাময়িক বন্ধ
+NEW	নতুন
+Dokan Khata	দোকান খাতা
+Sign in — Dokan Khata	লগইন — দোকান খাতা
+Register your company — Dokan Khata	আপনার কোম্পানি রেজিস্টার করুন — দোকান খাতা
+* entries	$1টি এন্ট্রি
+* entry	$1টি এন্ট্রি
+* invoices	$1টি ইনভয়েস
+* invoice	$1টি ইনভয়েস
+* new orders waiting	$1টি নতুন অর্ডার অপেক্ষায়
+* new order waiting	$1টি নতুন অর্ডার অপেক্ষায়
+* sales	$1টি বিক্রি
+* sale	$1টি বিক্রি
+* sold	$1টি বিক্রি হয়েছে
+* days	$1 দিন
+* day	$1 দিন
+* fields	$1টি ঘর
+* field	$1টি ঘর
+* * left	$1 $2 আছে
+* items, *	$1টি আইটেম, $2
+* item, *	$1টি আইটেম, $2
+* Admins	$1 জন অ্যাডমিন
+* Admin	$1 জন অ্যাডমিন
+Advance *	অগ্রিম $1
+* due	$1 বাকি
+Invoice *	ইনভয়েস $1
+Prepare * salary	$1 এর বেতন তৈরি করুন
+No salary slips for * yet	$1 এর কোনো বেতন-স্লিপ এখনো নেই
+No * slips this month	এই মাসে কোনো $1 স্লিপ নেই
+Spent · *	খরচ · $1
+= * *	= $1 $2
+· last 7 days	· গত ৭ দিন
+· last 30 days	· গত ৩০ দিন
+today	আজ
+Walk-in	সাধারণ কাস্টমার
+optional	ঐচ্ছিক
+VAT	ভ্যাট
+charge	চার্জ
+search	খুঁজুন
+New Purchase	নতুন ক্রয়
+New expense	নতুন খরচ
+New income	নতুন আয়
+New sales return	নতুন বিক্রি ফেরত
+New purchase return	নতুন ক্রয় ফেরত
+New Money Receipt	নতুন মানি রিসিট
+New money receipt	নতুন মানি রিসিট
+Money Receipts	মানি রিসিট
+Sale Modes	সেল মোড
+Sales Returns	বিক্রি ফেরত
+Purchase Returns	ক্রয় ফেরত
+Transfers	ট্রান্সফার
+Choose a customer to see every sale, payment and return with the running balance.	প্রতিটা বিক্রি, পেমেন্ট আর ফেরত চলমান বাকিসহ দেখতে একজন কাস্টমার বাছুন।
+Choose a supplier to see every purchase, payment and return with the running balance.	প্রতিটা ক্রয়, পেমেন্ট আর ফেরত চলমান বাকিসহ দেখতে একজন সাপ্লায়ার বাছুন।
+Goods customers send back will appear here.	কাস্টমারের ফেরত দেওয়া মাল এখানে দেখাবে।
+Goods you send back to suppliers will appear here.	সাপ্লায়ারকে ফেরত দেওয়া মাল এখানে দেখাবে।
+No expenses this month	এই মাসে কোনো খরচ নেই
+No expenses this month yet	এই মাসে এখনো কোনো খরচ নেই
+No income this month yet	এই মাসে এখনো কোনো আয় নেই
+No expenses in this period.	এই সময়ে কোনো খরচ নেই।
+Record rent, bills, wages and other running costs. The money comes out of the account you pick	ভাড়া, বিল, মজুরি আর অন্যান্য চলতি খরচ লিখুন। টাকা আপনার বাছা একাউন্ট থেকে বের হবে
+Record rent, bills, wages and other running costs. The money comes out of the account you pick.	ভাড়া, বিল, মজুরি আর অন্যান্য চলতি খরচ লিখুন। টাকা আপনার বাছা একাউন্ট থেকে বের হবে।
+Search receipt no., customer or reason	রসিদ নং, কাস্টমার বা কারণ দিয়ে খুঁজুন
+Search receipt no., supplier or reason	রসিদ নং, সাপ্লায়ার বা কারণ দিয়ে খুঁজুন
+Stock is always counted in the product's own unit. A sale mode says how much one sale takes out —	স্টক সবসময় পণ্যের নিজের ইউনিটে গোনা হয়। সেল মোড বলে একবার বিক্রিতে কতটুকু কমে —
+Press “Prepare salary” to make a slip for everyone with a salary set in Staff.	Staff এ যাদের বেতন সেট করা আছে, “বেতন তৈরি করুন” চাপলে সবার স্লিপ তৈরি হবে।
+units	ইউনিট
+advance balance	অগ্রিম ব্যালেন্স
+balance	ব্যালেন্স
+due amount	বাকির পরিমাণ
+paid amount	দেওয়া টাকা
+payment status	পেমেন্টের অবস্থা
+stock qty	স্টকের পরিমাণ
+transaction id	লেনদেন আইডি
+allocation	বণ্টন
+Sale Item	বিক্রির আইটেম
+grand total	মোট
+* - * units	$1 - $2 ইউনিট
+Warranty Check	ওয়ারেন্টি চেক
+Warranty (months)	ওয়ারেন্টি (মাস)
+Warranty	ওয়ারেন্টি
+Warranty until	ওয়ারেন্টি পর্যন্ত
+Leave empty if there is no warranty. Each sale keeps the warranty it was sold with.	ওয়ারেন্টি না থাকলে ফাঁকা রাখুন। প্রতিটা বিক্রিতে বিক্রির দিনের ওয়ারেন্টিই থাকে।
+Search invoice no., customer phone or name, or product	ইনভয়েস নং, কাস্টমারের ফোন বা নাম, অথবা পণ্য দিয়ে খুঁজুন
+Search warranty	ওয়ারেন্টি খুঁজুন
+Under warranty	ওয়ারেন্টি চালু
+Ending soon	শিগগির শেষ
+Sold on	বিক্রির তারিখ
+1 day left	১ দিন বাকি
+* months	$1 মাস
+* month	$1 মাস
+Couldn't load the warranty list	ওয়ারেন্টির তালিকা লোড করা যায়নি
+No warranty found	কোনো ওয়ারেন্টি পাওয়া যায়নি
+No products with warranty sold yet	এখনো ওয়ারেন্টিসহ কোনো পণ্য বিক্রি হয়নি
+Check the invoice number or phone, or clear the search.	ইনভয়েস নং বা ফোন মিলিয়ে দেখুন, অথবা খোঁজা মুছুন।
+Set the warranty in months on a product (Products → Edit). Sales after that will show up here.	পণ্যে ওয়ারেন্টি কত মাস তা দিন (Products → Edit)। এরপরের বিক্রি এখানে দেখাবে।
+# ───── স্টক সতর্কতার পুরো বাক্য (low_stock.js headline) ─────
+* products are out of stock — time to restock.	$1টি পণ্যের স্টক শেষ — নতুন করে কেনার সময়।
+* product is out of stock — time to restock.	$1টি পণ্যের স্টক শেষ — নতুন করে কেনার সময়।
+* products are running low — time to restock.	$1টি পণ্য কমে আসছে — নতুন করে কেনার সময়।
+* product is running low — time to restock.	$1টি পণ্য কমে আসছে — নতুন করে কেনার সময়।
+* out of stock, * running low — time to restock.	$1টির স্টক শেষ, $2টি কমে আসছে — নতুন করে কেনার সময়।
+* products are out of stock	$1টি পণ্যের স্টক শেষ
+* product is out of stock	$1টি পণ্যের স্টক শেষ
+* products are running low	$1টি পণ্য কমে আসছে
+* product is running low	$1টি পণ্য কমে আসছে
+* out of stock, * running low	$1টির স্টক শেষ, $2টি কমে আসছে
+# ───── প্যাকেজ (Super Admin ফর্ম, আমার প্যাকেজ) ─────
+My package	আমার প্যাকেজ
+Not in your package	আপনার প্যাকেজে নেই
+Package	প্যাকেজ
+Package & subscription	প্যাকেজ ও সাবস্ক্রিপশন
+Legacy	পুরনো সেটআপ
+Legacy (no limits)	পুরনো সেটআপ (কোনো সীমা নেই)
+No limits (old setup)	কোনো সীমা নেই (পুরনো সেটআপ)
+Free trial	ফ্রি ট্রায়াল
+Starter	স্টার্টার
+Business	বিজনেস
+* days free	$1 দিন ফ্রি
+৳* / month	৳$1 / মাস
+Unlimited	আনলিমিটেড
+Sales this month	এই মাসের বিক্রি
+Sales in total	মোট বিক্রি
+Grace period	অতিরিক্ত সময় চলছে
+View only — renew	শুধু দেখা — নবায়ন দরকার
+Choose modules for this shop	এই দোকানের মডিউল নিজে বাছুন
+For a shop that pays less and needs fewer modules. Sales, Baki Khata and Products are always on.	যে দোকান কম টাকা দেবে, কম মডিউল লাগবে তাদের জন্য। বিক্রি, বাকি খাতা আর পণ্য সবসময় চালু থাকে।
+Limits for this shop	এই দোকানের সীমা
+— leave empty to use the package, 0 = unlimited	— ফাঁকা রাখলে প্যাকেজের সীমা, 0 = আনলিমিটেড
+Price for this shop (৳ / month)	এই দোকানের দাম (৳ / মাস)
+e.g. Paid by bKash, ref 4821	যেমন: বিকাশে পেয়েছি, রেফ ৪৮২১
+Enter a price.	দাম লিখুন।
+After this date they get a short grace period, then the shop becomes view-only until you extend it. Nothing is deleted.	এই তারিখের পর কয়েক দিন অতিরিক্ত সময় পাবে, তারপর মেয়াদ না বাড়ানো পর্যন্ত দোকান শুধু-দেখা থাকবে। কিছুই মোছা হবে না।
+Sales & POS	বিক্রি ও POS
+Baki Khata & customers	বাকি খাতা ও কাস্টমার
+Purchase & suppliers	ক্রয় ও সাপ্লায়ার
+Expenses, money receipts & accounts	খরচ, মানি রিসিট ও একাউন্ট
+Reports (on screen)	রিপোর্ট (পর্দায়)
+Report Excel / PDF	রিপোর্ট Excel / PDF
+Returns & bad stock	ফেরত ও নষ্ট মাল
+Sale modes & barcode labels	সেল মোড ও বারকোড লেবেল
+Batch/expiry, stocktake, day close	ব্যাচ/মেয়াদ, Stocktake, Day Close
+WhatsApp reminders & messages	WhatsApp তাগাদা ও মেসেজ
+Income & account transfers	আয় ও ট্রান্সফার
+Staff & permissions	স্টাফ ও অনুমতি
+Desktop offline app	ডেস্কটপ offline অ্যাপ
+Online shop	অনলাইন শপ
+After this date nobody from the company can sign in until you extend it.	এই তারিখের পর মেয়াদ না বাড়ানো পর্যন্ত কোম্পানির কেউ লগইন করতে পারবেন না।
+month	মাস
+Monthly	মাসিক
+Yearly	বাৎসরিক
+# ───── শাখা ─────
+All branches	সব শাখা
+Main	প্রধান
+Manage branches	শাখা ঠিক করুন
+Your branch	আপনার শাখা
+Main branch	প্রধান শাখা
+Main branch (old shop)	প্রধান শাখা (পুরনো দোকান)
+Only the shop admin can add branches.	শুধু দোকানের Admin শাখা যোগ করতে পারেন।
+Enter the branch name.	শাখার নাম লিখুন।
+A branch with this name already exists.	এই নামে একটা শাখা আগেই আছে।
+The main branch can't be closed.	প্রধান শাখা বন্ধ করা যায় না।
+Move this branch's staff to another branch first.	আগে এই শাখার স্টাফদের অন্য শাখায় সরান।
+Pick a branch.	একটা শাখা বাছুন।
+Branch saved.	শাখা সেভ হয়েছে।
+Branch added.	শাখা যোগ হয়েছে।
+Edit *	$1 এডিট
+
+Send stock	মাল পাঠান
+Stock by branch	শাখা অনুযায়ী স্টক
+All branches *	সব শাখায় $1
+Not enough * in *: * * here. Send stock from another branch first (Branches → Send stock).	$2 এ $1 যথেষ্ট নেই: এখানে আছে $3 $4। আগে অন্য শাখা থেকে মাল পাঠান (শাখা → মাল পাঠান)।
+Not enough stock in *: *	$1 এ যথেষ্ট স্টক নেই: $2
+Not enough stock: *	যথেষ্ট স্টক নেই: $1
+* product(s) sent to *.	$1টা পণ্য $2 এ পাঠানো হয়েছে।
+You do not have permission to move stock.	মাল পাঠানোর অনুমতি আপনার নেই।
+Add a second branch first.	আগে দ্বিতীয় একটা শাখা যোগ করুন।
+Choose both branches.	দুটো শাখাই বেছে নিন।
+Choose two different branches.	দুটো আলাদা শাখা বেছে নিন।
+You can only send stock from your own branch.	আপনি শুধু নিজের শাখা থেকে মাল পাঠাতে পারবেন।
+Add at least one product with a quantity.	অন্তত একটা পণ্য পরিমাণসহ যোগ করুন।
+Add at least one product.	অন্তত একটা পণ্য যোগ করুন।
+Some products were not found.	কিছু পণ্য পাওয়া যায়নি।

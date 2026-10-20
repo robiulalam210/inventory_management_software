@@ -1,0 +1,120 @@
+{% extends "web/base.html" %}
+{% load static web_tags %}
+{# আমার প্যাকেজ — views.package_view. দুই ভাষা: {% tr "English" "বাংলা" %}; তালিকার নামগুলো view থেকেই ভাষা অনুযায়ী আসে #}
+{% block head %}<link rel="stylesheet" href="{% static 'web/css/package.css' %}">
+<script>document.addEventListener('alpine:init', () => Alpine.store('pkgYr', { on: true }));</script>{% endblock %}
+{% block content %}
+<div class="pkg-page">
+
+  {% if locked_label %}
+  <div class="notice pkg-locked-note" role="status">{% icon "lock" 18 %}
+    <span><b>{{ locked_label }}</b> {% tr "is not in your package. Choose a package below that has it." "আপনার প্যাকেজে নেই। নিচে যে প্যাকেজে আছে সেটা বেছে নিন।" %}</span></div>
+  {% endif %}
+
+  {# ───── এখনকার প্যাকেজ ───── #}
+  <section class="panel pkg-now is-{{ plan.state }}{% if plan.package.is_trial %} is-trial{% endif %}">
+    <div class="pkg-now-main">
+      <span class="pkg-kicker">{% tr "Your package" "আপনার প্যাকেজ" %}</span>
+      <h2>{{ pkg_name }}{% if plan.custom %} <span class="pill sm">{% tr "Custom" "কাস্টম" %}</span>{% endif %}</h2>
+      <p class="pkg-state">
+        {% if plan.state == 'readonly' %}
+          <span class="dot dot-red"></span>{% tr "Ended — view only. Renew to add sales again. Your records are safe." "মেয়াদ শেষ — শুধু দেখা যাবে। আবার বিক্রি লিখতে নবায়ন করুন। আপনার হিসাব নিরাপদ আছে।" %}
+        {% elif plan.state == 'grace' %}
+          <span class="dot dot-amber"></span>{% tr "Ended on" "মেয়াদ শেষ হয়েছে" %} {{ plan.expiry|date:"d M Y" }} — {% tr "everything still works for a few days. Please renew." "আরও কিছুদিন সব চলবে। নবায়ন করে নিন।" %}
+        {% elif plan.expiry %}
+          <span class="dot dot-green"></span>{% if plan.package.is_trial %}{% tr "Free trial until" "ফ্রি ট্রায়াল চলবে" %}{% else %}{% tr "Active until" "চালু থাকবে" %}{% endif %} <b>{{ plan.expiry|date:"d M Y" }}</b>
+          {% if plan.days_left is not None %}<span class="pkg-days">· {{ plan.days_left }} {% tr "day(s) left" "দিন বাকি" %}</span>{% endif %}
+        {% else %}
+          <span class="dot dot-green"></span>{% tr "Active" "চালু আছে" %}
+        {% endif %}
+      </p>
+    </div>
+    <div class="pkg-now-act">
+      {% if plan.price %}<div class="pkg-price"><b>৳{{ plan.price|floatformat:"0" }}</b><span>/ {% tr "month" "মাস" %}</span></div>{% endif %}
+      {% if renew_wa %}<a class="btn btn-primary" href="{{ renew_wa }}" target="_blank" rel="noopener">{% icon "message" 18 %} {% if plan.package.is_trial %}{% tr "Buy a package" "প্যাকেজ কিনুন" %}{% else %}{% tr "Renew on WhatsApp" "WhatsApp এ নবায়ন" %}{% endif %}</a>
+      {% elif sales_phone %}<a class="btn btn-primary" href="tel:{{ sales_phone }}">{% icon "phone" 18 %} {% tr "Call to renew" "নবায়নে কল করুন" %} {{ sales_phone }}</a>{% endif %}
+    </div>
+  </section>
+
+  {% if payment_note %}
+  <div class="panel pkg-pay">{% icon "wallet" 18 %}<div><b>{% tr "How to pay" "কীভাবে টাকা দেবেন" %}</b><p>{{ payment_note|linebreaksbr }}</p></div></div>
+  {% endif %}
+
+  <div class="pkg-grid">
+    {# ───── ব্যবহার ───── #}
+    <section class="panel">
+      <div class="panel-head"><h3>{% tr "How much you've used" "কতটা ব্যবহার হলো" %}</h3></div>
+      <ul class="pkg-use">
+        {% for l in limits %}
+        <li class="{% if l.full %}is-full{% elif l.near %}is-near{% endif %}">
+          <div class="pkg-use-row"><span>{{ l.label }}</span>
+            <b>{{ l.used }}{% if l.max %} / {{ l.max }}{% else %} <small>· {% tr "unlimited" "আনলিমিটেড" %}</small>{% endif %}</b></div>
+          {% if l.max %}<div class="pkg-bar" role="progressbar" aria-valuenow="{{ l.pct }}" aria-valuemin="0" aria-valuemax="100"><i style="width:{{ l.pct }}%"></i></div>{% endif %}
+          {% if l.full %}<small class="pkg-use-msg">{% tr "Limit reached — upgrade to add more." "সীমা শেষ — আরও যোগ করতে আপগ্রেড করুন।" %}</small>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    {# ───── মডিউল ───── #}
+    <section class="panel">
+      <div class="panel-head"><h3>{% tr "Modules" "মডিউল" %}</h3></div>
+      <ul class="pkg-feats-list">
+        {% for f in features %}
+        <li class="{% if f.on %}is-on{% else %}is-off{% endif %}">{% if f.on %}{% icon "check" 16 %}{% else %}{% icon "lock" 15 %}{% endif %}<span>{{ f.label }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  {# ───── প্যাকেজের তুলনা ───── #}
+  <div class="pkg-head" x-data>
+    <h3 class="pkg-h">{% tr "Packages" "প্যাকেজসমূহ" %}</h3>
+    <div class="pkg-term" role="radiogroup" aria-label="Billing">
+      <button type="button" role="radio" :aria-checked="String(!$store.pkgYr.on)" :class="{ 'is-on': !$store.pkgYr.on }" @click="$store.pkgYr.on = false">{% tr "Monthly" "মাসিক" %}</button>
+      <button type="button" role="radio" :aria-checked="String($store.pkgYr.on)" :class="{ 'is-on': $store.pkgYr.on }" @click="$store.pkgYr.on = true">{% tr "Yearly" "বাৎসরিক" %} <span class="pkg-term-save">{% tr "2 months free" "২ মাস ফ্রি" %}</span></button>
+    </div>
+  </div>
+  <div class="pkg-cards" x-data>
+    {% for p in packages %}
+    <article class="panel pkg-card{% if p.current %} is-current{% endif %}{% if p.code == 'standard' %} is-pop{% endif %}">
+      {% if p.current %}<span class="pkg-tag">{% tr "Your package" "আপনার প্যাকেজ" %}</span>{% elif p.code == 'standard' %}<span class="pkg-tag is-pop">{% tr "Most shops pick this" "বেশিরভাগ দোকান এটা নেয়" %}</span>{% endif %}
+      <h4>{{ p.name }}</h4>
+      {% if p.is_trial %}
+      <div class="pkg-card-price"><b>{% tr "Free" "ফ্রি" %}</b><span>{{ p.trial_days }} {% tr "days" "দিন" %}</span></div>
+      {% elif p.year_full %}
+      {# বাৎসরিক: ১২ মাসের মাসিক দাম কেটে, তার নিচে বাৎসরিক দাম + কত বাঁচলো #}
+      <div x-show="$store.pkgYr.on">
+        <div class="pkg-was"><s>৳{{ p.year_full|floatformat:"0" }}</s><span class="pkg-off">{{ p.year_pct }}% {% tr "off" "ছাড়" %}</span></div>
+        <div class="pkg-card-price"><b>৳{{ p.price_year|floatformat:"0" }}</b><span>/ {% tr "year" "বছর" %}</span></div>
+        <p class="pkg-year">{% tr "Just" "মাসে মাত্র" %} ৳{{ p.year_per_month }}{% tr " a month" "" %} · <b class="pkg-save">৳{{ p.year_save|floatformat:"0" }} {% tr "saved" "বাঁচবে" %}</b></p>
+      </div>
+      <div x-show="!$store.pkgYr.on" x-cloak>
+        <div class="pkg-was pkg-was-empty"></div>
+        <div class="pkg-card-price"><b>৳{{ p.price_month|floatformat:"0" }}</b><span>/ {% tr "month" "মাস" %}</span></div>
+        <p class="pkg-year">{% tr "Yearly saves" "বছরে নিলে বাঁচবে" %} ৳{{ p.year_save|floatformat:"0" }}</p>
+      </div>
+      {% else %}
+      <div class="pkg-card-price"><b>৳{{ p.price_month|floatformat:"0" }}</b><span>/ {% tr "month" "মাস" %}</span></div>
+      {% endif %}
+      <ul class="pkg-card-lims">
+        {% for label, v in p.limits %}<li><span>{{ label }}</span><b>{% if v %}{{ v }}{% else %}{% tr "Unlimited" "আনলিমিটেড" %}{% endif %}</b></li>{% endfor %}
+      </ul>
+      <ul class="pkg-card-feats">
+        {% if p.is_trial %}
+          <li>{% icon "check" 14 %} <b>{% tr "Every module, to try" "সব মডিউল, চালিয়ে দেখার জন্য" %}</b></li>
+        {% elif p.plus_of %}
+          <li class="pkg-plus">{% icon "check" 14 %} <b>{% lang as L %}{% if L == 'bn' %}{{ p.plus_of }} এর সব কিছু, সাথে:{% else %}Everything in {{ p.plus_of }}, plus:{% endif %}</b></li>
+          {% for f in p.features %}<li>{% icon "check" 14 %} {{ f }}</li>{% endfor %}
+        {% else %}
+          <li>{% icon "check" 14 %} {% tr "Sales, Baki Khata, Products" "বিক্রি, বাকি খাতা, পণ্য" %}</li>
+          {% for f in p.features %}<li>{% icon "check" 14 %} {{ f }}</li>{% endfor %}
+        {% endif %}
+      </ul>
+      {% if p.wa %}<a class="btn {% if p.code == 'standard' %}btn-primary{% else %}btn-ghost{% endif %} pkg-card-btn" :href="$store.pkgYr.on && '{{ p.wa_year|escapejs }}' ? '{{ p.wa_year|escapejs }}' : '{{ p.wa|escapejs }}'" href="{{ p.wa }}" target="_blank" rel="noopener">{% if p.current %}{% tr "Renew this" "এটাই নবায়ন" %}{% else %}{% tr "Ask for this" "এটা চাই" %}{% endif %}</a>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  <p class="pkg-foot">{% tr "Need only a few modules? We can make a custom package for your shop — ask on WhatsApp." "অল্প কিছু মডিউল লাগবে? আপনার দোকানের জন্য কাস্টম প্যাকেজ করে দেওয়া যায় — WhatsApp এ জানান।" %}</p>
+</div>
+{% endblock %}

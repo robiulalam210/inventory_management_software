@@ -25,7 +25,7 @@ class PurchaseItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PurchaseItem
-        fields = ['id', 'product_id', 'product', 'product_name', 'unit_name', 'qty', 'price', 'discount', 'discount_type', 'product_total']
+        fields = ['id', 'product_id', 'product', 'product_name', 'unit_name', 'qty', 'price', 'discount', 'discount_type', 'batch_no', 'expiry_date', 'product_total']
         read_only_fields = ['id', 'product', 'product_name', 'product_total', 'unit_name']
 
     def get_unit_name(self, obj):

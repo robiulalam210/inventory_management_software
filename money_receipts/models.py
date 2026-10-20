@@ -29,6 +29,8 @@ class MoneyReceipt(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE)
+    # শাখা (core/branches.py) — ফাঁকা = প্রধান শাখা
+    branch = models.ForeignKey('branch_warehouse.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     mr_no = models.CharField(max_length=20, blank=True, unique=True)  # Added unique constraint
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True)
     sale = models.ForeignKey('sales.Sale', on_delete=models.SET_NULL, null=True, blank=True)
@@ -278,9 +280,37 @@ class MoneyReceipt(models.Model):
             self._apply_to_sale(sale, applied)
             sales_alloc[str(sale.pk)] = str(applied)
             remaining -= applied
+        # বিক্রি-ছাড়া বাকি (বাকি খাতার "বাকি দিলাম" / পুরনো বাকি) — invoice এর পরে, পুরনো আগে
+        dues_alloc = self._apply_to_manual_dues(remaining)
+        remaining -= sum((Decimal(v) for v in dues_alloc.values()), Decimal('0.00'))
         if remaining > 0:
             self._add_advance(self.customer, remaining)
-        return {"sales": sales_alloc, "advance": str(remaining)}
+        alloc = {"sales": sales_alloc, "advance": str(remaining)}
+        if dues_alloc:
+            alloc["dues"] = dues_alloc
+        return alloc
+
+    def _apply_to_manual_dues(self, amount):
+        """খোলা CustomerDue গুলোতে টাকা বসানো (পুরনো আগে)। ফেরত: {due_id: বসানো টাকা}"""
+        from customers.models import CustomerDue
+        out = {}
+        if amount <= 0 or not self.customer_id:
+            return out
+        left = amount
+        for due in (CustomerDue.objects.select_for_update()
+                    .filter(customer_id=self.customer_id, company=self.company)
+                    .order_by('entry_date', 'id')):
+            if left <= 0:
+                break
+            open_amt = due.due_amount
+            if open_amt <= 0:
+                continue
+            applied = min(left, open_amt)
+            due.paid_amount = (due.paid_amount or Decimal('0.00')) + applied
+            due.save(update_fields=['paid_amount'])
+            out[str(due.pk)] = str(applied)
+            left -= applied
+        return out
 
     def create_transaction(self):
         """এই receipt এর টাকা account এ জমা (credit) — একবারই।"""
@@ -319,6 +349,12 @@ class MoneyReceipt(models.Model):
                 if sale:
                     sale.paid_amount = max(Decimal('0.00'), (sale.paid_amount or Decimal('0.00')) - Decimal(amt))
                     sale.save(update_fields=['paid_amount', 'updated_at'])
+            from customers.models import CustomerDue
+            for due_id, amt in (alloc.get("dues") or {}).items():
+                due = CustomerDue.objects.select_for_update().filter(pk=int(due_id)).first()
+                if due:
+                    due.paid_amount = max(Decimal('0.00'), (due.paid_amount or Decimal('0.00')) - Decimal(amt))
+                    due.save(update_fields=['paid_amount'])
             advance = Decimal(str(alloc.get("advance") or "0"))
             if advance > 0:
                 customer = self.customer or (self.sale.customer if self.sale_id else None)

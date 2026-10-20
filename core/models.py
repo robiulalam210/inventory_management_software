@@ -43,6 +43,15 @@ class Company(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ── প্যাকেজ (core/packages.py) ──
+    # package ফাঁকা = পুরনো কোম্পানি: আগের মতোই সব খোলা, কোনো নতুন সীমা নেই (কিছু হারায় না)
+    package = models.ForeignKey('core.Package', on_delete=models.PROTECT, null=True, blank=True, related_name='companies')
+    # কাস্টম: ফাঁকা = প্যাকেজের মতো। দিলে প্যাকেজের ওপরে এটাই চলে।
+    custom_features = models.JSONField(null=True, blank=True)   # ["sales", "khata", ...] — পুরো তালিকা
+    custom_limits = models.JSONField(null=True, blank=True)     # {"max_products": 1000, ...} — শুধু যা বদলাতে চান
+    custom_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    package_note = models.CharField(max_length=255, blank=True, default='')
+
     class Meta:
         verbose_name = _('Company')
         verbose_name_plural = _('Companies')
@@ -58,7 +67,9 @@ class Company(models.Model):
         if not self.expiry_date:
             self.expiry_date = date.today() + timedelta(days=365)
         
-        if self.expiry_date and self.expiry_date < date.today():
+        # পুরনো (প্যাকেজ ছাড়া) কোম্পানি: আগের নিয়ম — মেয়াদ শেষে বন্ধ।
+        # প্যাকেজের কোম্পানি বন্ধ হয় না: মেয়াদ শেষে grace, তারপর শুধু-দেখা (core/packages.py)।
+        if self.expiry_date and self.expiry_date < date.today() and not self.package_id:
             self.is_active = False
             
         super().save(*args, **kwargs)
@@ -100,6 +111,58 @@ class Company(models.Model):
         return f"{self.name} ({self.company_code}) - {self.get_plan_type_display()}"
 
 
+class Package(models.Model):
+    """
+    বিক্রির প্যাকেজ — ফ্রি ট্রায়াল, স্টার্টার, স্ট্যান্ডার্ড, বিজনেস (Super Admin বদলাতে পারেন, কোড ছাড়া)।
+    সীমায় 0 = আনলিমিটেড। features = কোন মডিউল খোলা (core/packages.py এর FEATURES এর key)।
+    """
+    code = models.SlugField(max_length=30, unique=True)
+    name = models.CharField(max_length=60)
+    name_bn = models.CharField(max_length=60, blank=True, default='')
+    description = models.CharField(max_length=255, blank=True, default='')
+    price_month = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    price_year = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_trial = models.BooleanField(default=False)
+    trial_days = models.PositiveSmallIntegerField(default=30)
+    max_users = models.PositiveIntegerField(default=1)
+    max_products = models.PositiveIntegerField(default=0)
+    max_customers = models.PositiveIntegerField(default=0)
+    max_sales_month = models.PositiveIntegerField(default=0)
+    max_sales_total = models.PositiveIntegerField(default=0)
+    max_branches = models.PositiveIntegerField(default=1)
+    features = models.JSONField(default=list, blank=True)
+    sort = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    is_public = models.BooleanField(default=True, help_text='দোকানদারের "আমার প্যাকেজ" পেজে তুলনায় দেখাবে কিনা')
+
+    class Meta:
+        ordering = ['sort', 'id']
+
+    def __str__(self):
+        return self.name
+
+
+class PlatformSetting(models.Model):
+    """Super Admin এর সাধারণ সেটিংস (একটাই সারি) — আপগ্রেডের যোগাযোগ ও পেমেন্ট নম্বর"""
+    sales_whatsapp = models.CharField(max_length=20, blank=True, default='', help_text='আপগ্রেডের বার্তা যাবে এই WhatsApp নম্বরে')
+    sales_phone = models.CharField(max_length=20, blank=True, default='')
+    payment_note = models.TextField(blank=True, default='', help_text='যেমন: বিকাশ (পার্সোনাল) 01XXXXXXXXX — রেফারেন্সে দোকানের নাম দিন')
+    grace_days = models.PositiveSmallIntegerField(default=3)
+    warn_days = models.PositiveSmallIntegerField(default=7)
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return 'Platform settings'
+
+
 class User(AbstractUser):
     class Role(models.TextChoices):
         SUPER_ADMIN = "SUPER_ADMIN", _("Super Admin")
@@ -120,6 +183,8 @@ class User(AbstractUser):
         blank=True,
         related_name='users'
     )
+    # শাখায় বসানো স্টাফ: নতুন এন্ট্রি এই শাখার, আর শুধু এই শাখার হিসাব দেখেন। ফাঁকা = সব শাখা (মালিক/Admin)
+    branch = models.ForeignKey('branch_warehouse.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='staff')
     
     phone = models.CharField(max_length=20, blank=True, null=True)
     profile_picture = models.ImageField(

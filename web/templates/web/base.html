@@ -1,16 +1,21 @@
-{% load static web_tags %}<!doctype html>
-<html lang="en">
+{% load static web_tags %}{% lang as L %}<!doctype html>
+<html lang="{{ L }}" data-lang="{{ L }}"{% if L == 'bn' %} class="dk-i18n-wait"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>{% block title %}{{ page_title|default:"Meherin Mart" }}{% endblock %} — {{ web_company.name }}</title>
+  <title>{% block title %}{{ page_title|default:"" }}{% endblock %} — {{ web_company.name }} · {% brand %}</title>
   <link rel="preload" href="{% static 'web/fonts/ibm-plex-sans-latin-400-normal.woff2' %}" as="font" type="font/woff2" crossorigin>
   <link rel="icon" href="{% static 'web/img/favicon.svg' %}" type="image/svg+xml">
   <link rel="stylesheet" href="{% static 'web/css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'web/css/brand.css' %}">
+  {% if L == 'bn' %}<script src="{% static 'web/js/i18n-bn.js' %}"></script>{% endif %}
+  <script src="{% static 'web/js/i18n.js' %}"></script>
+  <meta name="theme-color" content="#059669">
   <script src="{% static 'web/js/app.js' %}"></script>
   {% if web_low_stock %}<script src="{% static 'web/js/low_stock.js' %}"></script>{% endif %}
   <script defer src="{% static 'web/vendor/alpine-3.14.9.min.js' %}"></script>
+  <script>window.DK_BRANCH = {% if web_branch and web_branch.id %}{{ web_branch.id }}{% else %}null{% endif %};</script>
   {% block head %}{% endblock %}
 </head>
 <body x-data="{ nav: false, signOut: false }" @keydown.escape.window="nav = false; signOut = false">
@@ -24,20 +29,43 @@
       </span>
       <div class="sb-company">
         <b title="{{ web_company.name }}">{{ web_company.name }}</b>
-        <span>Meherin Mart</span>
+        <span class="sb-brand"><img src="{% static 'web/img/logo.svg' %}" alt="">{% brand %}</span>
       </div>
     </div>
+
+    {% if web_branch %}
+    {# শাখা বাছাই — শুধু ২+ শাখা থাকলে। শাখায় বসানো স্টাফ শুধু নিজের শাখা দেখেন (বদলাতে পারেন না) #}
+    <div class="sb-branch" x-data="{ open: false, busy: false,
+         async pick(id) { if (this.busy) return; this.busy = true;
+           try { await App.api('/api/branches/current/', { method: 'POST', body: { branch: id } }); location.reload(); }
+           catch (e) { location.reload(); } } }" @click.outside="open = false">
+      {% if web_branch.locked %}
+        <div class="sb-branch-btn is-locked" title="Your branch">{% icon "store" 17 %}<span><small>Branch</small><b>{{ web_branch.name }}</b></span></div>
+      {% else %}
+        <button type="button" class="sb-branch-btn" @click="open = !open" :aria-expanded="String(open)" aria-haspopup="listbox">
+          {% icon "store" 17 %}<span><small>Showing</small><b>{% if web_branch.name %}{{ web_branch.name }}{% else %}All branches{% endif %}</b></span>{% icon "chevron-down" 15 "chev" %}
+        </button>
+        <div class="sb-branch-menu" role="listbox" x-show="open" x-cloak x-transition.opacity.duration.100ms>
+          <button type="button" role="option" class="{% if not web_branch.id %}is-on{% endif %}" @click="pick('all')">{% icon "check" 15 %}<span>All branches</span></button>
+          {% for b in web_branch.list %}
+          <button type="button" role="option" class="{% if b.id == web_branch.id %}is-on{% endif %}" @click="pick({{ b.id }})">{% icon "check" 15 %}<span>{{ b.name }}</span>{% if b.is_main %}<small>Main</small>{% endif %}</button>
+          {% endfor %}
+          <a class="sb-branch-manage" href="{% url 'web:branches' %}">Manage branches</a>
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
 
     <nav class="sb-nav">
       {% for section in web_menu %}
         {% if section.items|length == 1 %}
           {% with item=section.items.0 %}
-          <div class="sb-section">
+          <div class="sb-section{% if section.feature %} sb-feature{% endif %}">
             <a class="sb-link{% if item.active %} is-active{% endif %}" href="{{ item.href }}"
                {% if item.active %}aria-current="page"{% endif %}>
               {% icon section.icon 19 %}
               <span>{{ item.title }}</span>
-              {% if not item.ready %}<span class="soon">Soon</span>{% endif %}
+              {% if item.locked %}<span class="sb-lock" title="Not in your package">{% icon "lock" 13 %}</span>{% elif not item.ready %}<span class="soon">Soon</span>{% elif section.feature %}<span class="sb-new">NEW</span>{% endif %}
             </a>
           </div>
           {% endwith %}
@@ -47,6 +75,7 @@
                     @click="open = !open" :aria-expanded="open.toString()" aria-expanded="{{ section.open|yesno:'true,false' }}">
               {% icon section.icon 19 %}
               <span>{{ section.title }}</span>
+              {% if section.locked %}<span class="sb-lock sb-lock-sec" title="Not in your package">{% icon "lock" 13 %}</span>{% endif %}
               {% icon "chevron-down" 16 "chev" %}
             </button>
             <div class="sb-items" x-show="open" {% if not section.open %}x-cloak{% endif %}>
@@ -54,7 +83,7 @@
                 <a class="sb-link{% if item.active %} is-active{% endif %}" href="{{ item.href }}"
                    {% if item.active %}aria-current="page"{% endif %}>
                   <span>{{ item.title }}</span>
-                  {% if not item.ready %}<span class="soon">Soon</span>{% endif %}
+                  {% if item.locked %}<span class="sb-lock" title="Not in your package">{% icon "lock" 13 %}</span>{% elif not item.ready %}<span class="soon">Soon</span>{% endif %}
                 </a>
               {% endfor %}
             </div>
@@ -66,6 +95,7 @@
         </p>
       {% endfor %}
     </nav>
+    <div class="sb-foot"><img src="{% static 'web/img/logo.svg' %}" alt=""><span>{% brand %} · {% brand 'tagline' %}</span></div>
   </aside>
   <div class="scrim" x-show="nav" x-cloak @click="nav = false"></div>
 
@@ -74,6 +104,7 @@
     <header class="topbar">
       <button type="button" class="icon-btn menu-btn" @click="nav = true" aria-label="Open menu">{% icon "menu" 20 %}</button>
       <h1>{% block heading %}{{ page_title }}{% endblock %}</h1>
+      {% if web_branch %}<span class="top-branch{% if not web_branch.id %} is-all{% endif %}" title="Branch">{% icon "store" 14 %}<span>{% if web_branch.name %}{{ web_branch.name }}{% else %}All branches{% endif %}</span></span>{% endif %}
       <div class="spacer"></div>
       {% block topbar_actions %}{% endblock %}
 
@@ -98,6 +129,14 @@
               <button type="button" :aria-pressed="(t === 'system').toString()" @click="t = 'system'; App.theme.set('system')">Auto</button>
             </div>
           </div>
+          <div>
+            <div class="theme-lbl">ভাষা · Language</div>
+            <div class="lang-seg" role="group" aria-label="Language / ভাষা" data-no-i18n>
+              <button type="button" aria-pressed="{% if L == 'bn' %}true{% else %}false{% endif %}" onclick="DK.setLang('bn')">বাংলা</button>
+              <button type="button" aria-pressed="{% if L == 'en' %}true{% else %}false{% endif %}" onclick="DK.setLang('en')">English</button>
+            </div>
+          </div>
+          {% if web_plan %}<a class="menu-item" role="menuitem" href="{% url 'web:package' %}">{% icon "rocket" 18 %} My package</a>{% endif %}
           <a class="menu-item" role="menuitem" href="{% url 'web:soon' 'profile' %}">{% icon "user" 18 %} My profile <span class="soon">Soon</span></a>
           <a class="menu-item" role="menuitem" href="{% url 'web:soon' 'profile' %}">{% icon "key" 18 %} Change password <span class="soon">Soon</span></a>
           <button type="button" class="menu-item danger" role="menuitem" @click="open = false; signOut = true">
@@ -117,15 +156,32 @@
       </div>
     {% endif %}
 
-    {% if web_expiry %}
+    {% if web_plan and web_plan.warn %}
+      {# প্যাকেজের অবস্থা — ট্রায়াল / শিগগির শেষ / grace / শুধু-দেখা #}
+      <div class="banner pkg-banner is-{{ web_plan.warn }}" role="status">
+        {% if web_plan.warn == 'trial' %}{% icon "sparkle" 18 %}{% else %}{% icon "alert" 18 %}{% endif %}
+        <span>
+        {% if web_plan.warn == 'readonly' %}
+          {% tr "Your package has ended. You can see your records, but you can't add or change anything until you renew." "আপনার প্যাকেজের মেয়াদ শেষ। হিসাব দেখতে পারবেন, কিন্তু নবায়ন না করা পর্যন্ত নতুন কিছু লেখা যাবে না।" %}
+        {% elif web_plan.warn == 'grace' %}
+          {% tr "Your package ended. Everything still works for" "আপনার প্যাকেজের মেয়াদ শেষ। আরও" %} <b>{{ web_plan.grace_left }}</b> {% tr "more day(s) — renew to keep adding sales." "দিন সব চলবে — বিক্রি চালু রাখতে নবায়ন করুন।" %}
+        {% elif web_plan.warn == 'trial' %}
+          {% if web_plan.days <= 0 %}{% tr "Your free trial ends today." "আজ আপনার ফ্রি ট্রায়ালের শেষ দিন।" %}{% else %}{% tr "Free trial:" "ফ্রি ট্রায়াল:" %} <b>{{ web_plan.days }}</b> {% tr "day(s) left." "দিন বাকি।" %}{% endif %}
+        {% else %}
+          {% if web_plan.days <= 0 %}{% tr "Your package ends today." "আজ আপনার প্যাকেজের শেষ দিন।" %}{% else %}{% tr "Your package ends in" "আপনার প্যাকেজ শেষ হবে" %} <b>{{ web_plan.days }}</b> {% tr "day(s)." "দিন পর।" %}{% endif %}
+        {% endif %}
+        </span>
+        <a class="btn btn-sm {% if web_plan.warn == 'trial' %}btn-ghost{% else %}btn-primary{% endif %}" href="{% url 'web:package' %}">{% if web_plan.warn == 'trial' %}{% tr "See packages" "প্যাকেজ দেখুন" %}{% else %}{% tr "Renew" "নবায়ন করুন" %}{% endif %}</a>
+      </div>
+    {% elif web_expiry %}
       <div class="banner{% if web_expiry.expired %} is-expired{% endif %}" role="status">
         {% icon "alert" 18 %}
         {% if web_expiry.expired %}
-          Your subscription has expired. Contact Meherin Mart to renew and keep your data safe.
+          Your subscription has expired. Contact {% brand 'en' %} to renew and keep your data safe.
         {% elif web_expiry.days == 0 %}
-          Your subscription ends today. Contact Meherin Mart to renew.
+          Your subscription ends today. Contact {% brand 'en' %} to renew.
         {% else %}
-          Your subscription ends in {{ web_expiry.days }} day{{ web_expiry.days|pluralize }}. Contact Meherin Mart to renew.
+          Your subscription ends in {{ web_expiry.days }} day{{ web_expiry.days|pluralize }}. Contact {% brand 'en' %} to renew.
         {% endif %}
       </div>
     {% endif %}
@@ -134,7 +190,8 @@
       {% for message in messages %}
         <div class="notice notice-ok" role="status">{% icon "check-circle" 18 %}<span>{{ message }}</span></div>
       {% endfor %}
-      {% if web_guide %}{% include "web/_guide.html" with g=web_guide %}{% endif %}
+      {# গাইড বাংলায় লেখা — English মোডে দেখায় না, যাতে ভাষা না মেশে #}
+      {% if web_guide and L == 'bn' %}{% include "web/_guide.html" with g=web_guide %}{% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>
