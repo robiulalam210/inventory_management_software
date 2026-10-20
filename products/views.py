@@ -23,6 +23,9 @@ from django.db import transaction
 from products.pagination import StandardResultsSetPagination
 from .filters import ProductFilter
 from core.utils import custom_response
+import logging as _logging
+_dbg = _logging.getLogger(__name__).debug  # আগের print — production log এ যায় না
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -962,7 +965,7 @@ class ProductViewSet(BaseInventoryViewSet):
 
         except Exception as e:
             import traceback
-            print(traceback.format_exc())
+            _dbg(traceback.format_exc())
             return custom_response(
                 success=False,
                 message=str(e),

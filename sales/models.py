@@ -1,4 +1,5 @@
 # sales/models.py
+from branch_warehouse.stock import branch_of, check_sale_stock
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -23,6 +24,8 @@ class Sale(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
     sale_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_made')
     company = models.ForeignKey('core.Company', on_delete=models.CASCADE, null=True, blank=True)
+    # শাখা (core/branches.py) — ফাঁকা = প্রধান শাখা
+    branch = models.ForeignKey('branch_warehouse.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     customer = models.ForeignKey('customers.Customer', on_delete=models.SET_NULL, null=True, blank=True)
     customer_name = models.CharField(max_length=100, blank=True, null=True)
 
@@ -412,6 +415,8 @@ class SaleItem(models.Model):
     
     # Price fields
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    # বিক্রির দিনের ওয়ারেন্টি (মাস) — Product.warranty_months থেকে কপি; মেয়াদ = sale_date + এত মাস
+    warranty_months = models.PositiveSmallIntegerField(default=0)
     price_type = models.CharField(
         max_length=10, 
         choices=[
@@ -459,9 +464,12 @@ class SaleItem(models.Model):
     def sale_quantity(self, value):
         self.quantity = value
     
+    @branch_of(lambda self: self.sale.branch_id)  # শাখার স্টক: এই এন্ট্রির শাখায় (branch_warehouse/stock.py)
     def save(self, *args, **kwargs):
         """Save sale item with multi-mode support"""
         is_new = self.pk is None
+        if is_new and not self.warranty_months and self.product_id:
+            self.warranty_months = getattr(self.product, 'warranty_months', 0) or 0
         
         # If sale_mode is provided, calculate base quantity
         if self.sale_mode and hasattr(self.sale_mode, 'convert_to_base'):
@@ -516,6 +524,10 @@ class SaleItem(models.Model):
                     f"Available: {product_stock} {self.product.unit.name if self.product.unit else 'units'}, "
                     f"Requested: {self.quantity} {self.sale_mode.name if self.sale_mode else self.product.unit.name if self.product.unit else 'units'}"
                 )
+            # শাখা: বিক্রির শাখায় যথেষ্ট আছে কি না (এক শাখার দোকানে কিছু করে না)
+            branch_msg = check_sale_stock(self.product, base_quantity_decimal, self.sale.branch_id)
+            if branch_msg:
+                raise ValidationError(branch_msg)
         
         super().save(*args, **kwargs)
         
@@ -527,6 +539,14 @@ class SaleItem(models.Model):
             except Exception as e:
                 logger.exception(f"Error updating product stock for {self.product.name}: {e}")
         
+        # ব্যাচ / মেয়াদ: আগে-মেয়াদ-শেষ-হবে-সেটা-আগে (FEFO) নিয়মে ব্যাচ থেকে কমাই
+        if is_new:
+            try:
+                from purchases.batches import allocate_for_sale_item
+                allocate_for_sale_item(self)
+            except Exception:
+                logger.exception("Batch allocation failed for sale item %s", self.pk)
+
         # Recalculate sale totals
         try:
             self.sale.calculate_totals()
@@ -588,8 +608,15 @@ class SaleItem(models.Model):
             'stock_deducted': float(self.base_quantity)
         }
     
+    @branch_of(lambda self: self.sale.branch_id)  # শাখার স্টক: এই এন্ট্রির শাখায় (branch_warehouse/stock.py)
     def delete(self, *args, **kwargs):
         """Override delete to return stock"""
+        # ব্যাচের স্টকও যেখান থেকে কমেছিল সেখানে ফেরত
+        try:
+            from purchases.batches import restore_for_sale_item
+            restore_for_sale_item(self)
+        except Exception:
+            logger.exception("Batch restore failed for sale item %s", self.pk)
         # Return stock to product
         try:
             self.product.stock_qty += float(self.base_quantity)
@@ -606,3 +633,14 @@ class SaleItem(models.Model):
             sale.calculate_totals()
         except Exception:
             pass
+
+
+class SaleItemBatch(models.Model):
+    """একটা SaleItem এর কতটা কোন ব্যাচ থেকে গেল — item মুছলে ঠিক সেখানেই ফেরত দিতে।"""
+    sale_item = models.ForeignKey(SaleItem, on_delete=models.CASCADE, related_name='batch_allocations')
+    batch = models.ForeignKey('purchases.ProductBatch', on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name='sale_allocations')
+    qty = models.DecimalField(max_digits=12, decimal_places=3)
+
+    def __str__(self):
+        return f"{self.sale_item_id} ← {self.batch_id}: {self.qty}"

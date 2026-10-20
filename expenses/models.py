@@ -63,6 +63,8 @@ class Expense(models.Model):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     date_created = models.DateTimeField(default=timezone.now)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, null=True, blank=True)
+    # শাখা (core/branches.py) — ফাঁকা = প্রধান শাখা
+    branch = models.ForeignKey('branch_warehouse.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     head = models.ForeignKey(ExpenseHead, on_delete=models.SET_NULL, null=True, blank=True)
     subhead = models.ForeignKey(ExpenseSubHead, on_delete=models.SET_NULL, null=True, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2)

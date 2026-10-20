@@ -55,14 +55,16 @@
 
   const blankCompany = () => ({
     name: '', phone: '', email: '', address: '', trade_license: '', website: '',
-    plan_type: 'basic', expiry_date: addMonths('', 12), max_users: 5, max_products: 1000, max_branches: 3,
+    plan_type: 'basic', expiry_date: addMonths('', 1), max_users: 5, max_products: 1000, max_branches: 3,
+    // প্যাকেজ (core/packages.py): নতুন কোম্পানি ডিফল্টে ফ্রি ট্রায়াল
+    package: 'trial', custom_on: false, custom_features: [], custom_limits: {}, custom_price: '', package_note: '',
   });
   const blankAdmin = () => ({ first_name: '', last_name: '', username: '', email: '', phone: '', password: genPassword() });
 
   window.platformCompanies = function (plans) {
     return {
       plans, states: STATES,
-      rows: [], counts: {}, loading: true, error: null,
+      rows: [], counts: {}, summary: null, loading: true, error: null,
       f: { q: '', status: 'all' },
       sel: null, selLoading: false,
       // create / edit
@@ -73,11 +75,15 @@
       pwOpen: false, pwUser: null, pw: '', pwErr: '', pwSaving: false, pwDone: '',
       confirm: null, busy: false, toast: '', copied: '',
       _req: 0,
+      packages: [], featureList: [], limitList: [],
 
       init() {
         const p = new URLSearchParams(location.search);
         this.f.q = p.get('q') || ''; this.f.status = p.get('status') || 'all';
         this.load();
+        App.api('/api/platform/packages/').then(r => {
+          this.packages = r.data.packages || []; this.featureList = r.data.features || []; this.limitList = r.data.limits || [];
+        }).catch(() => {});
         this.$watch('f.q', () => { clearTimeout(this._qt); this._qt = setTimeout(() => this.load(), 250); });
         this.$watch('f.status', () => this.load());
         const open = p.get('open');
@@ -96,7 +102,7 @@
         try {
           const r = await App.api('/api/platform/companies/', { query: { q: this.f.q, status: this.f.status } });
           if (id !== this._req) return;
-          this.rows = r.data.results; this.counts = r.data.counts;
+          this.rows = r.data.results; this.counts = r.data.counts; this.summary = r.data.summary;
         } catch (e) { if (id === this._req) this.error = e.message; }
         if (id === this._req) this.loading = false;
       },
@@ -177,6 +183,10 @@
         this.c = {
           name: s.name, phone: s.phone, email: s.email, address: s.address, trade_license: s.trade_license, website: s.website,
           plan_type: s.plan_type, expiry_date: s.expiry_date || '', max_users: s.max_users, max_products: s.max_products, max_branches: s.max_branches,
+          package: s.package || '', custom_on: Array.isArray(s.custom_features),
+          custom_features: Array.isArray(s.custom_features) ? [...s.custom_features] : [...this.pkgFeatures(s.package)],
+          custom_limits: Object.assign({}, s.custom_limits || {}),
+          custom_price: s.custom_price == null ? '' : String(s.custom_price), package_note: s.package_note || '',
         };
         this.fe = { company: {}, admin: {} }; this.formError = ''; this.formOpen = true;
         this.$nextTick(() => this.$refs.cName && this.$refs.cName.focus());
@@ -193,7 +203,8 @@
         if (!c.phone.trim()) e.phone = 'Enter a phone number to reach the shop.';
         if (c.email && !/^\S+@\S+\.\S+$/.test(c.email)) e.email = 'Enter a valid email address.';
         if (!c.expiry_date) e.expiry_date = 'Pick the date the subscription ends.';
-        ['max_users', 'max_products', 'max_branches'].forEach(k => { if (!(Number(c[k]) >= 1)) e[k] = 'At least 1.'; });
+        if (!c.package) ['max_users', 'max_products', 'max_branches'].forEach(k => { if (!(Number(c[k]) >= 1)) e[k] = 'At least 1.'; });
+        if (c.custom_price !== '' && !(Number(c.custom_price) >= 0)) e.custom_price = 'Enter a price.';
         this.fe.company = e;
         return !Object.keys(e).length;
       },
@@ -218,8 +229,35 @@
           name: c.name.trim(), phone: c.phone.trim(), email: c.email.trim(), address: c.address.trim(),
           trade_license: c.trade_license.trim(), website: c.website.trim(), plan_type: c.plan_type,
           expiry_date: c.expiry_date, max_users: Number(c.max_users), max_products: Number(c.max_products), max_branches: Number(c.max_branches),
+          package: c.package || null,
+          custom_features: c.package && c.custom_on ? c.custom_features : null,
+          custom_limits: c.package ? Object.fromEntries(Object.entries(c.custom_limits || {}).filter(([, v]) => v !== '' && v != null)) : null,
+          custom_price: c.package && c.custom_price !== '' ? Number(c.custom_price) : null,
+          package_note: (c.package_note || '').trim(),
         };
       },
+      // ───── প্যাকেজ ─────
+      pkgOf(code) { return this.packages.find(p => p.code === code) || null; },
+      pkgName(code) { const p = this.pkgOf(code); return p ? p.name : 'Legacy (no limits)'; },
+      pkgFeatures(code) { const p = this.pkgOf(code); return p ? p.features : this.featureList.map(f => f.key); },
+      pickPackage(code) {
+        this.c.package = code;
+        const p = this.pkgOf(code);
+        if (p && p.is_trial && this.mode === 'new') { const d = new Date(); d.setDate(d.getDate() + (p.trial_days || 30)); this.c.expiry_date = d.toISOString().slice(0, 10); }
+        if (!this.c.custom_on) this.c.custom_features = [...this.pkgFeatures(code)];
+      },
+      toggleCustom() {
+        this.c.custom_on = !this.c.custom_on;
+        if (this.c.custom_on && !this.c.custom_features.length) this.c.custom_features = [...this.pkgFeatures(this.c.package)];
+      },
+      hasFeat(k) { return this.c.custom_features.includes(k); },
+      toggleFeat(f) {
+        if (f.core) return;
+        const i = this.c.custom_features.indexOf(f.key);
+        if (i >= 0) this.c.custom_features.splice(i, 1); else this.c.custom_features.push(f.key);
+      },
+      pkgLimit(k) { const p = this.pkgOf(this.c.package); const v = p ? p[k] : null; return v === 0 ? 'Unlimited' : (v == null ? '' : String(v)); },
+      stateLabel(s) { return { active: 'Active', grace: 'Grace period', readonly: 'View only — renew', legacy: 'Legacy' }[s] || s; },
       async save() {
         if (this.saving) return;
         if (this.mode === 'edit') {

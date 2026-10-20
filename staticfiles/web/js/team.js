@@ -62,6 +62,7 @@
   window.teamPage = function (init) {
     return {
       init0: init, roles: ROLES, modules: MODULES, acts: ACTS,
+      L_all: document.documentElement.dataset.lang === 'en' ? 'All branches' : 'সব শাখা',
       people: [], limit: null, activeCount: 0, assignable: [], canPerms: false,
       loading: true, error: null,
       q: '', view: 'active',
@@ -217,8 +218,8 @@
       openForm(u) {
         if (u ? !u.can_edit : !this.init0.perms.create) return;
         this.form = u
-          ? { id: u.id, first_name: u.first_name, last_name: u.last_name, phone: u.phone, email: u.email, username: u.username, role: u.role, was: u.role, me: u.is_me }
-          : { id: null, first_name: '', last_name: '', phone: '', email: '', username: '', role: this.assignable.includes('STAFF') ? 'STAFF' : this.assignable[this.assignable.length - 1], password: genPassword() };
+          ? { id: u.id, first_name: u.first_name, last_name: u.last_name, phone: u.phone, email: u.email, username: u.username, role: u.role, was: u.role, me: u.is_me, branch: u.branch ? String(u.branch) : '' }
+          : { id: null, first_name: '', last_name: '', phone: '', email: '', username: '', role: this.assignable.includes('STAFF') ? 'STAFF' : this.assignable[this.assignable.length - 1], password: genPassword(), branch: '' };
         this.fe = {}; this.formError = ''; this.done = null; this.formOpen = true;
         this.$nextTick(() => this.$refs.fFirst && this.$refs.fFirst.focus());
       },
@@ -246,6 +247,7 @@
         const body = { first_name: f.first_name.trim(), last_name: f.last_name.trim(), phone: f.phone.trim(), email: f.email.trim(), username: f.username.trim() };
         if (!f.me) body.role = f.role;
         if (!f.id) body.password = f.password;
+        if ((this.init0.branches || []).length && this.init0.is_admin && !f.me) body.branch = f.role === 'ADMIN' ? null : (f.branch || null);   // শাখা (ফাঁকা = সব শাখা)
         try {
           const r = f.id ? await App.api(`/api/users/${f.id}/`, { method: 'PATCH', body })
                          : await App.api('/api/users/', { method: 'POST', body });

@@ -47,6 +47,8 @@
       labelOpen: false, label: { product: null, count: 12, price: true },
       confirmDel: false, delError: '', deleting: false,
       toast: '', _req: 0, _t: null,
+      // শাখা অনুযায়ী স্টক (শুধু ২+ শাখার দোকানে) — /api/branches/stock/
+      bs: { enabled: false, branches: [], stock: {} }, curBranch: window.DK_BRANCH || null,
 
       init() {
         const p = new URLSearchParams(location.search);
@@ -56,6 +58,7 @@
         this.f.category = p.get('category') || '';
         this.page = Math.max(1, parseInt(p.get('page') || '1', 10) || 1);
         this.loadLookups();
+        App.api('/api/branches/stock/').then(r => { if (r.data && r.data.enabled) this.bs = r.data; }).catch(() => {});
         this.fetch();
         this.loadCounts();
         this.$watch('f.q', () => { clearTimeout(this._t); this._t = setTimeout(() => this.reset(), 300); });
@@ -136,8 +139,27 @@
       num: (v) => numFmt.format(n(v)),
       hue: (r) => ((String((r.category_info && r.category_info.name) || r.name).charCodeAt(0) * 37) % 360),
       unitOf: (r) => (r.unit_info && (r.unit_info.code || r.unit_info.name)) || '',
+      // শাখা বাছা থাকলে সেই শাখার স্টক, নইলে মোট
+      qty(r) {
+        if (this.bs.enabled && this.curBranch) {
+          const m = this.bs.stock[String(r.id)] || {};
+          return n(m[String(this.curBranch)]);
+        }
+        return n(r.stock_qty);
+      },
+      // "সব শাখা" দেখার সময় নিচে ছোট করে: প্রধান 200 · উত্তরা 90
+      branchLine(r) {
+        if (!this.bs.enabled || this.curBranch) return '';
+        const m = this.bs.stock[String(r.id)] || {};
+        return this.bs.branches.filter(b => b.is_active).map(b => b.name + ' ' + numFmt.format(n(m[String(b.id)]))).join(' · ');
+      },
+      branchRows(r) {
+        if (!this.bs.enabled || !r) return [];
+        const m = this.bs.stock[String(r.id)] || {};
+        return this.bs.branches.filter(b => b.is_active).map(b => ({ id: b.id, name: b.name, main: b.is_main, qty: n(m[String(b.id)]) }));
+      },
       stockState(r) {
-        const s = n(r.stock_qty);
+        const s = this.qty(r);
         if (s <= 0) return 'out';
         if (s <= n(r.alert_quantity)) return 'low';
         return 'in';
@@ -193,13 +215,13 @@
           id: r.id, sku: r.sku, name: r.name || '',
           category: r.category ? String(r.category) : '', unit: r.unit ? String(r.unit) : '', brand: r.brand ? String(r.brand) : '',
           purchase_price: String(n(r.purchase_price) || ''), selling_price: String(n(r.selling_price) || ''),
-          opening_stock: '', alert_quantity: String(n(r.alert_quantity)),
+          opening_stock: '', alert_quantity: String(n(r.alert_quantity)), warranty_months: String(n(r.warranty_months) || ''),
           discount_on: !!r.discount_applied_on, discount_type: r.discount_type === 'percentage' ? 'percentage' : 'fixed',
           discount_value: r.discount_applied_on ? String(n(r.discount_value)) : '',
           description: r.description || '', is_active: !!r.is_active, file: null, preview: r.image || '',
         } : {
           id: null, sku: '', name: '', category: this.f.category || '', unit: this.defaultUnit(), brand: '',
-          purchase_price: '', selling_price: '', opening_stock: '', alert_quantity: '5',
+          purchase_price: '', selling_price: '', opening_stock: '', alert_quantity: '5', warranty_months: '',
           discount_on: false, discount_type: 'percentage', discount_value: '',
           description: '', is_active: true, file: null, preview: '',
         };
@@ -245,6 +267,7 @@
           name: f.name.trim(), category: f.category || '', unit: f.unit, brand: f.brand || '',
           purchase_price: r2(f.purchase_price).toFixed(2), selling_price: r2(f.selling_price).toFixed(2),
           alert_quantity: String(parseInt(f.alert_quantity, 10) || 0),
+          warranty_months: String(Math.min(240, parseInt(f.warranty_months, 10) || 0)),
           description: f.description.trim(), is_active: f.is_active ? 'true' : 'false',
           discount_applied_on: f.discount_on ? 'true' : 'false',
         };

@@ -14,7 +14,8 @@ class CustomerSerializer(serializers.ModelSerializer):
     payment_breakdown = serializers.SerializerMethodField()
     customer_type = serializers.SerializerMethodField()
     total_bought = serializers.SerializerMethodField()
-    
+    manual_due = serializers.SerializerMethodField()   # বিক্রি-ছাড়া বাকি (বাকি খাতা) — total_due তে ধরা আছে
+
     class Meta:
         model = Customer
         fields = [
@@ -22,7 +23,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             'client_no', 'total_due', 'total_paid', 'amount_type',
             'company', 'total_sales', 'date_created', 'created_by',
             'advance_balance', 'payment_breakdown', 'special_customer',
-            'customer_type', 'total_bought'
+            'customer_type', 'total_bought', 'manual_due'
         ]
         # FIX (নিরাপত্তা): 'company' লেখা যেত — PATCH দিয়ে customer কে অন্য company তে সরিয়ে দেওয়া যেত
         read_only_fields = ['date_created', 'created_by', 'customer_type', 'company']
@@ -103,14 +104,28 @@ class CustomerSerializer(serializers.ModelSerializer):
             except:
                 return 0.0
 
+    def get_manual_due(self, obj):
+        """বাকি খাতার "বাকি দিলাম" / পুরনো বাকি — এখনো শোধ না হওয়া অংশ"""
+        if hasattr(obj, '_manual_due_open'):
+            return obj._manual_due_open
+        if getattr(obj, 'manual_open', None) is not None:   # customer list এর annotation
+            obj._manual_due_open = max(0.0, float(obj.manual_open))
+            return obj._manual_due_open
+        try:
+            from .models import manual_due_open
+            obj._manual_due_open = float(manual_due_open(obj))
+        except Exception:
+            obj._manual_due_open = 0.0
+        return obj._manual_due_open
+
     def get_total_due(self, obj):
         """Calculate total due properly considering advance"""
         try:
             grand_total = self.get_total_grand_total(obj)
             total_paid = self.get_total_paid(obj)
             
-            # Basic due calculation
-            basic_due = grand_total - total_paid
+            # Basic due calculation (+ বিক্রি-ছাড়া বাকি)
+            basic_due = grand_total - total_paid + self.get_manual_due(obj)
             
             # If there's advance balance, it reduces the due
             advance = self.get_advance_balance(obj)
@@ -128,7 +143,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             total_paid = self.get_total_paid(obj)
             total_due = self.get_total_due(obj)
             
-            if advance > 0 and advance > (grand_total - total_paid):
+            if advance > 0 and advance > (grand_total - total_paid + self.get_manual_due(obj)):
                 return "Advance"
             elif total_due > 0:
                 return "Due"

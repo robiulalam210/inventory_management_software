@@ -49,7 +49,7 @@ AUDITED_MODELS = sorted({cfg["model"] for cfg in SYNC_ENTITIES.values()} | {
     "purchases.Purchase", "purchases.PurchaseItem",
     "returns.SalesReturn", "returns.SalesReturnItem",
     "returns.PurchaseReturn", "returns.PurchaseReturnItem", "returns.BadStock",
-    "money_receipts.MoneyReceipt", "supplier_payment.SupplierPayment",
+    "money_receipts.MoneyReceipt", "supplier_payment.SupplierPayment", "customers.CustomerDue",
     "expenses.Expense", "income.Income",
     "transactions.Transaction", "account_transfer.AccountTransfer",
     "core.Company", "core.UserPermission", "core.StaffRole", "core.Staff",

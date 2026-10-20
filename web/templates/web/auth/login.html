@@ -1,42 +1,54 @@
-{% load static web_tags %}<!doctype html>
-<html lang="en">
+{% load static web_tags %}{% lang as L %}<!doctype html>
+<html lang="{{ L }}" data-lang="{{ L }}"{% if L == 'bn' %} class="dk-i18n-wait"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex">
-  <title>Sign in — Meherin Mart</title>
+  <title>Sign in — {% brand %}</title>
   <link rel="preload" href="{% static 'web/fonts/ibm-plex-sans-latin-400-normal.woff2' %}" as="font" type="font/woff2" crossorigin>
   <link rel="icon" href="{% static 'web/img/favicon.svg' %}" type="image/svg+xml">
   <link rel="stylesheet" href="{% static 'web/css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'web/css/brand.css' %}">
+  {% if L == 'bn' %}<script src="{% static 'web/js/i18n-bn.js' %}"></script>{% endif %}
+  <script src="{% static 'web/js/i18n.js' %}"></script>
+  <meta name="theme-color" content="#059669">
   <script>try{var t=localStorage.getItem("mm-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
   <script defer src="{% static 'web/vendor/alpine-3.14.9.min.js' %}"></script>
 </head>
 <body>
 <main class="auth">
 
-  <section class="auth-brand" aria-label="Meherin Mart">
+  <section class="auth-brand" aria-label="{% brand %}">
     <div class="brand-mark">
-      <span class="brand-logo">M</span>
-      Meherin Mart
+      <span class="brand-logo"><img src="{% static 'web/img/logo.svg' %}" alt=""></span>
+      <span>{% brand %}<small>{% brand 'other' %} · {% brand 'tagline' %}</small></span>
     </div>
 
     <div class="auth-pitch">
       {# দোকানের দৈনন্দিন কাজের ছবি — একটা বিক্রির রসিদ #}
-      <div class="slip" aria-hidden="true">
-        <div class="slip-head"><b>INV-1042</b><span>Today, 11:42 AM</span></div>
-        <div class="slip-row"><span>Miniket rice 25 kg</span><span>৳ 1,850.00</span></div>
-        <div class="slip-row"><span>Soybean oil 5 L × 2</span><span>৳ 1,780.00</span></div>
-        <div class="slip-row"><span>Lentils 2 kg</span><span>৳ 290.00</span></div>
-        <div class="slip-row"><span>Sugar 1 kg × 3</span><span>৳ 400.00</span></div>
-        <div class="slip-total"><span>Total</span><span>৳ 4,320.00</span></div>
-        <span class="slip-stamp">PAID</span>
+      <div class="khata-page" aria-hidden="true">
+        <div class="kp-head"><b>{% tr "Baki khata" "বাকি খাতা" %}</b><span>{% tr "Today" "আজ" %}</span></div>
+        <div class="kp-row"><span>{% tr "Karim Mia" "করিম মিয়া" %}</span><span class="dr">{% tr "৳ 2,450" "৳ ২,৪৫০" %}</span></div>
+        <div class="kp-row"><span>{% tr "Salma Begum" "সালমা বেগম" %}</span><span class="cr">{% tr "Got ৳ 800" "পেলাম ৳ ৮০০" %}</span></div>
+        <div class="kp-row"><span>{% tr "Jasim Uddin" "জসিম উদ্দিন" %}</span><span class="dr">{% tr "৳ 1,120" "৳ ১,১২০" %}</span></div>
+        <div class="kp-row"><span>{% tr "Rubel Hossain" "রুবেল হোসেন" %}</span><span class="dr">{% tr "৳ 675" "৳ ৬৭৫" %}</span></div>
+        <div class="kp-total"><span>{% tr "To collect" "মোট পাবো" %}</span><span class="dr">{% tr "৳ 4,245" "৳ ৪,২৪৫" %}</span></div>
       </div>
-      <h2>Your shop, from any browser.</h2>
-      <p>Sales, stock, dues and reports — the same data as your desktop and mobile app, always in sync.</p>
+      <h2>{% tr "Every shop account, in one khata." "দোকানের সব হিসাব, এক খাতায়।" %}</h2>
+      <p>{% tr "Sales, stock and dues — from any browser. The same data as your mobile and desktop app." "বেচাকেনা, স্টক আর বাকির হিসাব — যেকোনো ব্রাউজার থেকে। মোবাইল ও ডেস্কটপ অ্যাপের সাথে একই ডাটা।" %}</p>
+      <ul class="auth-feats">
+        <li><span>✓</span>{% tr "Who owes you what — at a glance" "কার কাছে কত পাবো — এক নজরে" %}</li>
+        <li><span>✓</span>{% tr "One-tap WhatsApp reminders" "এক চাপে WhatsApp এ তাগাদা" %}</li>
+        <li><span>✓</span>{% tr "Stock, profit and reports" "স্টক, লাভ-ক্ষতি আর রিপোর্ট" %}</li>
+      </ul>
     </div>
   </section>
 
   <section class="auth-main">
+    <div class="auth-lang"><div class="lang-seg" role="group" aria-label="Language / ভাষা" data-no-i18n>
+        <button type="button" aria-pressed="{% if L == 'bn' %}true{% else %}false{% endif %}" onclick="DK.setLang('bn')">বাংলা</button>
+        <button type="button" aria-pressed="{% if L == 'en' %}true{% else %}false{% endif %}" onclick="DK.setLang('en')">English</button>
+      </div></div>
     <div class="auth-card"
          x-data="{ show: false, busy: false }">
       <h1>Sign in</h1>

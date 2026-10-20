@@ -475,7 +475,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'purchase_price', 'selling_price', 'opening_stock',
             'stock_qty', 'alert_quantity', 'description', 'image',
             'is_active', 'discount_type', 'discount_value',
-            'discount_applied_on', 'created_at', 'updated_at',
+            'discount_applied_on', 'created_at', 'updated_at', 'warranty_months',
             'stock_status', 'final_price', 'stock_status_code',
             # Sale mode fields WITH tiers
             'sale_modes', 'available_sale_modes', 'base_unit_name', 'base_unit_code',
@@ -620,7 +620,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             'name', 'category', 'unit', 'brand', 'group', 'source',
             'purchase_price', 'selling_price', 'opening_stock', 
             'alert_quantity', 'description', 'image', 'is_active',
-            'discount_type', 'discount_value', 'discount_applied_on'
+            'discount_type', 'discount_value', 'discount_applied_on', 'warranty_months'
         ]
         extra_kwargs = {
             'purchase_price': {'default': Decimal('0.00')},
@@ -798,7 +798,7 @@ class ProductUpdateSerializer(serializers.ModelSerializer):
             'name', 'category', 'unit', 'brand', 'group', 'source',
             'purchase_price', 'selling_price', 'alert_quantity', 
             'description', 'image', 'is_active',
-            'discount_type', 'discount_value', 'discount_applied_on'
+            'discount_type', 'discount_value', 'discount_applied_on', 'warranty_months'
         ]
 
     def to_internal_value(self, data):
@@ -954,7 +954,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'category', 'unit', 'brand', 'group', 'source',
             'purchase_price', 'selling_price', 'opening_stock', 
             'stock_qty', 'alert_quantity', 'description', 'image',
-            'is_active', 'created_at', 'updated_at',
+            'is_active', 'created_at', 'updated_at', 'warranty_months',
             # Info fields
             'category_info', 'unit_info', 'brand_info', 'group_info', 
             'source_info', 'created_by_info',

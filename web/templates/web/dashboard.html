@@ -32,6 +32,18 @@
     </div>
   </template>
 
+  {# ── বাকি খাতা: মোট পাবো (একই API: Due Reminders) ── #}
+  {% if dash_perms.customers %}
+  <a class="dash-khata" href="{% url 'web:khata' %}" data-no-i18n x-data="{ s: null, nf: new Intl.NumberFormat(DK.lang === 'bn' ? 'bn-BD' : 'en-IN', { maximumFractionDigits: 2 }) }"
+     x-init="App.api('/api/reports/customer-due-reminders/').then(r => { s = r.data && r.data.summary; }).catch(() => {})">
+    <span class="dk-ic">{% icon "book" 22 %}</span>
+    <span class="dk-txt"><small>{% tr "Baki Khata · to collect" "বাকি খাতা · মোট পাবো" %}</small>
+      <b x-text="s ? '৳\u00A0' + nf.format(s.total_due) : '…'"></b></span>
+    <span class="dk-sub" x-text="s ? (s.total_customers ? DK.L(nf.format(s.total_customers) + (s.total_customers === 1 ? ' customer owes you' : ' customers owe you'), nf.format(s.total_customers) + ' জনের কাছে বাকি') : DK.L('Nobody owes you', 'কারো কাছে বাকি নেই')) : ''"></span>
+    <span class="dk-go">{% tr "Open khata" "খাতা খুলুন" %} {% icon "arrow-right" 16 %}</span>
+  </a>
+  {% endif %}
+
   {% if shop_url %}
   <section class="panel dash-shop">
     <div class="panel-head">
@@ -61,7 +73,7 @@
     {# ── headline numbers ── #}
     <div class="kpis">
       <article class="kpi">
-        <header><span class="kpi-ic" style="--c:#2563eb">{% icon "cart" 18 %}</span>Sales</header>
+        <header><span class="kpi-ic" style="--c:#059669">{% icon "cart" 18 %}</span>Sales</header>
         <div class="kpi-val" :class="{ sk: loading && !d }" x-text="d ? taka(m.sales?.total) : '—'"></div>
         <p x-show="d" x-cloak>
           <span x-text="qty(m.sales?.count) + (m.sales?.count == 1 ? ' invoice' : ' invoices')"></span><template x-if="Number(m.sales?.total_due) > 0"><span>, <b class="txt-due" x-text="taka(m.sales?.total_due)"></b> due</span></template>

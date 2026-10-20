@@ -55,10 +55,19 @@ from django.db.models import Sum, Count, F
 from datetime import datetime
 from django.utils import timezone
 from returns.models import PurchaseReturn
+import logging as _logging
+_dbg = _logging.getLogger(__name__).debug  # আগের print — production log এ যায় না
+
 
 # --------------------
 # Sales Report - Updated Format
 # --------------------
+
+def _B(model, field='branch'):
+    """শাখা (core/branches.py): বাছা শাখার এন্ট্রি — শাখা বাছা না থাকলে বা ১টা শাখা হলে সব"""
+    from core.branches import branch_q
+    return model.objects.filter(branch_q(field))
+
 class SalesReportView(BaseReportView):
     filter_serializer_class = SalesReportFilterSerializer
     cache_timeout = 600
@@ -73,69 +82,69 @@ class SalesReportView(BaseReportView):
             start, end = self.get_date_range(request)
             
             # ===== DEBUG LOGS =====
-            print(f"=== SALES REPORT DEBUG ===")
-            print(f"Company ID: {company.id}")
-            print(f"Request GET params: {dict(request.GET)}")
-            print(f"Parsed start date: {start}")
-            print(f"Parsed end date: {end}")
-            print(f"Filters: {filters}")
+            _dbg(f"=== SALES REPORT DEBUG ===")
+            _dbg(f"Company ID: {company.id}")
+            _dbg(f"Request GET params: {dict(request.GET)}")
+            _dbg(f"Parsed start date: {start}")
+            _dbg(f"Parsed end date: {end}")
+            _dbg(f"Filters: {filters}")
             
-            sales = Sale.objects.filter(company=company).select_related(
+            sales = _B(Sale).filter(company=company).select_related(
                 'customer', 'sale_by'
             ).prefetch_related(
                 'items', 'items__product'
             ).order_by('-sale_date')
             
-            print(f"Total sales in company (before filters): {sales.count()}")
+            _dbg(f"Total sales in company (before filters): {sales.count()}")
             
             # ===== FIXED DATE FILTERING =====
             if start and end:
-                print(f"Applying date filter: {start} to {end}")
+                _dbg(f"Applying date filter: {start} to {end}")
                 
                 # IMPORTANT: Convert dates to datetimes for proper comparison
                 # Since sale_date is DateTimeField, we need to use __range with datetimes
-                start_datetime = datetime.combine(start, datetime.min.time())
-                end_datetime = datetime.combine(end, datetime.max.time())
+                start_datetime = timezone.make_aware(datetime.combine(start, datetime.min.time()))
+                end_datetime = timezone.make_aware(datetime.combine(end, datetime.max.time()))
                 
-                print(f"Start datetime: {start_datetime}")
-                print(f"End datetime: {end_datetime}")
+                _dbg(f"Start datetime: {start_datetime}")
+                _dbg(f"End datetime: {end_datetime}")
                 
                 # Option 1: Use __range with datetimes (recommended)
                 sales = sales.filter(sale_date__range=[start_datetime, end_datetime])
                 
-                print(f"Sales after date filter: {sales.count()}")
+                _dbg(f"Sales after date filter: {sales.count()}")
                 
                 # DEBUG: Check what dates are actually in the filtered sales
                 if sales.exists():
-                    print("Sample sales dates after filter:")
+                    _dbg("Sample sales dates after filter:")
                     for sale in sales[:5]:  # First 5
-                        print(f"  - {sale.invoice_no}: {sale.sale_date}")
+                        _dbg(f"  - {sale.invoice_no}: {sale.sale_date}")
                 else:
-                    print("No sales found with date filter!")
+                    _dbg("No sales found with date filter!")
                     
                     # DEBUG: Check if sales exist outside the filter range
-                    all_sales = Sale.objects.filter(company=company)
-                    print(f"All sales dates in database (first 10):")
+                    all_sales = _B(Sale).filter(company=company)
+                    _dbg(f"All sales dates in database (first 10):")
                     for sale in all_sales.order_by('sale_date')[:10]:
-                        print(f"  - {sale.invoice_no}: {sale.sale_date} (Year: {sale.sale_date.year})")
+                        _dbg(f"  - {sale.invoice_no}: {sale.sale_date} (Year: {sale.sale_date.year})")
             
             # ===== OTHER FILTERS =====
             filter_q = Q()
             if filters.get('customer'):
                 filter_q &= Q(customer_id=filters['customer'])
-                print(f"Applying customer filter: {filters['customer']}")
+                _dbg(f"Applying customer filter: {filters['customer']}")
             if filters.get('payment_status'):
                 filter_q &= Q(payment_status=filters['payment_status'])
-                print(f"Applying payment status filter: {filters['payment_status']}")
+                _dbg(f"Applying payment status filter: {filters['payment_status']}")
             if filters.get('sale_type'):
                 filter_q &= Q(sale_type=filters['sale_type'])
-                print(f"Applying sale type filter: {filters['sale_type']}")
+                _dbg(f"Applying sale type filter: {filters['sale_type']}")
             if filters.get('invoice_no'):
                 filter_q &= Q(invoice_no__icontains=filters['invoice_no'])
-                print(f"Applying invoice no filter: {filters['invoice_no']}")
+                _dbg(f"Applying invoice no filter: {filters['invoice_no']}")
             
             sales = sales.filter(filter_q)
-            print(f"Sales after all filters: {sales.count()}")
+            _dbg(f"Sales after all filters: {sales.count()}")
             
             # ===== BUILD REPORT DATA =====
             report_data = []
@@ -188,7 +197,7 @@ class SalesReportView(BaseReportView):
                 })
                 sl_number += 1
             
-            print(f"Final report data count: {len(report_data)}")
+            _dbg(f"Final report data count: {len(report_data)}")
             
             # ===== RETURN RESPONSE =====
             serializer = SalesReportSerializer(report_data, many=True)
@@ -203,19 +212,19 @@ class SalesReportView(BaseReportView):
                 }
             }
             
-            print(f"=== END SALES REPORT DEBUG ===\n")
+            _dbg(f"=== END SALES REPORT DEBUG ===\n")
             
             return custom_response(True, "Sales report fetched successfully", response_data)
             
         except Exception as e:
-            print(f"ERROR in SalesReportView: {str(e)}")
+            _dbg(f"ERROR in SalesReportView: {str(e)}")
             import traceback
             traceback.print_exc()
             return self.handle_exception(e)
     
     def _build_sales_summary(self, report_data, date_range):
         if not report_data:
-            print("No report data to build summary")
+            _dbg("No report data to build summary")
             return {
                 'total_sales': 0, 
                 'total_cost': 0, 
@@ -264,7 +273,7 @@ class PurchaseReportView(BaseReportView):
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
             
-            purchases = Purchase.objects.filter(company=company).select_related(
+            purchases = _B(Purchase).filter(company=company).select_related(
                 'supplier'
             ).prefetch_related(
                 'items'
@@ -438,10 +447,10 @@ class TopSoldProductsReportView(BaseReportView):
             start, end = self.get_date_range(request)
             
             # Debug logs
-            print(f"=== TOP PRODUCTS DEBUG ===")
-            print(f"Company: {company.id}")
-            print(f"Date range: {start} to {end}")
-            print(f"GET params: {dict(request.GET)}")
+            _dbg(f"=== TOP PRODUCTS DEBUG ===")
+            _dbg(f"Company: {company.id}")
+            _dbg(f"Date range: {start} to {end}")
+            _dbg(f"GET params: {dict(request.GET)}")
             
             # First get sale items for the date range
             sale_items_query = SaleItem.objects.filter(
@@ -451,8 +460,8 @@ class TopSoldProductsReportView(BaseReportView):
             # Apply date filter correctly
             if start and end:
                 # Convert dates to datetimes for proper comparison
-                start_datetime = datetime.combine(start, datetime.min.time())
-                end_datetime = datetime.combine(end, datetime.max.time())
+                start_datetime = timezone.make_aware(datetime.combine(start, datetime.min.time()))
+                end_datetime = timezone.make_aware(datetime.combine(end, datetime.max.time()))
                 sale_items_query = sale_items_query.filter(
                     sale__sale_date__range=[start_datetime, end_datetime]
                 )
@@ -481,7 +490,7 @@ class TopSoldProductsReportView(BaseReportView):
                 st['cost'] += item.cost_amount()
             product_stats = sorted(stats.values(), key=lambda x: x['qty'], reverse=True)[:limit]
             
-            print(f"Found {len(product_stats)} products with sales data")
+            _dbg(f"Found {len(product_stats)} products with sales data")
             
             # Prepare report data
             report_data = []
@@ -509,7 +518,7 @@ class TopSoldProductsReportView(BaseReportView):
             
             # If no data found, show all products with zero sales
             if not report_data:
-                print("No sales found, showing all products...")
+                _dbg("No sales found, showing all products...")
                 products = Product.objects.filter(company=company).order_by('-stock_qty')[:limit]
                 
                 for product in products:
@@ -548,12 +557,12 @@ class TopSoldProductsReportView(BaseReportView):
                 }
             }
             
-            print(f"=== END TOP PRODUCTS DEBUG ===\n")
+            _dbg(f"=== END TOP PRODUCTS DEBUG ===\n")
             
             return custom_response(True, "Top sold products report fetched successfully", response_data)
             
         except Exception as e:
-            print(f"ERROR in TopSoldProductsReportView: {str(e)}")
+            _dbg(f"ERROR in TopSoldProductsReportView: {str(e)}")
             import traceback
             traceback.print_exc()
             return self.handle_exception(e)
@@ -910,19 +919,19 @@ class CustomerDueAdvanceReportView(BaseReportView):
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
             
-            print(f"=== CUSTOMER DUE DEBUG ===")
-            print(f"Company: {company.id}")
-            print(f"Filters: {filters}")
-            print(f"Date range: {start} to {end}")
+            _dbg(f"=== CUSTOMER DUE DEBUG ===")
+            _dbg(f"Company: {company.id}")
+            _dbg(f"Filters: {filters}")
+            _dbg(f"Date range: {start} to {end}")
             
             from customers.models import Customer
             customers = Customer.objects.filter(company=company, is_active=True)
             
             if filters.get('customer'):
                 customers = customers.filter(id=filters['customer'])
-                print(f"Filtered by customer ID: {filters['customer']}")
+                _dbg(f"Filtered by customer ID: {filters['customer']}")
             
-            print(f"Total active customers: {customers.count()}")
+            _dbg(f"Total active customers: {customers.count()}")
             
             report_data = []
             sl_number = 1
@@ -936,8 +945,8 @@ class CustomerDueAdvanceReportView(BaseReportView):
                 
                 # Apply date range filter
                 if start and end:
-                    start_datetime = datetime.combine(start, datetime.min.time())
-                    end_datetime = datetime.combine(end, datetime.max.time())
+                    start_datetime = timezone.make_aware(datetime.combine(start, datetime.min.time()))
+                    end_datetime = timezone.make_aware(datetime.combine(end, datetime.max.time()))
                     sales_query = sales_query.filter(sale_date__range=[start_datetime, end_datetime])
                 
                 # Get totals - FIXED with output_field
@@ -955,10 +964,19 @@ class CustomerDueAdvanceReportView(BaseReportView):
                 
                 # Calculate due and advance
                 net_sales = total_sales - total_discount
-                present_due = max(0.0, net_sales - total_received)
+                # বাকি খাতার বিক্রি-ছাড়া বাকি (বাকি দিলাম / পুরনো বাকি) — বাকির মধ্যে ধরা, বিক্রির মোটে নয়
+                from customers.models import CustomerDue
+                mq = CustomerDue.objects.filter(company=company, customer=customer)
+                if start and end:
+                    mq = mq.filter(entry_date__range=[timezone.make_aware(datetime.combine(start, datetime.min.time())),
+                                                      timezone.make_aware(datetime.combine(end, datetime.max.time()))])
+                mt = mq.aggregate(a=Coalesce(Sum('amount', output_field=FloatField()), 0.0),
+                                  p=Coalesce(Sum('paid_amount', output_field=FloatField()), 0.0))
+                manual_open = max(0.0, float(mt['a'] or 0) - float(mt['p'] or 0))
+                present_due = max(0.0, net_sales - total_received) + manual_open
                 present_advance = max(0.0, total_received - net_sales)
                 
-                print(f"Customer {customer.name}: Sales={net_sales}, Received={total_received}, Due={present_due}, Advance={present_advance}")
+                _dbg(f"Customer {customer.name}: Sales={net_sales}, Received={total_received}, Due={present_due}, Advance={present_advance}")
                 
                 # Apply status filter
                 status_filter = filters.get('status', 'all')
@@ -967,7 +985,7 @@ class CustomerDueAdvanceReportView(BaseReportView):
                     continue  # Skip if no due and filter is for due only
                 elif status_filter == 'advance' and present_advance <= 0:
                     continue  # Skip if no advance and filter is for advance only
-                elif status_filter == 'all' and present_due == 0 and present_advance == 0 and total_sales == 0:
+                elif status_filter == 'all' and present_due == 0 and present_advance == 0 and total_sales == 0 and not manual_open:
                     # Skip customers with no activity if showing all
                     continue
                 
@@ -979,8 +997,8 @@ class CustomerDueAdvanceReportView(BaseReportView):
                         customer=customer
                     )
                     if start and end:
-                        start_datetime = datetime.combine(start, datetime.min.time())
-                        end_datetime = datetime.combine(end, datetime.max.time())
+                        start_datetime = timezone.make_aware(datetime.combine(start, datetime.min.time()))
+                        end_datetime = timezone.make_aware(datetime.combine(end, datetime.max.time()))
                         payments = payments.filter(payment_date__range=[start_datetime, end_datetime])
                     
                     total_payments = payments.aggregate(
@@ -1018,7 +1036,7 @@ class CustomerDueAdvanceReportView(BaseReportView):
             for i, item in enumerate(report_data, 1):
                 item['sl'] = i
             
-            print(f"Final report items: {len(report_data)}")
+            _dbg(f"Final report items: {len(report_data)}")
             
             serializer = CustomerDueAdvanceSerializer(report_data, many=True)
             
@@ -1046,12 +1064,12 @@ class CustomerDueAdvanceReportView(BaseReportView):
                 }
             }
             
-            print(f"=== END CUSTOMER DUE DEBUG ===\n")
+            _dbg(f"=== END CUSTOMER DUE DEBUG ===\n")
             
             return custom_response(True, "Customer due & advance report fetched successfully", response_data)
             
         except Exception as e:
-            print(f"ERROR in CustomerDueAdvanceReportView: {str(e)}")
+            _dbg(f"ERROR in CustomerDueAdvanceReportView: {str(e)}")
             import traceback
             traceback.print_exc()
             return self.handle_exception(e)
@@ -1127,6 +1145,14 @@ class CustomerLedgerReportView(BaseReportView):
                     if ttype == 'all' and gap > Decimal('0.005'):
                         events.append((d, sec, 1, entry(sale.invoice_no, d, 'Payment', 'Paid at the counter', 'Payment',
                                                         sale.payment_method, 0, gap)))
+
+                # বাকি খাতার বিক্রি-ছাড়া বাকি (বাকি দিলাম / পুরনো বাকি) — debit
+                from customers.models import CustomerDue
+                for due in CustomerDue.objects.filter(company=company, customer=customer).order_by('entry_date', 'id'):
+                    d, sec = local(due.entry_date)
+                    label = 'Opening due' if due.kind == CustomerDue.KIND_OPENING else 'Credit given'
+                    events.append((d, sec, 0, entry(due.entry_no, d, label, f"{label}{' - ' + due.note if due.note else ''}",
+                                                    'Due', 'N/A', due.amount or 0, 0)))
 
             if ttype in ('all', 'payment'):
                 for mr in receipts:
@@ -1276,7 +1302,7 @@ class ProfitLossReportView(BaseReportView):
             start, end = self.get_date_range(request)
             
             # Sales data
-            sales_query = Sale.objects.filter(company=company)
+            sales_query = _B(Sale).filter(company=company)
             if start and end:
                 sales_query = sales_query.filter(sale_date__range=[start, end])  # Fixed: removed extra __date
             
@@ -1286,7 +1312,7 @@ class ProfitLossReportView(BaseReportView):
             )
             
             # Purchase data
-            purchase_query = Purchase.objects.filter(company=company)
+            purchase_query = _B(Purchase).filter(company=company)
             if start and end:
                 purchase_query = purchase_query.filter(purchase_date__range=[start, end])
             
@@ -1296,7 +1322,7 @@ class ProfitLossReportView(BaseReportView):
             )
             
             # Expense data
-            expenses = Expense.objects.filter(company=company)
+            expenses = _B(Expense).filter(company=company)
             if start and end:
                 expenses = expenses.filter(expense_date__range=[start, end])
             
@@ -1416,7 +1442,7 @@ class ExpenseReportView(BaseReportView):
             filters = self.get_filters(request)
             start, end = self.get_date_range(request)
             
-            expenses = Expense.objects.filter(company=company).select_related(
+            expenses = _B(Expense).filter(company=company).select_related(
                 'head', 'subhead'
             ).order_by('-expense_date')
             
@@ -1626,7 +1652,7 @@ class BadStockReportView(BaseReportView):
             bad_items = BadStock.objects.filter(company=company).select_related('product')
             
             if start and end:
-                bad_items = bad_items.filter(created_at__date__range=[start, end])
+                bad_items = bad_items.filter(date__range=[start, end])
             
             reason = request.GET.get('reason')
             if reason:
@@ -1689,11 +1715,11 @@ class DashboardSummaryView(BaseReportView):
                 start_date = today
                 end_date = today
 
-            start_datetime = datetime.combine(start_date, datetime.min.time())
-            end_datetime = datetime.combine(end_date, datetime.max.time())
+            start_datetime = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            end_datetime = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
 
             # --- SALES ---
-            sales_query = Sale.objects.filter(
+            sales_query = _B(Sale).filter(
                 company=company,
                 sale_date__gte=start_datetime,
                 sale_date__lte=end_datetime
@@ -1703,7 +1729,7 @@ class DashboardSummaryView(BaseReportView):
                 count=Count('id'),
                 total_due=Sum('due_amount')
             )
-            today_sales_quantity = SaleItem.objects.filter(
+            today_sales_quantity = _B(SaleItem, 'sale__branch').filter(
                 sale__company=company,
                 sale__sale_date__gte=start_datetime,
                 sale__sale_date__lte=end_datetime
@@ -1711,7 +1737,7 @@ class DashboardSummaryView(BaseReportView):
                 total_quantity=Sum('quantity'),
                 total_base_quantity=Sum('base_quantity')
             )
-            sale_items = SaleItem.objects.filter(
+            sale_items = _B(SaleItem, 'sale__branch').filter(
                 sale__company=company,
                 sale__sale_date__gte=start_datetime,
                 sale__sale_date__lte=end_datetime
@@ -1743,7 +1769,7 @@ class DashboardSummaryView(BaseReportView):
                 today_sales_return_quantity = {'total_quantity': 0}
 
             # --- PURCHASES ---
-            purchases_query = Purchase.objects.filter(
+            purchases_query = _B(Purchase).filter(
                 company=company,
                 purchase_date__gte=start_datetime,
                 purchase_date__lte=end_datetime
@@ -1753,7 +1779,7 @@ class DashboardSummaryView(BaseReportView):
                 count=Count('id'),
                 total_due=Sum('due_amount')
             )
-            today_purchases_quantity = PurchaseItem.objects.filter(
+            today_purchases_quantity = _B(PurchaseItem, 'purchase__branch').filter(
                 purchase__company=company,
                 purchase__purchase_date__gte=start_datetime,
                 purchase__purchase_date__lte=end_datetime
@@ -1783,7 +1809,7 @@ class DashboardSummaryView(BaseReportView):
                 today_purchase_return_quantity = {'total_quantity': 0}
 
             # --- EXPENSES ---
-            today_expenses = Expense.objects.filter(
+            today_expenses = _B(Expense).filter(
                 company=company,
                 expense_date__gte=start_datetime,
                 expense_date__lte=end_datetime
@@ -1815,7 +1841,7 @@ class DashboardSummaryView(BaseReportView):
 
             # --- RECENT ACTIVITIES ---
             # Sales (head not needed), Purchases, Expenses/Incomes (head may be None)
-            recent_sales = Sale.objects.filter(company=company).select_related('customer').order_by('-sale_date')[:5]
+            recent_sales = _B(Sale).filter(company=company).select_related('customer').order_by('-sale_date')[:5]
             recent_sales_data = []
             for sale in recent_sales:
                 sale_quantity_agg = SaleItem.objects.filter(sale=sale).aggregate(
@@ -1839,7 +1865,7 @@ class DashboardSummaryView(BaseReportView):
                     'date': date_str
                 })
 
-            recent_purchases = Purchase.objects.filter(company=company).select_related('supplier').order_by('-purchase_date')[:5]
+            recent_purchases = _B(Purchase).filter(company=company).select_related('supplier').order_by('-purchase_date')[:5]
             recent_purchases_data = []
             for purchase in recent_purchases:
                 purchase_quantity = PurchaseItem.objects.filter(purchase=purchase).aggregate(
@@ -1860,7 +1886,7 @@ class DashboardSummaryView(BaseReportView):
                     'date': date_str
                 })
 
-            recent_expenses = Expense.objects.filter(
+            recent_expenses = _B(Expense).filter(
                 company=company,
                 expense_date__gte=start_datetime,
                 expense_date__lte=end_datetime
@@ -2069,14 +2095,14 @@ class DashboardTrendsView(BaseReportView):
 
             start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
             end_dt = timezone.make_aware(datetime.combine(end_date, datetime.max.time()))
-            for sale_date, total in Sale.objects.filter(
+            for sale_date, total in _B(Sale).filter(
                 company=company, sale_date__gte=start_dt, sale_date__lte=end_dt
             ).values_list('sale_date', 'grand_total'):
                 i = index.get(timezone.localtime(sale_date).date())
                 if i is not None:
                     sales[i] += float(total or 0)
 
-            for p_date, total in Purchase.objects.filter(
+            for p_date, total in _B(Purchase).filter(
                 company=company, purchase_date__gte=start_date, purchase_date__lte=end_date
             ).values_list('purchase_date', 'grand_total'):
                 i = index.get(p_date)
@@ -2084,7 +2110,7 @@ class DashboardTrendsView(BaseReportView):
                     purchases[i] += float(total or 0)
 
             by_head = {}
-            for e_date, amount, head_name in Expense.objects.filter(
+            for e_date, amount, head_name in _B(Expense).filter(
                 company=company, expense_date__gte=start_date, expense_date__lte=end_date
             ).values_list('expense_date', 'amount', 'head__name'):
                 amount = float(amount or 0)
@@ -2109,6 +2135,212 @@ class DashboardTrendsView(BaseReportView):
                 'purchases': [round(v, 2) for v in purchases],
                 'expenses': [round(v, 2) for v in expenses],
                 'expense_by_head': top_heads,
+            })
+        except Exception as e:
+            return self.handle_exception(e)
+
+
+# --------------------
+# Expiry alerts (মেয়াদ) + write-off — অ্যাপের Expiry Alerts স্ক্রিন
+# --------------------
+class ExpiryAlertsView(BaseReportView):
+    """GET ?days=30&status=alerts|all|expired|expiring|ok&limit=  — শুধু নিজের company র ব্যাচ"""
+
+    def get(self, request):
+        try:
+            from .perms import user_has_perm
+            if not user_has_perm(request.user, 'products', 'view'):
+                return custom_response(False, "You do not have permission to view expiry alerts", None, 403)
+            from purchases.models import ProductBatch
+            company = self.get_company(request)
+            try:
+                days = max(1, min(365, int(request.GET.get('days', 30))))
+            except ValueError:
+                days = 30
+            status_f = request.GET.get('status', 'alerts')
+            try:
+                limit = int(request.GET.get('limit')) if request.GET.get('limit') else None
+            except ValueError:
+                limit = None
+
+            today = timezone.localdate()
+            qs = (ProductBatch.objects
+                  .filter(company=company, qty_remaining__gt=0, expiry_date__isnull=False)
+                  .select_related('product', 'product__category', 'purchase_item', 'purchase_item__purchase',
+                                  'purchase_item__purchase__supplier')
+                  .order_by('expiry_date', 'id'))
+            counts = {'expired': 0, 'expiring': 0, 'ok': 0}
+            value = {'expired': 0.0, 'expiring': 0.0}
+            rows = []
+            for b in qs:
+                left = (b.expiry_date - today).days
+                st = 'expired' if left < 0 else 'expiring' if left <= days else 'ok'
+                unit_cost = float((b.purchase_item.price if b.purchase_item_id else b.product.purchase_price) or 0)
+                cost_value = float(b.qty_remaining) * unit_cost
+                counts[st] += 1
+                if st in value:
+                    value[st] += cost_value
+                if status_f == 'alerts' and st == 'ok':
+                    continue
+                if status_f in ('expired', 'expiring', 'ok') and st != status_f:
+                    continue
+                pur = b.purchase_item.purchase if b.purchase_item_id else None
+                rows.append({
+                    'id': b.id, 'product_id': b.product_id, 'product_name': b.product.name,
+                    'sku': b.product.sku or '', 'category': b.product.category.name if b.product.category_id else '',
+                    'batch_no': b.batch_no or '', 'expiry_date': b.expiry_date.isoformat(), 'days_left': left,
+                    'status': st, 'qty_remaining': float(b.qty_remaining), 'unit_cost': unit_cost,
+                    'cost_value': round(cost_value, 2),
+                    'supplier': pur.supplier.name if pur and pur.supplier_id else '',
+                    'purchase_invoice': (pur.invoice_no or '') if pur else '',
+                })
+            if limit:
+                rows = rows[:limit]
+            return custom_response(True, "Expiry alerts fetched", {
+                'days': days, 'counts': counts,
+                'value': {k: round(v, 2) for k, v in value.items()}, 'batches': rows,
+            })
+        except Exception as e:
+            return self.handle_exception(e)
+
+
+class ExpiryWriteOffView(BaseReportView):
+    """POST /reports/expiry-alerts/<batch_id>/write-off/ — মেয়াদোত্তীর্ণ ব্যাচের বাকি স্টক বাদ"""
+
+    def post(self, request, batch_id):
+        try:
+            from django.db import transaction
+            from .perms import user_has_perm
+            if not user_has_perm(request.user, 'products', 'edit'):
+                return custom_response(False, "You do not have permission to write off stock", None, 403)
+            from purchases.models import ProductBatch
+            from stockops.views import _apply_adjustment
+            company = self.get_company(request)
+            with transaction.atomic():
+                batch = (ProductBatch.objects.select_for_update()
+                         .select_related('product').filter(pk=batch_id, company=company).first())
+                if batch is None:
+                    return custom_response(False, "Batch not found", None, 404)
+                qty = int(Decimal(str(batch.qty_remaining)).to_integral_value(rounding='ROUND_CEILING'))
+                if qty <= 0:
+                    return custom_response(False, "Nothing left in this batch", None, 400)
+                product = batch.product
+                new_stock = max(0, int(product.stock_qty) - qty)
+                note = (request.data.get('reason') or '').strip() or f"Batch {batch.batch_no or batch.pk} written off"
+                # স্টক কমানো + হিসাব রাখা (Stock Adjustment এ 'expired' হিসেবে ধরা পড়ে)
+                _apply_adjustment(company, request.user, product, new_stock, 'expired', note)
+                batch.qty_remaining = Decimal('0')
+                batch.save(update_fields=['qty_remaining'])
+            return custom_response(True, f"{product.name}: {qty} written off", {'written_off': qty})
+        except Exception as e:
+            return self.handle_exception(e)
+
+
+# --------------------
+# Dashboard এর অতিরিক্ত চার্ট
+# --------------------
+class DashboardChartsView(BaseReportView):
+    """GET ?months=6&days=30 — মাসভিত্তিক বিক্রি/লাভ, দৈনিক net profit ট্রেন্ড, স্টক মূল্য (শুধু নিজের company)"""
+
+    @staticmethod
+    def _month_starts(n):
+        today = timezone.localdate()
+        y, m = today.year, today.month
+        out = []
+        for _ in range(n):
+            out.append((y, m))
+            m -= 1
+            if m == 0:
+                y, m = y - 1, 12
+        return list(reversed(out))
+
+    def get(self, request):
+        try:
+            company = self.get_company(request)
+            try:
+                months = max(1, min(12, int(request.GET.get('months', 6))))
+                days = max(7, min(90, int(request.GET.get('days', 30))))
+            except ValueError:
+                months, days = 6, 30
+
+            mlist = self._month_starts(months)
+            idx = {ym: i for i, ym in enumerate(mlist)}
+            first = datetime(mlist[0][0], mlist[0][1], 1)
+            first_dt = timezone.make_aware(first)
+            today = timezone.localdate()
+            day_list = [today - timedelta(days=days - 1 - i) for i in range(days)]
+            didx = {d: i for i, d in enumerate(day_list)}
+            day_start = timezone.make_aware(datetime.combine(day_list[0], datetime.min.time()))
+
+            m_sales = [0.0] * months
+            m_gross = [0.0] * months
+            m_exp = [0.0] * months
+            d_gross = [0.0] * days
+            d_exp = [0.0] * days
+
+            items = (_B(SaleItem, 'sale__branch').filter(sale__company=company, sale__sale_date__gte=min(first_dt, day_start))
+                     .exclude(sale__payment_status='cancelled').select_related('sale', 'product'))
+            for it in items:
+                sd = timezone.localtime(it.sale.sale_date)
+                profit = float(it.subtotal() - it.cost_amount())
+                i = idx.get((sd.year, sd.month))
+                if i is not None and sd >= first_dt:
+                    m_gross[i] += profit
+                j = didx.get(sd.date())
+                if j is not None:
+                    d_gross[j] += profit
+            for sd, total in (_B(Sale).filter(company=company, sale_date__gte=first_dt)
+                              .exclude(payment_status='cancelled').values_list('sale_date', 'grand_total')):
+                sd = timezone.localtime(sd)
+                i = idx.get((sd.year, sd.month))
+                if i is not None:
+                    m_sales[i] += float(total or 0)
+            for ed, amt in (_B(Expense).filter(company=company, expense_date__gte=first.date())
+                            .values_list('expense_date', 'amount')):
+                i = idx.get((ed.year, ed.month))
+                if i is not None:
+                    m_exp[i] += float(amt or 0)
+                j = didx.get(ed)
+                if j is not None:
+                    d_exp[j] += float(amt or 0)
+
+            # স্টক মূল্য
+            by_cat = {}
+            tot_cost = tot_retail = 0.0
+            n_prod = 0
+            for p in Product.objects.filter(company=company, is_active=True).select_related('category'):
+                q = int(p.stock_qty or 0)
+                cost = q * float(p.purchase_price or 0)
+                retail = q * float(p.selling_price or 0)
+                tot_cost += cost
+                tot_retail += retail
+                n_prod += 1
+                name = p.category.name if p.category_id else 'Uncategorized'
+                c = by_cat.setdefault(name, {'name': name, 'cost_value': 0.0, 'retail_value': 0.0, 'qty': 0, 'products': 0})
+                c['cost_value'] += cost
+                c['retail_value'] += retail
+                c['qty'] += q
+                c['products'] += 1
+            cats = sorted(by_cat.values(), key=lambda c: c['cost_value'], reverse=True)
+
+            return custom_response(True, "Dashboard charts fetched", {
+                'monthly': {
+                    'labels': [f"{y}-{m:02d}" for y, m in mlist],
+                    'sales': [round(v, 2) for v in m_sales],
+                    'gross_profit': [round(v, 2) for v in m_gross],
+                    'expenses': [round(v, 2) for v in m_exp],
+                    'net_profit': [round(g - e, 2) for g, e in zip(m_gross, m_exp)],
+                },
+                'profit_trend': {
+                    'labels': [d.isoformat() for d in day_list],
+                    'net_profit': [round(g - e, 2) for g, e in zip(d_gross, d_exp)],
+                },
+                'stock_value': {
+                    'total_cost': round(tot_cost, 2), 'total_retail': round(tot_retail, 2),
+                    'expected_margin': round(tot_retail - tot_cost, 2), 'product_count': n_prod,
+                    'by_category': [{**c, 'cost_value': round(c['cost_value'], 2),
+                                     'retail_value': round(c['retail_value'], 2)} for c in cats[:12]],
+                },
             })
         except Exception as e:
             return self.handle_exception(e)

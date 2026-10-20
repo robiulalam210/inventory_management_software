@@ -1,0 +1,78 @@
+{% extends "web/base.html" %}
+{% load static web_tags %}
+{# শাখায় মাল পাঠানো — views.stock_transfers_view · stock_transfers.js #}
+{% block head %}<script src="{% static 'web/js/stock_transfers.js' %}"></script>{% endblock %}
+{% block content %}
+{{ st_init|json_script:"st-init" }}
+<div class="stx" x-data="stockTransfer(JSON.parse(document.getElementById('st-init').textContent))">
+  <p class="notice" x-show="error" x-cloak x-text="error"></p>
+
+  <section class="panel stx-card" x-show="!loading" x-cloak>
+    <div class="stx-dir">
+      <label class="stx-box"><small>{% tr "From" "যেখান থেকে" %}</small>
+        <select class="in" x-model="from" :disabled="!!own">
+          <template x-for="b in branches" :key="b.id"><option :value="String(b.id)" x-text="b.name" :selected="String(b.id) === from"></option></template>
+        </select></label>
+      <button type="button" class="stx-swap" @click="swap()" :disabled="!!own" title="Swap" aria-label="Swap">⇄</button>
+      <label class="stx-box"><small>{% tr "To" "যেখানে" %}</small>
+        <select class="in" x-model="to">
+          <template x-for="b in branches" :key="b.id"><option :value="String(b.id)" x-text="b.name" :selected="String(b.id) === to" :disabled="String(b.id) === from"></option></template>
+        </select></label>
+    </div>
+
+    <div class="stx-add">
+      <div class="stx-search">
+        {% icon "search" 18 %}
+        <input class="in" type="search" x-model="q" placeholder="{% tr 'Find a product to send' 'পাঠানোর পণ্য খুঁজুন' %}" autocomplete="off">
+        <div class="stx-drop" x-show="matches.length" x-cloak>
+          <template x-for="p in matches" :key="p.id">
+            <button type="button" @click="add(p)"><span x-text="p.name"></span>
+              <small x-text="name(from) + ' ' + fmt(have(p.id, from))"></small></button>
+          </template>
+        </div>
+      </div>
+      <button type="button" class="btn btn-ghost" @click="addLow()">{% icon "plus" 16 %} <span x-text="L('Add everything low in ' + name(to), name(to) + ' এ যা কম আছে সব যোগ করুন')"></span></button>
+    </div>
+
+    <table class="dt stx-table" x-show="rows.length">
+      <thead><tr><th>{% tr "Product" "পণ্য" %}</th><th class="num" x-text="L('In ' + name(from), name(from) + ' এ আছে')"></th><th class="num">{% tr "Send" "পাঠাবো" %}</th><th class="num" x-text="L('After, in ' + name(to), 'পরে ' + name(to) + ' এ')"></th><th></th></tr></thead>
+      <tbody>
+        <template x-for="r in rows" :key="r.id">
+          <tr :class="{ 'is-over': over(r) }">
+            <td><b x-text="r.name"></b></td>
+            <td class="num"><small class="stx-k" x-text="name(from)"></small><span x-text="fmt(have(r.id, from)) + ' ' + r.unit"></span></td>
+            <td class="num">
+              <span class="qty-in"><button type="button" @click="bump(r, -1)">−</button>
+                <input type="number" min="1" x-model.number="r.qty"><button type="button" @click="bump(r, 1)">+</button></span>
+              <span class="sub txt-due" x-show="over(r)">{% tr "More than there is" "যা আছে তার বেশি" %}</span>
+            </td>
+            <td class="num"><small class="stx-k" x-text="name(to)"></small><b x-text="fmt(have(r.id, to)) + ' → ' + fmt(have(r.id, to) + Number(r.qty || 0))"></b></td>
+            <td class="c"><button type="button" class="icon-btn" @click="remove(r)" aria-label="Remove">{% icon "x" 16 %}</button></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <p class="stx-empty" x-show="!rows.length">{% tr "Search a product above, or add everything that is low in the receiving branch." "ওপরে পণ্য খুঁজুন, অথবা যে শাখায় পাঠাবেন সেখানে যা কম আছে সব একসাথে যোগ করুন।" %}</p>
+
+    <div class="stx-foot" x-show="rows.length">
+      <input class="in" type="text" maxlength="255" x-model="note" placeholder="{% tr 'Note (optional)' 'নোট (ইচ্ছা হলে)' %}">
+      <button type="button" class="btn btn-primary" :disabled="!canSend || saving" @click="send()"
+              x-text="saving ? L('Sending…', 'পাঠানো হচ্ছে…') : L('Send ' + rows.length + ' product(s) to ' + name(to), rows.length + 'টা পণ্য ' + name(to) + ' এ পাঠান')"></button>
+    </div>
+    <p class="modal-err" x-show="formError" x-text="formError"></p>
+    <p class="stx-note">{% icon "info" 16 %} <span>{% tr "Total stock does not change — it only moves from one branch to another. If you make a mistake, send it back the other way." "মোট স্টক বদলায় না — শুধু এক শাখা থেকে আরেক শাখায় যায়। ভুল হলে উল্টো দিকে আবার পাঠিয়ে দিন।" %}</span></p>
+  </section>
+
+  <section class="panel" x-show="history.length" x-cloak>
+    <div class="panel-head"><h3>{% tr "Recent transfers" "সাম্প্রতিক পাঠানো" %}</h3></div>
+    <ul class="stx-hist">
+      <template x-for="t in history" :key="t.id">
+        <li><div><b x-text="t.from_name + ' → ' + t.to_name"></b>
+          <span x-text="t.items.map(i => i.name + ' ' + fmt(i.qty)).join(', ')"></span></div>
+          <small x-text="t.transfer_no + ' · ' + when(t.date) + (t.by ? ' · ' + t.by : '')"></small></li>
+      </template>
+    </ul>
+  </section>
+  <div class="toast" x-show="toast" x-cloak x-transition.opacity role="status" x-text="toast"></div>
+</div>
+{% endblock %}

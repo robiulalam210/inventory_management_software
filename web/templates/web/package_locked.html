@@ -1,0 +1,14 @@
+{% extends "web/base.html" %}
+{% load web_tags %}
+{# প্যাকেজে নেই এমন পেজে সরাসরি ঢুকলে (core/package_gate.py) #}
+{% block content %}
+<section class="panel empty">
+  <div class="tile" style="background:var(--amber-wash);color:var(--amber)">{% icon "lock" 28 %}</div>
+  <h2>{% lang as L %}{% if L == 'bn' %}{{ feature_bn }}{% else %}{{ feature_en }}{% endif %} — {% tr "not in your package" "আপনার প্যাকেজে নেই" %}</h2>
+  <p>{% tr "Your records are safe. Upgrade your package to use this module." "আপনার হিসাব ঠিক আছে। এই মডিউল ব্যবহার করতে প্যাকেজ আপগ্রেড করুন।" %}</p>
+  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+    <a class="btn btn-primary" href="{% url 'web:package' %}?f={{ locked_feature }}">{% icon "rocket" 18 %} {% tr "See packages" "প্যাকেজ দেখুন" %}</a>
+    <a class="btn btn-ghost" href="{% url 'web:home' %}">{% tr "Back to dashboard" "ড্যাশবোর্ডে ফিরুন" %}</a>
+  </div>
+</section>
+{% endblock %}

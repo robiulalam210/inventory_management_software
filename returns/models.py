@@ -1,5 +1,6 @@
 from offline_sync.utils import touch
 # returns/models.py - COMPLETE FIXED VERSION
+from branch_warehouse.stock import apply_delta
 from django.db import models, transaction
 from decimal import Decimal
 from django.utils import timezone
@@ -154,6 +155,8 @@ class SalesReturn(models.Model):
                 Product.objects.filter(id=item.product.id).update(
                     stock_qty=F('stock_qty') + good_quantity
                 )
+                apply_delta(item.product.company_id, item.product.id, good_quantity,
+                            getattr(self.original_sale, 'branch_id', None) if self.original_sale_id else None)  # শাখার স্টক
                 touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Optional: Create stock movement
@@ -210,6 +213,8 @@ class SalesReturn(models.Model):
                         Product.objects.filter(id=item.product.id).update(
                             stock_qty=F('stock_qty') - good_quantity
                         )
+                        apply_delta(item.product.company_id, item.product.id, -good_quantity,
+                                    getattr(self.original_sale, 'branch_id', None) if self.original_sale_id else None)
                         touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Delete related bad stock
@@ -401,6 +406,8 @@ class PurchaseReturn(models.Model):
             Product.objects.filter(id=item.product.id).update(
                 stock_qty=F('stock_qty') - item.quantity
             )
+            apply_delta(item.product.company_id, item.product.id, -item.quantity,
+                        getattr(self.original_purchase, 'branch_id', None) if self.original_purchase_id else None)
             touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
             
             # Optional: Create stock movement
@@ -453,6 +460,8 @@ class PurchaseReturn(models.Model):
                     Product.objects.filter(id=item.product.id).update(
                         stock_qty=F('stock_qty') + item.quantity
                     )
+                    apply_delta(item.product.company_id, item.product.id, item.quantity,
+                                getattr(self.original_purchase, 'branch_id', None) if self.original_purchase_id else None)
                     touch(Product, item.product.id)  # audit + desktop sync এ পরিবর্তন পৌঁছানোর জন্য
                 
                 # Delete related bad stock

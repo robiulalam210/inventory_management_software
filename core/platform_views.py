@@ -71,6 +71,14 @@ def _user_row(u):
     }
 
 
+def _eff_limit(c, key):
+    from .packages import plan_for
+    try:
+        return plan_for(c).limit(key)
+    except Exception:  # noqa: BLE001
+        return getattr(c, key, 0)
+
+
 def _company_row(c, admins=None):
     days = (c.expiry_date - date.today()).days if c.expiry_date else None
     if not c.is_active:
@@ -94,6 +102,16 @@ def _company_row(c, admins=None):
         'user_count': getattr(c, 'n_users', None), 'active_user_count': getattr(c, 'n_active_users', None),
         'product_count': getattr(c, 'n_products', None),
         'created_at': c.created_at.isoformat() if c.created_at else None,
+        'package': c.package.code if c.package_id else None,
+        'package_name': c.package.name if c.package_id else 'Legacy (no limits)',
+        'custom_features': c.custom_features, 'custom_limits': c.custom_limits,
+        'custom_price': float(c.custom_price) if c.custom_price is not None else None,
+        'package_note': c.package_note,
+        'package_state': _plan_state(c),
+        # আসল ইউজার সীমা: প্যাকেজ থাকলে প্যাকেজ/কাস্টম থেকে (0 = আনলিমিটেড), না থাকলে পুরনো max_users
+        'user_limit': (_eff_limit(c, 'max_users') if c.package_id else c.max_users),
+        'product_limit': (_eff_limit(c, 'max_products') if c.package_id else c.max_products),
+        'branch_limit': (_eff_limit(c, 'max_branches') if c.package_id else c.max_branches),
     }
     if admins is not None:
         row['admins'] = admins
@@ -135,6 +153,41 @@ def _activity(ids):
             'sales_7d_total': float(w.get('t') or 0),
         }
     return out
+
+
+def _platform_summary(all_ids, act):
+    """মালিকের এক নজরের সারাংশ — সব কোম্পানি মিলিয়ে (status/search ফিল্টারে বদলায় না)"""
+    from sales.models import Sale
+
+    now = timezone.now()
+    today = timezone.localdate()
+    week_ago = now - timedelta(days=7)
+    working_today = idle = never = 0
+    sales_7d_count = 0
+    sales_7d_total = 0.0
+    for cid in all_ids:
+        a = act.get(cid) or {}
+        sales_7d_count += a.get('sales_7d_count', 0)
+        sales_7d_total += a.get('sales_7d_total', 0.0)
+        if a.get('activity') == 'new':
+            never += 1
+        elif a.get('activity') == 'idle':
+            idle += 1
+        if a.get('last_activity') and a['last_activity'][:10] == str(today):
+            working_today += 1
+    t = Sale.objects.filter(company_id__in=all_ids, sale_date__date=today).exclude(payment_status='cancelled') \
+        .aggregate(n=Count('id'), s=Sum('grand_total'))
+    return {
+        'companies': len(all_ids),
+        'new_7d': Company.objects.filter(created_at__gte=week_ago).count(),
+        'working_today': working_today,
+        'idle': idle,
+        'never_used': never,
+        'sales_today_count': t['n'] or 0,
+        'sales_today_total': float(t['s'] or 0),
+        'sales_7d_count': sales_7d_count,
+        'sales_7d_total': round(sales_7d_total, 2),
+    }
 
 
 def _annotated():
@@ -209,7 +262,55 @@ def _validate_company(data, instance=None):
                 errors[k] = 'Enter a whole number, 1 or more.'
     if 'is_active' in data:
         out['is_active'] = bool(data.get('is_active'))
+    # ── প্যাকেজ (core/packages.py) ──
+    from core.models import Package
+    from core.packages import ALL_FEATURES, LIMITS
+    if 'package' in data:
+        v = data.get('package')
+        if v in (None, '', 'legacy'):
+            out['package'] = None
+        else:
+            pkg = Package.objects.filter(code=str(v)).first() or (Package.objects.filter(pk=v).first() if str(v).isdigit() else None)
+            if pkg is None:
+                errors['package'] = 'Pick a package.'
+            else:
+                out['package'] = pkg
+    if 'custom_features' in data:
+        v = data.get('custom_features')
+        if v is None:
+            out['custom_features'] = None
+        elif isinstance(v, list) and all(isinstance(x, str) for x in v):
+            out['custom_features'] = sorted(set(v) & ALL_FEATURES)
+        else:
+            errors['custom_features'] = 'Pick the modules.'
+    if 'custom_limits' in data:
+        v = data.get('custom_limits') or {}
+        if not isinstance(v, dict):
+            errors['custom_limits'] = 'Invalid limits.'
+        else:
+            clean = {}
+            for k, x in v.items():
+                if k in LIMITS and x not in (None, ''):
+                    try:
+                        clean[k] = max(0, int(x))
+                    except (TypeError, ValueError):
+                        errors['custom_limits'] = f'{LIMITS[k][0]}: enter a whole number (0 = unlimited).'
+            out['custom_limits'] = clean or None
+    if 'custom_price' in data:
+        v = data.get('custom_price')
+        try:
+            out['custom_price'] = None if v in (None, '') else round(float(v), 2)
+        except (TypeError, ValueError):
+            errors['custom_price'] = 'Enter a price.'
+    if 'package_note' in data:
+        out['package_note'] = (_clean(data.get('package_note')) or '')[:255]
     return out, errors
+
+
+def _plan_state(c):
+    from core.packages import plan_for
+    p = plan_for(c)
+    return 'legacy' if p.legacy else p.state
 
 
 def _validate_admin(data, company=None):
@@ -303,10 +404,13 @@ class PlatformCompanyListView(APIView):
             first_admin.setdefault(u.company_id, {'username': u.username, 'name': (u.get_full_name() or '').strip() or u.username})
         for r in rows:
             r['admin'] = first_admin.get(r['id'])
-        act = _activity(ids)
+        # একবারেই সব কোম্পানির কাজের হিসাব — তালিকা ও ওপরের সারাংশ দুটোতেই লাগে
+        all_ids = list(Company.objects.values_list('id', flat=True))
+        act = _activity(all_ids)
         for r in rows:
             r.update(act.get(r['id'], {}))
-        return custom_response(True, f'{len(rows)} companies', {'results': rows, 'counts': counts})
+        return custom_response(True, f'{len(rows)} companies', {
+            'results': rows, 'counts': counts, 'summary': _platform_summary(all_ids, act)})
 
     def post(self, request):
         body = request.data or {}
@@ -314,9 +418,13 @@ class PlatformCompanyListView(APIView):
         adata, aerr = _validate_admin(body.get('admin') or {})
         if cerr or aerr:
             return _err('Please fix the highlighted fields.', {'company': cerr, 'admin': aerr})
-        cdata.setdefault('expiry_date', date.today() + timedelta(days=365))
         with transaction.atomic():
             company = Company(**cdata)
+            if 'package' not in cdata:
+                from core.packages import start_trial
+                start_trial(company)      # প্যাকেজ না বাছলে: ফ্রি ট্রায়াল + মেয়াদ
+            if not company.expiry_date:
+                company.expiry_date = date.today() + timedelta(days=365)
             company.save()
             admin = _create_admin(company, adata, request.user)
             seeded = _seed(company, admin) if body.get('seed', True) else {'units': 0, 'accounts': 0}
@@ -398,3 +506,19 @@ class PlatformUserToggleView(APIView):
         u.is_active = not u.is_active
         u.save(update_fields=['is_active'])
         return custom_response(True, f'{u.username} can sign in again.' if u.is_active else f'{u.username} can no longer sign in.', _user_row(u))
+
+
+class PlatformPackageListView(APIView):
+    """GET /api/platform/packages/ — প্যাকেজ আর মডিউলের তালিকা (Super Admin এর কোম্পানি ফর্মের জন্য)"""
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+
+    def get(self, request):
+        from core.models import Package
+        from core.packages import FEATURES, LIMITS
+        rows = [{'code': p.code, 'name': p.name, 'name_bn': p.name_bn, 'price_month': float(p.price_month),
+                 'price_year': float(p.price_year), 'is_trial': p.is_trial, 'trial_days': p.trial_days,
+                 'features': p.features, **{k: getattr(p, k) for k in LIMITS}, 'is_active': p.is_active}
+                for p in Package.objects.all()]
+        feats = [{'key': k, 'label': v[0], 'label_bn': v[1], 'core': v[2]} for k, v in FEATURES.items()]
+        lims = [{'key': k, 'label': v[0], 'label_bn': v[1]} for k, v in LIMITS.items()]
+        return custom_response(True, f'{len(rows)} packages', {'packages': rows, 'features': feats, 'limits': lims})

@@ -68,6 +68,8 @@ class CustomerDueReminderView(APIView):
 
         # প্রতি customer এর হিসাব (একটাই query): মোট বিক্রি, মোট পাওয়া, আর বাকি-থাকা invoice এর তারিখ/সংখ্যা
         due_sale = Q(due_amount__gt=0)
+        from customers.models import CustomerDue
+        from django.db.models import ExpressionWrapper, F, DecimalField
         grouped = {
             g['customer']: g
             for g in (
@@ -77,15 +79,42 @@ class CustomerDueReminderView(APIView):
                           oldest=Min('sale_date', filter=due_sale), latest=Max('sale_date', filter=due_sale),
                           invoice_count=Count('id', filter=due_sale))
             )
-            if (g['grand'] or 0) - (g['paid'] or 0) > 0
         }
+        # বাকি খাতার বিক্রি-ছাড়া বাকি (বাকি দিলাম / পুরনো বাকি) — খোলা অংশ, সবচেয়ে পুরনো তারিখ, কয়টা
+        open_due = Q(paid_amount__lt=F('amount'))
+        money_f = DecimalField(max_digits=12, decimal_places=2)
+        manual = {
+            m['customer']: m for m in (
+                CustomerDue.objects.filter(company=company, customer__is_active=True).values('customer')
+                .annotate(open=Sum(ExpressionWrapper(F('amount') - F('paid_amount'), output_field=money_f)),
+                          oldest=Min('entry_date', filter=open_due), latest=Max('entry_date', filter=open_due),
+                          n=Count('id', filter=open_due))
+            )
+        }
+        for cid, m in manual.items():
+            g = grouped.setdefault(cid, {'customer': cid, 'grand': Decimal('0'), 'paid': Decimal('0'),
+                                         'oldest': None, 'latest': None, 'invoice_count': 0})
+            g['manual'] = m['open'] or Decimal('0')
+            g['invoice_count'] += m['n'] or 0
+            if m['oldest'] and (g['oldest'] is None or m['oldest'] < g['oldest']):
+                g['oldest'] = m['oldest']
+            if m['latest'] and (g['latest'] is None or m['latest'] > g['latest']):
+                g['latest'] = m['latest']
+        grouped = {cid: g for cid, g in grouped.items()
+                   if (g['grand'] or 0) - (g['paid'] or 0) + (g.get('manual') or 0) > 0}
         customers = {c.id: c for c in Customer.objects.filter(company=company, id__in=list(grouped.keys()))}
 
-        # বার্তায় বসানোর invoice গুলো (একটাই query)
+        # বার্তায় বসানোর invoice গুলো (একটাই query) — সাথে বাকি খাতার এন্ট্রি
         by_customer = {}
         for s in (Sale.objects.filter(company=company, customer_id__in=list(grouped.keys()), due_amount__gt=0)
                   .order_by('sale_date', 'id').values('customer_id', 'invoice_no', 'sale_date', 'due_amount')):
             by_customer.setdefault(s['customer_id'], []).append(s)
+        for d in (CustomerDue.objects.filter(company=company, customer_id__in=list(grouped.keys()))
+                  .filter(open_due).order_by('entry_date', 'id')):
+            by_customer.setdefault(d.customer_id, []).append(
+                {'customer_id': d.customer_id, 'invoice_no': d.entry_no, 'sale_date': d.entry_date, 'due_amount': d.due_amount})
+        for lst in by_customer.values():
+            lst.sort(key=lambda x: x['sale_date'])
 
         today = timezone.localdate()
         rows = []
@@ -93,7 +122,7 @@ class CustomerDueReminderView(APIView):
             c = customers.get(cid)
             if c is None:
                 continue
-            basic_due = (g['grand'] or Decimal('0')) - (g['paid'] or Decimal('0'))
+            basic_due = (g['grand'] or Decimal('0')) - (g['paid'] or Decimal('0')) + (g.get('manual') or Decimal('0'))
             advance = c.advance_balance or Decimal('0')
             net_due = max(Decimal('0'), basic_due - advance)
             if net_due <= 0 or net_due <= min_amount:

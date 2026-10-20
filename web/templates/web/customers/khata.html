@@ -1,0 +1,421 @@
+{% extends "web/base.html" %}
+{% load static web_tags %}
+{# দুই ভাষা: সার্ভারে লেখা অংশ {% tr "English" "বাংলা" %}, Alpine এর অংশ L('English', 'বাংলা') — khata.js #}
+{% block head %}
+  <link rel="stylesheet" href="{% static 'web/css/khata.css' %}">
+  <script src="{% static 'web/js/khata.js' %}"></script>
+{% endblock %}
+{% block topbar_actions %}
+  {% if khata_init.perms.create %}
+  <button type="button" class="btn btn-ghost top-act" onclick="window.dispatchEvent(new CustomEvent('kh-new'))">{% icon "user-plus" 18 %}<span>{% tr "New customer" "নতুন কাস্টমার" %}</span></button>
+  {% endif %}
+  {% if khata_init.perms.collect %}
+  <button type="button" class="btn btn-primary top-act" onclick="window.dispatchEvent(new CustomEvent('kh-pay'))">{% icon "arrow-down" 18 %}<span>{% tr "Got payment" "টাকা পেলাম" %}</span></button>
+  {% endif %}
+{% endblock %}
+{% block content %}
+{{ khata_init|json_script:"kh-init" }}
+{% tr "Search by name or phone" "নাম বা ফোন দিয়ে খুঁজুন" as combo_ph %}
+<div class="kh" x-data="khata(JSON.parse(document.getElementById('kh-init').textContent))"
+     @kh-new.window="openNew()" @kh-pay.window="openPay(sel)"
+     @keydown.escape.window="escape()"
+     @keydown.window="if ($event.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes($event.target.tagName)) { $event.preventDefault(); $refs.q.focus(); }">
+
+  {# ───────────── উপরের সারাংশ ───────────── #}
+  <section class="kh-hero" aria-live="polite">
+    <div class="kh-hero-main">
+      <span class="kh-hero-lbl">{% icon "book" 18 %} {% tr "To collect" "মোট পাবো" %}</span>
+      <b class="kh-hero-amt" :class="{ 'sk': loading }" x-text="loading ? '' : tk(sum.due)"></b>
+      <span class="kh-hero-sub" x-text="loading ? '' : (sum.dueCount ? L(bn(sum.dueCount) + (sum.dueCount === 1 ? ' customer owes you' : ' customers owe you'), bn(sum.dueCount) + ' জন কাস্টমারের কাছে বাকি') : L('Nobody owes you anything 🎉', 'কারো কাছে কোনো বাকি নেই 🎉'))"></span>
+    </div>
+    <div class="kh-hero-stats">
+      <div x-show="perms.receipts" x-cloak>
+        <span>{% tr "Collected today" "আজ আদায়" %}</span>
+        <b x-text="sum.today === null ? '—' : tk(sum.today)"></b>
+        <small x-text="sum.todayCount ? L(bn(sum.todayCount) + (sum.todayCount === 1 ? ' receipt' : ' receipts'), bn(sum.todayCount) + 'টি রসিদ') : L('Nothing yet', 'এখনো কিছু আসেনি')"></small>
+      </div>
+      <div>
+        <span>{% tr "Advance you hold" "অগ্রিম জমা আছে" %}</span>
+        <b x-text="tk(sum.advance)"></b>
+        <small x-text="sum.advanceCount ? L('from ' + bn(sum.advanceCount) + (sum.advanceCount === 1 ? ' customer' : ' customers'), bn(sum.advanceCount) + ' জনের') : L('None', 'কারো নেই')"></small>
+      </div>
+      <div>
+        <span>{% tr "Oldest due" "সবচেয়ে পুরনো বাকি" %}</span>
+        <b x-text="sum.oldest ? L(bn(sum.oldest) + (sum.oldest === 1 ? ' day' : ' days'), bn(sum.oldest) + ' দিন') : '—'"></b>
+        <small x-text="sum.over30 ? L(bn(sum.over30) + ' over 30 days', bn(sum.over30) + ' জনের ৩০ দিনের বেশি') : L('None over 30 days', '৩০ দিনের বেশি পুরনো নেই')"></small>
+      </div>
+    </div>
+  </section>
+
+  <div class="kh-body" :class="{ 'has-sel': sel }">
+
+    {# ───────────── কাস্টমারের তালিকা ───────────── #}
+    <section class="kh-list panel" aria-label="{% tr 'Customers' 'কাস্টমার' %}">
+      <div class="kh-tools">
+        <label class="f-search">
+          {% icon "search" 18 %}
+          <input x-ref="q" type="search" x-model="f.q" placeholder="{% tr 'Search by name or phone' 'নাম বা ফোন নম্বর দিয়ে খুঁজুন' %}" aria-label="{% tr 'Search customers' 'কাস্টমার খুঁজুন' %}">
+          <kbd class="kh-kbd" aria-hidden="true">/</kbd>
+        </label>
+        <div class="kh-tabs" role="tablist" aria-label="{% tr 'Show' 'দেখান' %}">
+          <template x-for="t in tabs" :key="t.key">
+            <button type="button" role="tab" :aria-selected="String(f.tab === t.key)" :class="{ 'is-on': f.tab === t.key }"
+                    @click="f.tab = t.key">
+              <span x-text="t.label"></span><i x-text="bn(count(t.key))"></i>
+            </button>
+          </template>
+        </div>
+        <div class="kh-sort">
+          <span>{% tr "Sort:" "সাজান:" %}</span>
+          <template x-for="s in sorts" :key="s.key">
+            <button type="button" :class="{ 'is-on': f.sort === s.key }" @click="f.sort = s.key" x-text="s.label"></button>
+          </template>
+        </div>
+      </div>
+
+      <template x-if="error">
+        <div class="empty">
+          <div class="tile" style="background:var(--red-wash);color:var(--red)">{% icon "alert" 26 %}</div>
+          <h2>{% tr "Couldn't open the khata" "খাতা খোলা যায়নি" %}</h2><p x-text="error"></p>
+          <button class="btn btn-ghost" @click="load()">{% icon "refresh" 16 %} {% tr "Try again" "আবার চেষ্টা করুন" %}</button>
+        </div>
+      </template>
+
+      <ul class="kh-rows" x-show="!error" role="listbox" aria-label="{% tr 'Customer list' 'কাস্টমারের তালিকা' %}">
+        <template x-for="r in shown" :key="r.id">
+          <li role="option" tabindex="0" :aria-selected="String(!!(sel && sel.id === r.id))" :class="{ 'is-sel': sel && sel.id === r.id }"
+              @click="open(r)" @keydown.enter.prevent="open(r)">
+            <span class="kh-av" :style="'--h:' + hue(r.name)" x-text="initial(r.name)"></span>
+            <span class="kh-who">
+              <b x-text="r.name"></b>
+              <small>
+                <span x-text="r.phone ? r.phone : L('No phone', 'ফোন নেই')"></span>
+                <template x-if="r.days !== null && r.due > 0"><span class="kh-age" :class="ageCls(r.days)" x-text="' · ' + sinceText(r.days)"></span></template>
+              </small>
+            </span>
+            <span class="kh-bal" :class="balCls(r)">
+              <b x-text="r.due > 0 ? tk(r.due) : (r.advance > 0 ? tk(r.advance) : tk(0))"></b>
+              <small x-text="r.due > 0 ? L('Owes', 'পাবো') : (r.advance > 0 ? L('Advance', 'অগ্রিম') : L('Settled', 'হিসাব সমান'))"></small>
+            </span>
+          </li>
+        </template>
+        <template x-for="i in (loading && !rows.length ? 7 : 0)" :key="'sk' + i">
+          <li class="kh-sk" aria-hidden="true"><span class="kh-av sk"></span><span class="kh-who"><span class="sk-line"></span><span class="sk-line" style="width:40%"></span></span></li>
+        </template>
+      </ul>
+
+      <template x-if="!loading && !error && !shown.length">
+        <div class="empty kh-empty">
+          <div class="tile">{% icon "book" 26 %}</div>
+          <h2 x-text="f.q ? L('Nobody by that name', 'এই নামে কেউ নেই') : (f.tab === 'due' ? L('Nobody owes you', 'কারো কাছে বাকি নেই') : (f.tab === 'advance' ? L('No advances', 'কেউ অগ্রিম দেয়নি') : L('No customers yet', 'এখনো কোনো কাস্টমার নেই')))"></h2>
+          <p x-text="f.q ? L('Try another name or number.', 'অন্য নাম বা নম্বর লিখে দেখুন।') : L('Add your regular buyers here — when you sell on credit, it shows up here on its own.', 'নিয়মিত ক্রেতাদের এখানে যোগ করুন — বাকিতে বিক্রি করলে হিসাব নিজে থেকেই এখানে উঠবে।')"></p>
+          <template x-if="perms.create"><button class="btn btn-primary" @click="openNew(f.q)">{% icon "user-plus" 18 %} {% tr "New customer" "নতুন কাস্টমার" %}</button></template>
+        </div>
+      </template>
+      <p class="kh-foot" x-show="!loading && shown.length" x-text="L(bn(shown.length) + (shown.length === 1 ? ' customer' : ' customers') + ' · ' + (f.tab === 'advance' ? 'advance ' + tk(shownAdvance) : 'due ' + tk(shownDue)), bn(shown.length) + ' জন · মোট ' + (f.tab === 'advance' ? 'অগ্রিম ' + tk(shownAdvance) : 'বাকি ' + tk(shownDue)))"></p>
+    </section>
+
+    {# ───────────── একজন কাস্টমারের খাতা ───────────── #}
+    <section class="kh-detail panel" aria-label="{% tr 'Customer khata' 'কাস্টমারের খাতা' %}">
+      <template x-if="!sel">
+        <div class="kh-pick">
+          <div class="kh-pick-art" aria-hidden="true">{% icon "book" 34 %}</div>
+          <h2>{% tr "Pick a customer" "একজন কাস্টমার বাছুন" %}</h2>
+          <p>{% tr "Tap someone on the left to see their whole khata — what you gave, what you got, and what is still due." "বাঁয়ের তালিকা থেকে কাউকে চাপলে তার পুরো খাতা — কবে কত দিলেন, কত পেলেন, এখন কত বাকি — এখানে দেখাবে।" %}</p>
+          <ul class="kh-howto">
+            <li><span class="kh-dot is-in">{% icon "arrow-down" 14 %}</span><span><b>{% tr "Got payment" "টাকা পেলাম" %}</b> — {% tr "when a customer pays off dues" "কাস্টমার বাকি শোধ করলে" %}</span></li>
+            <li><span class="kh-dot is-out">{% icon "arrow-up" 14 %}</span><span><b>{% tr "Sell on credit" "বাকিতে বিক্রি" %}</b> — {% tr "goods now, money later" "পণ্য দিলেন, টাকা পরে" %}</span></li>
+            <li><span class="kh-dot is-wa">{% icon "message" 14 %}</span><span><b>{% tr "Remind" "তাগাদা" %}</b> — {% tr "by WhatsApp or SMS" "WhatsApp / SMS এ মনে করিয়ে দিন" %}</span></li>
+          </ul>
+        </div>
+      </template>
+
+      <template x-if="sel">
+        <div class="kh-d">
+          <header class="kh-d-head">
+            <button type="button" class="icon-btn kh-back" @click="shut()" aria-label="{% tr 'Back to the list' 'তালিকায় ফিরুন' %}">{% icon "chevron-left" 20 %}</button>
+            <span class="kh-av lg" :style="'--h:' + hue(sel.name)" x-text="initial(sel.name)"></span>
+            <div class="kh-d-who">
+              <h2 x-text="sel.name"></h2>
+              <span><span x-text="sel.phone ? sel.phone : L('No phone number', 'ফোন নম্বর নেই')"></span><span x-show="sel.client_no" x-text="' · ' + sel.client_no"></span></span>
+            </div>
+            <a class="icon-btn" x-show="sel.phone" :href="'tel:' + sel.phone" aria-label="{% tr 'Call' 'ফোন করুন' %}">{% icon "phone" 18 %}</a>
+            <button type="button" class="icon-btn kh-x" @click="shut()" aria-label="{% tr 'Close' 'বন্ধ করুন' %}">{% icon "x" 18 %}</button>
+          </header>
+
+          <div class="kh-balance" :class="balCls(sel)">
+            <span x-text="sel.due > 0 ? L('You will get', 'আপনি পাবেন') : (sel.advance > 0 ? L('Customer advance held', 'কাস্টমারের অগ্রিম জমা') : L('All settled', 'হিসাব সমান'))"></span>
+            <b x-text="sel.due > 0 ? tk(sel.due) : (sel.advance > 0 ? tk(sel.advance) : tk(0))"></b>
+            <small x-show="sel.due > 0 && sel.days !== null" x-text="sinceText(sel.days) + ' · ' + L(bn(sel.invoices.length) + (sel.invoices.length === 1 ? ' invoice' : ' invoices'), bn(sel.invoices.length) + 'টি মেমো')"></small>
+            <small x-show="sel.due <= 0 && sel.advance > 0" x-text="L('It is taken off their next purchase', 'পরের কেনাকাটায় এই টাকা থেকে কাটা যাবে')"></small>
+          </div>
+
+          <div class="kh-actions">
+            <template x-if="perms.collect">
+              <button type="button" class="kh-act is-in" @click="openPay(sel)">
+                <span>{% icon "arrow-down" 20 %}</span><b>{% tr "Got payment" "টাকা পেলাম" %}</b><small>{% tr "Pay off dues / advance" "বাকি শোধ / অগ্রিম" %}</small>
+              </button>
+            </template>
+            <template x-if="perms.due_create">
+              <button type="button" class="kh-act is-out" @click="openDue(sel)">
+                <span>{% icon "arrow-up" 20 %}</span><b>{% tr "Gave on credit" "বাকি দিলাম" %}</b><small>{% tr "Write a due without a sale" "বিক্রি ছাড়াই বাকি লিখুন" %}</small>
+              </button>
+            </template>
+          </div>
+          <div class="kh-sub-acts">
+            <template x-if="perms.sell">
+              <a class="btn btn-ghost btn-sm" :href="urls.sale + '?customer=' + sel.id">{% icon "cart" 16 %} {% tr "Sell on credit (with products)" "বাকিতে বিক্রি (পণ্যসহ)" %}</a>
+            </template>
+            <template x-if="perms.due_create">
+              <button type="button" class="btn btn-ghost btn-sm" @click="openDue(sel, 'opening')">{% icon "book" 16 %} {% tr "Add old khata due" "পুরনো খাতার বাকি তুলুন" %}</button>
+            </template>
+          </div>
+
+          <div class="kh-remind" x-show="sel.due > 0">
+            <div class="kh-remind-txt">
+              <b>{% icon "message" 16 %} {% tr "Send a reminder" "তাগাদা পাঠান" %}</b>
+              <p x-text="remindText(sel)"></p>
+            </div>
+            <div class="kh-remind-btns">
+              <a class="btn btn-sm kh-wa" :class="{ 'is-off': !waUrl(sel) }" :href="waUrl(sel) || null" target="_blank" rel="noopener"
+                 @click="if (!waUrl(sel)) { $event.preventDefault(); say(L('This customer has no valid phone number', 'এই কাস্টমারের সঠিক ফোন নম্বর নেই')); } else markSent(sel)">WhatsApp</a>
+              <a class="btn btn-ghost btn-sm" :class="{ 'is-off': !smsUrl(sel) }" :href="smsUrl(sel) || null"
+                 @click="if (!smsUrl(sel)) { $event.preventDefault(); say(L('This customer has no valid phone number', 'এই কাস্টমারের সঠিক ফোন নম্বর নেই')); } else markSent(sel)">SMS</a>
+              <button type="button" class="btn btn-ghost btn-sm" @click="copy(remindText(sel))">{% tr "Copy" "কপি" %}</button>
+            </div>
+            <small class="kh-sent" x-show="sentText(sel)" x-text="sentText(sel)"></small>
+          </div>
+
+          {# ───── খাতা (লেনদেন) ───── #}
+          <div class="kh-ledger">
+            <div class="kh-l-head">
+              <h3>{% tr "Transactions" "লেনদেন" %}</h3>
+              <span class="kh-l-c" aria-hidden="true">{% tr "Gave" "দিলাম" %}</span><span class="kh-l-c" aria-hidden="true">{% tr "Got" "পেলাম" %}</span><span class="kh-l-c" aria-hidden="true">{% tr "Due" "বাকি" %}</span>
+            </div>
+            <template x-if="!perms.ledger">
+              <p class="kh-note">{% icon "lock" 16 %} <span>{% tr "You need permission to view Reports to see every transaction — ask your admin." "পুরো লেনদেন দেখতে Reports দেখার অনুমতি লাগবে — Admin কে বলুন।" %}</span></p>
+            </template>
+            <template x-if="perms.ledger && ledger.error">
+              <p class="kh-note is-err">{% icon "alert" 16 %} <span x-text="ledger.error"></span> <button type="button" class="btn-link" @click="loadLedger()">{% tr "Retry" "আবার" %}</button></p>
+            </template>
+            <template x-if="perms.ledger && !ledger.error">
+              <div>
+                <template x-for="g in ledgerGroups" :key="g.date">
+                  <div class="kh-day">
+                    <div class="kh-day-h" x-text="dayLabel(g.date)"></div>
+                    <template x-for="(e, i) in g.items" :key="g.date + i">
+                      <div class="kh-e">
+                        <span class="kh-dot" :class="e.debit > 0 ? 'is-out' : 'is-in'" x-html="e.debit > 0 ? icons.up : icons.down"></span>
+                        <span class="kh-e-txt">
+                          <b x-text="entryTitle(e)"></b>
+                          <small><span x-text="e.voucher_no"></span><span x-show="e.method && e.method !== 'N/A' && e.credit > 0" x-text="' · ' + methodName(e.method)"></span></small>
+                        </span>
+                        <span class="kh-e-out"><b x-show="e.debit > 0" x-text="tk(e.debit)"></b></span>
+                        <span class="kh-e-in"><b x-show="e.credit > 0" x-text="tk(e.credit)"></b></span>
+                        <span class="kh-e-run" :class="{ 'is-adv': e.due < 0 }">
+                          <span x-text="e.due < 0 ? L('Adv ', 'অগ্রিম ') + tk(-e.due) : L('Due ', 'বাকি ') + tk(e.due)"></span>
+                          <template x-if="e.type === 'Due' && perms.due_delete && dueCanDelete(e)">
+                            <button type="button" class="kh-e-del" @click="askDelDue(e)" :aria-label="L('Delete this entry', 'এই এন্ট্রি মুছুন')">{% icon "trash" 14 %}</button>
+                          </template>
+                        </span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="ledger.loading">
+                  <div class="kh-day"><div class="kh-e kh-sk"><span class="sk-line"></span></div><div class="kh-e kh-sk"><span class="sk-line"></span></div><div class="kh-e kh-sk"><span class="sk-line" style="width:60%"></span></div></div>
+                </template>
+                <template x-if="!ledger.loading && !ledgerGroups.length">
+                  <p class="kh-note">{% tr "No transactions with this customer yet." "এই কাস্টমারের সাথে এখনো কোনো লেনদেন হয়নি।" %}</p>
+                </template>
+                <div class="kh-l-foot" x-show="!ledger.loading && ledgerGroups.length">
+                  <span>{% tr "Total gave" "মোট দিলাম" %} <b class="txt-due" x-text="tk(ledger.totDebit)"></b></span>
+                  <span>{% tr "Total got" "মোট পেলাম" %} <b class="txt-ok" x-text="tk(ledger.totCredit)"></b></span>
+                  <a x-show="urls.customers" :href="urls.customers" class="btn-link">{% tr "Full statement / print →" "বিস্তারিত স্টেটমেন্ট / প্রিন্ট →" %}</a>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+  </div>
+
+  {# ───────────── টাকা পেলাম ───────────── #}
+  <div class="modal-wrap" x-show="pay.open" x-cloak x-transition.opacity.duration.120ms @click.self="pay.open = false"
+       role="dialog" aria-modal="true" aria-labelledby="kh-pay-t">
+    <form class="modal kh-modal" @submit.prevent="savePay()" novalidate>
+      <template x-if="!pay.done">
+        <div>
+          <div class="kh-m-head">
+            <span class="kh-dot is-in lg">{% icon "arrow-down" 20 %}</span>
+            <div><h2 id="kh-pay-t">{% tr "Got payment" "টাকা পেলাম" %}</h2><p x-text="pay.cid ? L('From: ', 'কার কাছ থেকে: ') + (payCustomer ? payCustomer.name : '') : L('Pick who paid you', 'কার কাছ থেকে টাকা পেলেন বাছুন')"></p></div>
+          </div>
+
+          <label class="field" x-show="!pay.lockCustomer">
+            <span class="field-label">{% tr "Customer" "কাস্টমার" %}</span>
+            {% include "web/_combo.html" with model="pay.cid" source="customerOptions" placeholder=combo_ph icon="user" noclear=1 %}
+          </label>
+
+          <div class="kh-m-due" x-show="payCustomer">
+            <span>{% tr "Due now" "এখন বাকি" %}</span><b :class="{ 'txt-due': payCustomer && payCustomer.due > 0 }" x-text="payCustomer ? tk(payCustomer.due) : ''"></b>
+            <span x-show="payCustomer && payCustomer.advance > 0" class="txt-ok" x-text="payCustomer ? L('· advance ', '· অগ্রিম ') + tk(payCustomer.advance) : ''"></span>
+          </div>
+
+          <label class="field" :class="{ 'has-error': pay.err.amount }">
+            <span class="field-label">{% tr "How much did you get" "কত টাকা পেলেন" %}</span>
+            <span class="kh-amt">
+              <i>৳</i>
+              <input x-ref="amt" type="text" inputmode="decimal" autocomplete="off" x-model="pay.amount" placeholder="0" @input="pay.err.amount = ''">
+            </span>
+            <span class="kh-quick" x-show="payCustomer && payCustomer.due > 0">
+              <button type="button" class="chip" @click="pay.amount = String(payCustomer ? payCustomer.due : '')" x-text="payCustomer ? L('Full due ', 'পুরো বাকি ') + tk(payCustomer.due) : ''"></button>
+              <template x-for="v in quickAmounts" :key="v"><button type="button" class="chip" @click="pay.amount = String(v)" x-text="tk(v)"></button></template>
+            </span>
+            <span class="field-err" x-show="pay.err.amount" x-text="pay.err.amount"></span>
+          </label>
+
+          <div class="field">
+            <span class="field-label">{% tr "How was it paid" "কীভাবে পেলেন" %}</span>
+            <div class="seg seg-fill" role="radiogroup">
+              <template x-for="m in methods" :key="m.value">
+                <button type="button" role="radio" :aria-checked="String(pay.method === m.value)" :class="{ 'is-on': pay.method === m.value }"
+                        @click="pay.method = m.value" x-text="m.label"></button>
+              </template>
+            </div>
+            <select class="input kh-select" x-show="payAccounts.length > 1" x-model="pay.account" aria-label="{% tr 'Into which account' 'কোন একাউন্টে' %}">
+              <template x-for="a in payAccounts" :key="a.id"><option :value="String(a.id)" x-text="a.name" :selected="String(a.id) === pay.account"></option></template>
+            </select>
+            <span class="field-err" x-show="pay.err.account" x-text="pay.err.account"></span>
+          </div>
+
+          <div class="kh-m-row">
+            <label class="field">
+              <span class="field-label">{% tr "Date" "তারিখ" %}</span>
+              <input class="input kh-plain" type="date" x-model="pay.date" :max="todayIso">
+            </label>
+            <label class="field">
+              <span class="field-label">{% tr "Note (optional)" "নোট (ঐচ্ছিক)" %}</span>
+              <input class="input kh-plain" type="text" x-model="pay.note" maxlength="200" placeholder="{% tr 'e.g. part payment' 'যেমন: আংশিক শোধ' %}">
+            </label>
+          </div>
+
+          <p class="kh-m-plan" x-show="payCustomer && payNum > 0" :class="payPlan.cls" x-text="payPlan.text"></p>
+          <div class="notice notice-error" x-show="pay.error" role="alert">{% icon "alert" 18 %}<span x-text="pay.error"></span></div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn btn-ghost" @click="pay.open = false">{% tr "Cancel" "বাতিল" %}</button>
+            <button type="submit" class="btn btn-primary" :disabled="pay.saving">
+              <span x-text="pay.saving ? L('Saving…', 'জমা হচ্ছে…') : L('Save', 'জমা করুন')"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="pay.done">
+        <div class="kh-done">
+          <div class="kh-done-ic">{% icon "check" 30 %}</div>
+          <h2 x-text="L('Got ' + tk(pay.done.amount), tk(pay.done.amount) + ' পেলাম')"></h2>
+          <p><b x-text="pay.done.name"></b> <span x-text="pay.done.left > 0 ? L('— still owes ', '— এখন বাকি ') + tk(pay.done.left) : (pay.done.adv > 0 ? L('— advance held ', '— অগ্রিম জমা ') + tk(pay.done.adv) : L('— fully paid off', '— হিসাব পুরো শোধ'))"></span></p>
+          <small x-show="pay.done.mr" x-text="L('Receipt no. ', 'রসিদ নং ') + pay.done.mr"></small>
+          <div class="kh-done-btns">
+            <a class="btn kh-wa" x-show="pay.done.wa" :href="pay.done.wa" target="_blank" rel="noopener">{% icon "message" 18 %} {% tr "Tell them on WhatsApp" "WhatsApp এ জানান" %}</a>
+            <a class="btn btn-ghost" x-show="perms.receipts && pay.done.id" :href="urls.receipts + '?open=' + pay.done.id">{% icon "printer" 18 %} {% tr "Receipt" "রসিদ" %}</a>
+            <button type="button" class="btn btn-primary" @click="pay.open = false">{% tr "Done" "ঠিক আছে" %}</button>
+          </div>
+        </div>
+      </template>
+    </form>
+  </div>
+
+  {# ───────────── নতুন কাস্টমার ───────────── #}
+  <div class="modal-wrap" x-show="nc.open" x-cloak x-transition.opacity.duration.120ms @click.self="nc.open = false"
+       role="dialog" aria-modal="true" aria-labelledby="kh-nc-t">
+    <form class="modal kh-modal" @submit.prevent="saveNew()" novalidate>
+      <div class="kh-m-head">
+        <span class="kh-dot lg">{% icon "user-plus" 20 %}</span>
+        <div><h2 id="kh-nc-t">{% tr "New customer" "নতুন কাস্টমার" %}</h2><p>{% tr "A name and phone number is enough — reminders need the phone number." "নাম আর ফোন নম্বর দিলেই হবে — তাগাদা পাঠাতে ফোন নম্বর লাগে।" %}</p></div>
+      </div>
+      <label class="field" :class="{ 'has-error': nc.err.name }">
+        <span class="field-label">{% tr "Name" "নাম" %}</span>
+        <input x-ref="ncName" class="input kh-plain" type="text" x-model="nc.name" maxlength="100" placeholder="{% tr 'e.g. Karim Mia' 'যেমন: করিম মিয়া' %}" @input="nc.err.name = ''">
+        <span class="field-err" x-show="nc.err.name" x-text="nc.err.name"></span>
+      </label>
+      <label class="field" :class="{ 'has-error': nc.err.phone }">
+        <span class="field-label">{% tr "Mobile number" "মোবাইল নম্বর" %}</span>
+        <input class="input kh-plain" type="tel" inputmode="tel" x-model="nc.phone" maxlength="20" placeholder="01XXXXXXXXX" @input="nc.err.phone = ''">
+        <span class="field-err" x-show="nc.err.phone" x-text="nc.err.phone"></span>
+      </label>
+      <div class="kh-m-row">
+        <label class="field">
+          <span class="field-label">{% tr "Address (optional)" "ঠিকানা (ঐচ্ছিক)" %}</span>
+          <input class="input kh-plain" type="text" x-model="nc.address" maxlength="250" placeholder="{% tr 'Village / area' 'গ্রাম / এলাকা' %}">
+        </label>
+        <label class="field" x-show="perms.due_create" :class="{ 'has-error': nc.err.opening }">
+          <span class="field-label">{% tr "Old due (optional)" "পুরনো বাকি (ঐচ্ছিক)" %}</span>
+          <input class="input kh-plain" type="text" inputmode="decimal" x-model="nc.opening" placeholder="{% tr 'From your paper khata' 'কাগজের খাতা থেকে' %}" @input="nc.err.opening = ''">
+          <span class="field-err" x-show="nc.err.opening" x-text="nc.err.opening"></span>
+        </label>
+      </div>
+      <div class="notice notice-error" x-show="nc.error" role="alert">{% icon "alert" 18 %}<span x-text="nc.error"></span></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" @click="nc.open = false">{% tr "Cancel" "বাতিল" %}</button>
+        <button type="submit" class="btn btn-primary" :disabled="nc.saving" x-text="nc.saving ? L('Saving…', 'সেভ হচ্ছে…') : L('Save', 'সেভ করুন')"></button>
+      </div>
+    </form>
+  </div>
+
+  {# ───────────── বাকি দিলাম / পুরনো বাকি ───────────── #}
+  <div class="modal-wrap" x-show="due.open" x-cloak x-transition.opacity.duration.120ms @click.self="due.open = false"
+       role="dialog" aria-modal="true" aria-labelledby="kh-due-t">
+    <form class="modal kh-modal" @submit.prevent="saveDue()" novalidate>
+      <div class="kh-m-head">
+        <span class="kh-dot is-out lg">{% icon "arrow-up" 20 %}</span>
+        <div><h2 id="kh-due-t" x-text="due.kind === 'opening' ? L('Old khata due', 'পুরনো খাতার বাকি') : L('Gave on credit', 'বাকি দিলাম')"></h2>
+          <p x-text="(dueCustomer ? dueCustomer.name + ' · ' : '') + (due.kind === 'opening' ? L('What they already owed in your paper khata', 'কাগজের খাতায় আগে থেকে যা বাকি ছিল') : L('Money or goods given now, to be paid later', 'এখন দিলেন, টাকা পরে পাবেন'))"></p></div>
+      </div>
+      <div class="seg seg-fill kh-kind" role="radiogroup">
+        <button type="button" role="radio" :aria-checked="String(due.kind === 'credit')" :class="{ 'is-on': due.kind === 'credit' }" @click="due.kind = 'credit'">{% tr "Gave on credit" "বাকি দিলাম" %}</button>
+        <button type="button" role="radio" :aria-checked="String(due.kind === 'opening')" :class="{ 'is-on': due.kind === 'opening' }" @click="due.kind = 'opening'">{% tr "Old khata due" "পুরনো খাতার বাকি" %}</button>
+      </div>
+      <label class="field" :class="{ 'has-error': due.err.amount }">
+        <span class="field-label">{% tr "How much" "কত টাকা" %}</span>
+        <span class="kh-amt is-out"><i>৳</i><input x-ref="dueAmt" type="text" inputmode="decimal" autocomplete="off" x-model="due.amount" placeholder="0" @input="due.err.amount = ''"></span>
+        <span class="field-err" x-show="due.err.amount" x-text="due.err.amount"></span>
+      </label>
+      <div class="kh-m-row">
+        <label class="field" :class="{ 'has-error': due.err.date }">
+          <span class="field-label">{% tr "Date" "তারিখ" %}</span>
+          <input class="input kh-plain" type="date" x-model="due.date" :max="todayIso">
+          <span class="field-err" x-show="due.err.date" x-text="due.err.date"></span>
+        </label>
+        <label class="field">
+          <span class="field-label">{% tr "What for (optional)" "কিসের জন্য (ঐচ্ছিক)" %}</span>
+          <input class="input kh-plain" type="text" x-model="due.note" maxlength="200" placeholder="{% tr 'e.g. rice 1 sack, cash loan' 'যেমন: ১ বস্তা চাল, নগদ ধার' %}">
+        </label>
+      </div>
+      <p class="kh-m-plan is-left" x-show="dueCustomer && dueNum > 0" x-text="L('Due after this: ', 'এরপর মোট বাকি হবে ') + tk(dueAfter)"></p>
+      <p class="kh-note" style="margin:0 0 14px">{% icon "info" 16 %} <span>{% tr "This does not change stock or sales reports. When they pay, use “Got payment”." "এতে স্টক বা বিক্রির রিপোর্ট বদলায় না। টাকা পেলে “টাকা পেলাম” চাপুন।" %}</span></p>
+      <div class="notice notice-error" x-show="due.error" role="alert">{% icon "alert" 18 %}<span x-text="due.error"></span></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" @click="due.open = false">{% tr "Cancel" "বাতিল" %}</button>
+        <button type="submit" class="btn btn-danger" :disabled="due.saving" x-text="due.saving ? L('Saving…', 'সেভ হচ্ছে…') : L('Save due', 'বাকি লিখুন')"></button>
+      </div>
+    </form>
+  </div>
+
+  <div class="modal-wrap" x-show="delDue" x-cloak x-transition.opacity.duration.120ms @click.self="delDue = null" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-icon">{% icon "trash" 22 %}</div>
+      <h2 x-text="delDue ? L('Delete ' + delDue.voucher_no + '?', delDue.voucher_no + ' মুছবেন?') : ''"></h2>
+      <p x-text="delDue ? L(tk(delDue.debit) + ' will be taken off this customer\'s due. This cannot be undone.', 'এই কাস্টমারের বাকি থেকে ' + tk(delDue.debit) + ' কমে যাবে। এটা আর ফেরানো যাবে না।') : ''"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" @click="delDue = null">{% tr "Keep it" "রেখে দিন" %}</button>
+        <button type="button" class="btn btn-danger" @click="doDelDue()" x-text="L('Delete', 'মুছুন')"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" x-show="toast" x-cloak x-transition.opacity role="status" x-text="toast"></div>
+</div>
+{% endblock %}

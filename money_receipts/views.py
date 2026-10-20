@@ -25,6 +25,8 @@ class MoneyReceiptCreateAPIView(APIView):
             return MoneyReceipt.objects.none()
         
         queryset = MoneyReceipt.objects.filter(company=user.company)
+        from core.branches import filter_qs
+        queryset = filter_qs(queryset, 'branch', self.request)   # বাছা শাখার রিসিট (core/branches.py)
         
         # SAFE select_related - only include essential relationships
         try:

@@ -1,11 +1,11 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import BranchViewSet, WarehouseViewSet
+from django.urls import path
 
-router = DefaultRouter()
-router.register(r'branches', BranchViewSet)
-router.register(r'warehouses', WarehouseViewSet)
+from .views import BranchCurrentView, BranchDetailView, BranchListView, BranchStockView, StockTransferView
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path('branches/', BranchListView.as_view(), name='branch-list'),
+    path('branches/current/', BranchCurrentView.as_view(), name='branch-current'),
+    path('branches/<int:pk>/', BranchDetailView.as_view(), name='branch-detail'),
+    path('branches/stock/', BranchStockView.as_view(), name='branch-stock'),
+    path('branches/transfers/', StockTransferView.as_view(), name='branch-transfers'),
 ]

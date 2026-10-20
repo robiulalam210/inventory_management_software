@@ -4,6 +4,9 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from decimal import Decimal
+import logging as _logging
+_dbg = _logging.getLogger(__name__).debug  # আগের print — production log এ যায় না
+
 
 class Customer(models.Model):
     name = models.CharField(max_length=100)
@@ -84,7 +87,7 @@ class Customer(models.Model):
             )
         except Exception as e:
             # If money receipt creation fails, just log it
-            print(f"Note: Could not create money receipt for advance: {e}")
+            _dbg(f"Note: Could not create money receipt for advance: {e}")
             # The advance is still added to customer balance
         
         return self.advance_balance
@@ -402,3 +405,132 @@ class Customer(models.Model):
                 'total_advance_received': 0,
                 'advance_receipts_count': 0
             }
+
+
+class MessageSchedule(models.Model):
+    """নির্ধারিত সময়ে মেসেজ তৈরি করার নিয়ম। মেসেজ নিজে থেকে যায় না — সময় হলে "পাঠানোর জন্য প্রস্তুত" তালিকায় আসে,
+    দোকানি এক ট্যাপে WhatsApp খুলে পাঠান।"""
+    KINDS = [
+        ('due_reminder', 'Customer due reminder'),
+        ('stock_alert', 'Low stock & expiry alert (to owner)'),
+        ('daily_summary', 'Daily summary (to owner)'),
+        ('offer', 'Offer / general message (to customers)'),
+    ]
+    FREQUENCIES = [('daily', 'Every day'), ('weekly', 'Every week'), ('monthly', 'Every month'), ('once', 'Once')]
+    AUDIENCES = [('all', 'All customers'), ('with_due', 'Customers with due'), ('recent', 'Recent buyers')]
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='message_schedules')
+    name = models.CharField(max_length=100, blank=True, default='')
+    kind = models.CharField(max_length=20, choices=KINDS)
+    frequency = models.CharField(max_length=10, choices=FREQUENCIES, default='daily')
+    send_time = models.TimeField(default='09:00')
+    weekday = models.PositiveSmallIntegerField(null=True, blank=True)       # 0 = সোমবার ... 6 = রবিবার
+    day_of_month = models.PositiveSmallIntegerField(null=True, blank=True)  # 1..31
+    run_date = models.DateField(null=True, blank=True)                      # শুধু frequency=once এ
+    enabled = models.BooleanField(default=True)
+    template = models.TextField(blank=True, default='')
+    # ফিল্টার
+    min_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)   # due_reminder: এর বেশি বাকি
+    min_days = models.PositiveIntegerField(default=0)                               # due_reminder: কমপক্ষে এত দিনের পুরনো বাকি
+    audience = models.CharField(max_length=10, choices=AUDIENCES, default='all')    # offer
+    recent_days = models.PositiveIntegerField(default=30)                           # offer: audience=recent
+    notify_phone = models.CharField(max_length=20, blank=True, default='')          # owner মেসেজ যাবে এই নম্বরে (ফাঁকা হলে কোম্পানির ফোন)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-enabled', 'send_time', 'id']
+
+    def __str__(self):
+        return self.name or self.get_kind_display()
+
+
+class OutboxMessage(models.Model):
+    """পাঠানোর জন্য তৈরি মেসেজ। status: pending → sent / skipped"""
+    STATUSES = [('pending', 'Ready to send'), ('sent', 'Sent'), ('skipped', 'Skipped')]
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='outbox_messages')
+    schedule = models.ForeignKey(MessageSchedule, on_delete=models.SET_NULL, null=True, blank=True, related_name='messages')
+    kind = models.CharField(max_length=20)
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    recipient_name = models.CharField(max_length=120, blank=True, default='')
+    phone = models.CharField(max_length=20, blank=True, default='')     # আন্তর্জাতিক রূপ, শুধু অঙ্ক (8801...)
+    text = models.TextField()
+    status = models.CharField(max_length=10, choices=STATUSES, default='pending', db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        indexes = [models.Index(fields=['company', 'status'], name='customers_o_company_5a1c3e_idx')]
+
+
+
+class CustomerDue(models.Model):
+    """
+    বিক্রি ছাড়া বাকি — বাকি খাতার "বাকি দিলাম" আর কাগজের খাতা থেকে আনা "পুরনো বাকি"।
+
+    কেন আলাদা টেবিল (Sale নয়): এটা বিক্রি নয় — Sale হিসেবে রাখলে বিক্রির রিপোর্ট, লাভ-ক্ষতি আর স্টকের
+    হিসাব ভুল হত। তাই শুধু কাস্টমারের বাকির হিসাবে যোগ হয়:
+        কাস্টমারের বাকি = (বিক্রির grand total − বিক্রিতে পাওয়া) + (এই এন্ট্রির amount − paid_amount) − advance
+
+    শোধ হয় শুধু Money Receipt দিয়ে (টাকা ঢোকার একমাত্র পথ ঠিক থাকে): overall receipt আগে পুরনো invoice
+    মেটায়, তারপর এই এন্ট্রিগুলো (পুরনো আগে), তারপর যা থাকে advance। কোন এন্ট্রিতে কত বসল তা receipt এর
+    allocation["dues"] এ লেখা থাকে — receipt বাতিল করলে ঠিক ততটুকু উল্টে যায়।
+    """
+    KIND_OPENING = 'opening'
+    KIND_CREDIT = 'credit'
+    KIND_CHOICES = [(KIND_OPENING, 'Opening due (from the old khata)'), (KIND_CREDIT, 'Credit given')]
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='customer_dues')
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='manual_dues')
+    entry_no = models.CharField(max_length=20, blank=True, default='')
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=KIND_CREDIT)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    entry_date = models.DateTimeField(default=timezone.now, db_index=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['entry_date', 'id']
+        indexes = [models.Index(fields=['company', 'customer'], name='customers_due_cust_idx')]
+
+    def __str__(self):
+        return f"{self.entry_no or self.pk} — {self.customer} ৳{self.amount}"
+
+    @property
+    def due_amount(self):
+        return max(Decimal('0.00'), (self.amount or Decimal('0.00')) - (self.paid_amount or Decimal('0.00')))
+
+    def clean(self):
+        if self.amount is None or self.amount <= 0:
+            raise ValidationError({'amount': 'Amount must be greater than 0.'})
+        if self.customer_id and self.company_id and self.customer.company_id != self.company_id:
+            raise ValidationError('Customer must belong to the same company.')
+
+    def save(self, *args, **kwargs):
+        if not self.entry_no and self.company_id:
+            n = CustomerDue.objects.filter(company_id=self.company_id).count() + 1001
+            while CustomerDue.objects.filter(company_id=self.company_id, entry_no=f'DU-{n}').exists():
+                n += 1
+            self.entry_no = f'DU-{n}'
+        super().save(*args, **kwargs)
+
+
+def manual_due_totals(company, customer_ids=None):
+    """{customer_id: (মোট amount, মোট paid)} — একটা query তে"""
+    from django.db.models import Sum
+    qs = CustomerDue.objects.filter(company=company)
+    if customer_ids is not None:
+        qs = qs.filter(customer_id__in=list(customer_ids))
+    return {r['customer']: (r['a'] or Decimal('0.00'), r['p'] or Decimal('0.00'))
+            for r in qs.values('customer').annotate(a=Sum('amount'), p=Sum('paid_amount'))}
+
+
+def manual_due_open(customer):
+    """এই কাস্টমারের বিক্রি-ছাড়া বাকির খোলা অংশ (Decimal)"""
+    t = manual_due_totals(customer.company, [customer.pk]).get(customer.pk)
+    return max(Decimal('0.00'), t[0] - t[1]) if t else Decimal('0.00')

@@ -361,6 +361,8 @@ class Product(models.Model):
     opening_stock = models.PositiveIntegerField(default=0)
     stock_qty = models.PositiveIntegerField(default=0)
     alert_quantity = models.PositiveIntegerField(default=5)
+    # ওয়ারেন্টি কত মাসের (০ = ওয়ারেন্টি নেই)। বিক্রির সময় SaleItem এ কপি হয়, তাই পরে বদলালে পুরনো বিক্রি বদলায় না।
+    warranty_months = models.PositiveSmallIntegerField(default=0)
     description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='inventory-products/', blank=True, null=True)
     is_active = models.BooleanField(default=True)
