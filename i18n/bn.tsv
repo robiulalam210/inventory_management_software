@@ -1978,3 +1978,9 @@ Purchase Item	ক্রয়ের পণ্য
 (* pcs)	($1 পিস)
 * product	$1টা পণ্য
 * products	$1টা পণ্য
++1 month	+১ মাস
++6 months	+৬ মাস
++1 year	+১ বছর
+৳* / month · ৳* / year	৳$1 / মাস · ৳$2 / বছর
+Trial set to end *.	ট্রায়াল শেষ হবে $1।
+Ends * (1 month after the trial). Use the buttons to change.	শেষ হবে $1 (ট্রায়ালের পর ১ মাস)। বদলাতে বোতামগুলো ব্যবহার করুন।
